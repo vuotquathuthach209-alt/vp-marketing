@@ -165,6 +165,17 @@ CREATE TABLE IF NOT EXISTS ai_usage_log (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_usage_created ON ai_usage_log(created_at);
+
+-- Sprint 6: Telegram bot — chat được uỷ quyền điều khiển fanpage
+CREATE TABLE IF NOT EXISTS telegram_chats (
+  chat_id TEXT PRIMARY KEY,
+  username TEXT,
+  first_name TEXT,
+  authorized INTEGER NOT NULL DEFAULT 0,
+  notify INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL
+);
 `);
 
 // Helpers

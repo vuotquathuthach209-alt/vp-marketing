@@ -328,6 +328,7 @@ async function loadSettings() {
   });
 
   loadRouterStatus();
+  loadTelegramStatus();
   loadPagesInSettings();
 }
 
@@ -1063,6 +1064,90 @@ if (btnSmartSlot) {
       hint.textContent = r.reason;
     } catch (e) {
       hint.innerHTML = `<span class="text-red-500">${e.message}</span>`;
+    }
+  });
+}
+
+// ===== Sprint 6: Telegram =====
+async function loadTelegramStatus() {
+  const statusEl = document.getElementById('tg-status');
+  const chatsEl = document.getElementById('tg-chats');
+  if (!statusEl) return;
+  try {
+    const r = await api('/settings/telegram');
+    const dot = r.running ? '🟢' : (r.configured ? '🟡' : '⚪');
+    statusEl.innerHTML = `
+      <div class="border rounded p-3 bg-slate-50 text-xs">
+        <div>${dot} <b>Bot:</b> ${r.running ? 'đang chạy' : (r.configured ? 'đã cấu hình, chưa chạy' : 'chưa có token')}</div>
+        ${r.token_masked ? `<div>Token: <code>${r.token_masked}</code></div>` : ''}
+        <div>Unlock code: ${r.unlock_code ? `<code>${escapeHtml(r.unlock_code)}</code>` : '<i>(chưa set)</i>'}</div>
+      </div>
+    `;
+    if (r.unlock_code) document.getElementById('tg-unlock').value = r.unlock_code;
+
+    if (r.chats && r.chats.length) {
+      chatsEl.innerHTML = `
+        <div class="text-sm font-semibold mt-3 mb-2">Chats đã tương tác (${r.chats.length}):</div>
+        ${r.chats.map(c => `
+          <div class="flex items-center justify-between border rounded p-2 mb-1 text-xs">
+            <div>
+              <b>${escapeHtml(c.first_name || '(ẩn)')}</b>
+              ${c.username ? `<span class="text-slate-500">@${escapeHtml(c.username)}</span>` : ''}
+              <span class="text-slate-400">ID: ${c.chat_id}</span>
+              ${c.authorized ? '<span class="text-green-600 ml-2">✅ authorized</span>' : '<span class="text-slate-400 ml-2">🔒 locked</span>'}
+            </div>
+            <div>
+              ${c.authorized
+                ? `<button onclick="tgRevoke('${c.chat_id}')" class="bg-red-500 text-white px-2 py-1 rounded text-xs">Revoke</button>`
+                : `<button onclick="tgAuthorize('${c.chat_id}')" class="bg-green-600 text-white px-2 py-1 rounded text-xs">Authorize</button>`}
+            </div>
+          </div>
+        `).join('')}
+      `;
+    } else {
+      chatsEl.innerHTML = '<div class="text-xs text-slate-500 mt-3">Chưa có chat nào. Chat với bot và gõ /start.</div>';
+    }
+  } catch (e) {
+    statusEl.innerHTML = `<div class="text-red-500 text-xs">Lỗi: ${e.message}</div>`;
+  }
+}
+
+window.tgAuthorize = async (id) => {
+  await api(`/settings/telegram/authorize/${id}`, { method: 'POST' });
+  loadTelegramStatus();
+};
+window.tgRevoke = async (id) => {
+  await api(`/settings/telegram/revoke/${id}`, { method: 'POST' });
+  loadTelegramStatus();
+};
+
+const btnTgSave = document.getElementById('btn-tg-save');
+if (btnTgSave) {
+  btnTgSave.addEventListener('click', async () => {
+    const bot_token = document.getElementById('tg-token').value.trim();
+    const unlock_code = document.getElementById('tg-unlock').value.trim();
+    try {
+      await api('/settings/telegram', {
+        method: 'POST',
+        body: JSON.stringify({ bot_token: bot_token || undefined, unlock_code }),
+      });
+      document.getElementById('tg-token').value = '';
+      alert('Đã lưu. Bot đang khởi động lại (xem status sau vài giây).');
+      setTimeout(loadTelegramStatus, 2000);
+    } catch (e) {
+      alert('Lỗi: ' + e.message);
+    }
+  });
+}
+
+const btnTgTest = document.getElementById('btn-tg-test');
+if (btnTgTest) {
+  btnTgTest.addEventListener('click', async () => {
+    try {
+      await api('/settings/telegram/test', { method: 'POST' });
+      alert('Đã gửi test message tới các chat đã authorized.');
+    } catch (e) {
+      alert('Lỗi: ' + e.message);
     }
   });
 }

@@ -322,6 +322,31 @@
       <section data-panel="settings" class="panel hidden">
         <h2 class="text-2xl font-bold mb-6">Cấu hình</h2>
 
+        <!-- Telegram Bot -->
+        <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6">
+          <h3 class="font-bold mb-2">💬 Telegram Bot</h3>
+          <p class="text-xs text-slate-500 mb-4">Điều khiển fanpage từ điện thoại qua chat Telegram. Bot chạy long-polling, không cần HTTPS public.</p>
+
+          <div class="mb-3">
+            <label class="block text-sm font-semibold mb-1">Bot Token (từ @BotFather)</label>
+            <input id="tg-token" type="text" placeholder="123456:ABC..." class="w-full border rounded-lg px-3 py-2 font-mono text-xs" />
+          </div>
+
+          <div class="mb-3">
+            <label class="block text-sm font-semibold mb-1">Mã Unlock (user gõ <code>/unlock &lt;mã&gt;</code> để được uỷ quyền)</label>
+            <input id="tg-unlock" type="text" placeholder="ví dụ: sonder2026" class="w-full border rounded-lg px-3 py-2 text-sm" />
+          </div>
+
+          <div class="flex gap-2 mb-4">
+            <button id="btn-tg-save" class="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-semibold">💾 Lưu & Khởi động bot</button>
+            <button id="btn-tg-test" class="bg-green-600 text-white px-5 py-2 rounded-lg text-sm font-semibold">🧪 Gửi test</button>
+          </div>
+
+          <div id="tg-status" class="text-sm mb-3"></div>
+          <div id="tg-chats"></div>
+        </div>
+
+
         <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6">
           <h3 class="font-bold mb-4">🔑 API Keys</h3>
           <p class="text-xs text-slate-500 mb-4">💡 Có thể nhập <b>nhiều key</b> mỗi dòng. Hệ thống tự xoay vòng round-robin &amp; failover. Càng nhiều provider (Anthropic + Google + Groq) thì chi phí càng giảm.</p>

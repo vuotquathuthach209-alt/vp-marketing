@@ -5,6 +5,7 @@ import { authMiddleware } from '../middleware/auth';
 import { countKeys, getAllKeys } from '../services/keyrotator';
 import { getRouterStatus } from '../services/router';
 import { config } from '../config';
+import { setBotToken, getBotStatus, startBot, stopBot, notifyAll } from '../services/telegram';
 
 const router = Router();
 router.use(authMiddleware);
@@ -86,6 +87,55 @@ router.post('/pages', async (req, res) => {
 router.delete('/pages/:id', (req, res) => {
   const id = parseInt(req.params.id, 10);
   db.prepare(`DELETE FROM pages WHERE id = ?`).run(id);
+  res.json({ ok: true });
+});
+
+// ===== Sprint 6: Telegram =====
+router.get('/telegram', (req, res) => {
+  const status = getBotStatus();
+  const chats = db.prepare(
+    `SELECT chat_id, username, first_name, authorized, notify, created_at, last_seen
+     FROM telegram_chats ORDER BY last_seen DESC LIMIT 50`
+  ).all();
+  const token = getSetting('telegram_bot_token');
+  const code = getSetting('telegram_unlock_code');
+  res.json({
+    ...status,
+    token_masked: token ? `${token.slice(0, 8)}...${token.slice(-4)}` : null,
+    unlock_code: code || null,
+    chats,
+  });
+});
+
+router.post('/telegram', (req, res) => {
+  const { bot_token, unlock_code } = req.body;
+  if (bot_token && typeof bot_token === 'string' && !bot_token.startsWith('***')) {
+    setBotToken(bot_token.trim());
+    stopBot();
+    setTimeout(startBot, 500);
+  }
+  if (unlock_code !== undefined) {
+    setSetting('telegram_unlock_code', String(unlock_code).trim());
+  }
+  res.json({ ok: true, ...getBotStatus() });
+});
+
+router.post('/telegram/test', async (req, res) => {
+  try {
+    await notifyAll('🧪 Test từ vp-marketing — nếu bạn đọc được tin này nghĩa là Telegram bot OK!');
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/telegram/authorize/:chat_id', (req, res) => {
+  db.prepare(`UPDATE telegram_chats SET authorized = 1 WHERE chat_id = ?`).run(req.params.chat_id);
+  res.json({ ok: true });
+});
+
+router.post('/telegram/revoke/:chat_id', (req, res) => {
+  db.prepare(`UPDATE telegram_chats SET authorized = 0 WHERE chat_id = ?`).run(req.params.chat_id);
   res.json({ ok: true });
 });
 

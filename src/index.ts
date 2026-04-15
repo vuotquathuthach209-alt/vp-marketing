@@ -4,6 +4,7 @@ import path from 'path';
 import { config } from './config';
 import './db'; // init DB
 import { startScheduler } from './services/scheduler';
+import { startBot as startTelegramBot } from './services/telegram';
 import authRoutes from './routes/auth';
 import settingsRoutes from './routes/settings';
 import aiRoutes from './routes/ai';
@@ -45,4 +46,5 @@ app.listen(config.port, () => {
   console.log(`🚀 Marketing Auto chạy trên http://localhost:${config.port}`);
   console.log(`   TZ: ${config.tz}`);
   startScheduler();
+  startTelegramBot();
 });

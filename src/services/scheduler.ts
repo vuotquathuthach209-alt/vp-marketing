@@ -5,6 +5,7 @@ import { runCampaigns } from './campaigns';
 import { runAutoReply } from './autoreply';
 import { pullMetrics } from './analytics';
 import { decidePendingWinners } from './abtest';
+import { notifyAll } from './telegram';
 
 interface PostRow {
   id: number;
@@ -68,10 +69,12 @@ async function processDuePosts() {
         `UPDATE posts SET status = 'published', published_at = ?, fb_post_id = ?, error_message = NULL WHERE id = ?`
       ).run(Date.now(), result.fbPostId, post.id);
       console.log(`[scheduler] Đăng thành công post #${post.id} → ${result.fbPostId}`);
+      notifyAll(`✅ *Đăng thành công* post #${post.id}\n\`${result.fbPostId}\`\n\n${post.caption.slice(0, 200)}`).catch(() => {});
     } catch (err: any) {
       const msg = err?.response?.data?.error?.message || err?.message || String(err);
       db.prepare(`UPDATE posts SET status = 'failed', error_message = ? WHERE id = ?`).run(msg, post.id);
       console.error(`[scheduler] Post #${post.id} thất bại: ${msg}`);
+      notifyAll(`❌ *Post #${post.id} FAIL*\n${msg}`).catch(() => {});
     }
   }
 }
