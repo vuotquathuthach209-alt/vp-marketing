@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Marketing Auto - Du lịch & Lưu trú</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+<!-- LOGIN -->
+<div id="login-view" class="hidden min-h-screen flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full">
+    <h1 class="text-2xl font-bold mb-2">🏨 Marketing Auto</h1>
+    <p class="text-slate-500 mb-6">Đăng nhập vào Dashboard</p>
+    <form id="login-form">
+      <input id="login-password" type="password" placeholder="Mật khẩu admin"
+        class="w-full px-4 py-3 border rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      <button type="submit" class="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700">
+        Đăng nhập
+      </button>
+      <p id="login-error" class="text-red-500 text-sm mt-3 hidden"></p>
+    </form>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app-view" class="hidden">
+  <!-- Sidebar -->
+  <div class="flex min-h-screen">
+    <aside class="w-64 bg-slate-900 text-white p-5">
+      <h1 class="text-xl font-bold mb-8">🏨 Marketing Auto</h1>
+      <nav class="space-y-1">
+        <button data-tab="compose" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">✍️ Tạo bài đăng</button>
+        <button data-tab="posts" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">📋 Danh sách bài</button>
+        <button data-tab="media" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">🖼️ Thư viện media</button>
+        <button data-tab="campaigns" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">🔁 Tự động đăng</button>
+        <button data-tab="autoreply" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">🤖 Auto trả lời</button>
+        <button data-tab="settings" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">⚙️ Cấu hình</button>
+      </nav>
+      <button id="logout-btn" class="mt-8 text-sm text-slate-400 hover:text-white">↩ Đăng xuất</button>
+    </aside>
+
+    <main class="flex-1 p-8 overflow-auto">
+      <!-- COMPOSE TAB -->
+      <section data-panel="compose" class="panel">
+        <h2 class="text-2xl font-bold mb-6">Tạo bài đăng mới</h2>
+        <div class="bg-white rounded-xl shadow p-6 max-w-3xl">
+          <div class="mb-4">
+            <label class="block text-sm font-semibold mb-2">Chọn Fanpage</label>
+            <select id="compose-page" class="w-full border rounded-lg px-3 py-2"></select>
+          </div>
+
+          <div class="mb-4">
+            <label class="block text-sm font-semibold mb-2">Chủ đề bài viết (tiếng Việt)</label>
+            <input id="compose-topic" type="text" placeholder="VD: Combo nghỉ dưỡng cuối tuần ở Đà Lạt"
+              class="w-full border rounded-lg px-3 py-2" />
+            <button id="btn-gen-caption" class="mt-2 bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700">
+              ✨ AI viết caption
+            </button>
+          </div>
+
+          <div class="mb-4">
+            <label class="block text-sm font-semibold mb-2">Nội dung caption</label>
+            <textarea id="compose-caption" rows="8" class="w-full border rounded-lg px-3 py-2 font-mono text-sm"></textarea>
+          </div>
+
+          <div class="mb-4">
+            <label class="block text-sm font-semibold mb-2">Media</label>
+            <div class="flex gap-2 mb-2">
+              <button id="btn-gen-image" class="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700">🎨 AI tạo ảnh</button>
+              <button id="btn-gen-video" class="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700">🎬 AI tạo video</button>
+              <label class="bg-slate-200 px-4 py-2 rounded-lg text-sm hover:bg-slate-300 cursor-pointer">
+                📁 Upload từ máy
+                <input id="compose-upload" type="file" accept="image/*,video/*" class="hidden" />
+              </label>
+            </div>
+            <div id="compose-media-preview" class="mt-2"></div>
+          </div>
+
+          <div class="mb-4">
+            <label class="block text-sm font-semibold mb-2">Lên lịch đăng (để trống = lưu nháp)</label>
+            <input id="compose-schedule" type="datetime-local" class="border rounded-lg px-3 py-2" />
+          </div>
+
+          <div class="flex gap-3">
+            <button id="btn-publish-now" class="bg-green-600 text-white px-6 py-2.5 rounded-lg font-semibold hover:bg-green-700">
+              🚀 Đăng ngay
+            </button>
+            <button id="btn-schedule" class="bg-blue-600 text-white px-6 py-2.5 rounded-lg font-semibold hover:bg-blue-700">
+              📅 Lên lịch
+            </button>
+            <button id="btn-draft" class="bg-slate-500 text-white px-6 py-2.5 rounded-lg font-semibold hover:bg-slate-600">
+              💾 Lưu nháp
+            </button>
+          </div>
+          <div id="compose-status" class="mt-4 text-sm"></div>
+        </div>
+      </section>
+
+      <!-- POSTS TAB -->
+      <section data-panel="posts" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-6">Danh sách bài đăng</h2>
+        <div id="posts-list" class="space-y-3"></div>
+      </section>
+
+      <!-- MEDIA TAB -->
+      <section data-panel="media" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-6">Thư viện media</h2>
+        <div id="media-grid" class="grid grid-cols-4 gap-4"></div>
+      </section>
+
+      <!-- CAMPAIGNS TAB -->
+      <section data-panel="campaigns" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-2">🔁 Chiến dịch tự động đăng hàng ngày</h2>
+        <p class="text-slate-500 mb-6 text-sm">App sẽ tự gen caption + ảnh và đăng đúng giờ mỗi ngày. Không cần bạn thao tác.</p>
+
+        <div class="bg-white rounded-xl shadow p-6 max-w-3xl mb-6">
+          <h3 class="font-bold mb-4">➕ Tạo chiến dịch mới</h3>
+          <div class="mb-3">
+            <label class="block text-sm font-semibold mb-1">Tên chiến dịch</label>
+            <input id="camp-name" class="w-full border rounded-lg px-3 py-2" placeholder="VD: Review khách sạn mỗi ngày" />
+          </div>
+          <div class="mb-3">
+            <label class="block text-sm font-semibold mb-1">Fanpage</label>
+            <select id="camp-page" class="w-full border rounded-lg px-3 py-2"></select>
+          </div>
+          <div class="mb-3">
+            <label class="block text-sm font-semibold mb-1">Danh sách chủ đề (mỗi dòng 1 chủ đề)</label>
+            <textarea id="camp-topics" rows="6" class="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+              placeholder="Combo 2N1Đ Đà Lạt view đồi thông&#10;Homestay view biển Nha Trang giá tốt&#10;Khám phá ẩm thực Hội An&#10;Resort Phú Quốc hồ bơi vô cực&#10;Villa Ninh Bình gần Tràng An"></textarea>
+            <p class="text-xs text-slate-500 mt-1">Mỗi lần chạy, hệ thống chọn ngẫu nhiên 1 chủ đề</p>
+          </div>
+          <div class="mb-3">
+            <label class="block text-sm font-semibold mb-1">Giờ đăng (cách nhau dấu phẩy, định dạng HH:MM)</label>
+            <input id="camp-times" class="w-full border rounded-lg px-3 py-2 font-mono"
+              placeholder="08:00, 20:00" value="08:00, 20:00" />
+            <p class="text-xs text-slate-500 mt-1">VD: 08:00, 12:30, 20:00 — giờ Việt Nam</p>
+          </div>
+          <div class="mb-4">
+            <label class="flex items-center gap-2">
+              <input type="checkbox" id="camp-with-image" checked class="w-4 h-4" />
+              <span class="text-sm">Tự động tạo ảnh AI kèm bài (~$0.003/ảnh)</span>
+            </label>
+          </div>
+          <button id="btn-create-campaign" class="bg-green-600 text-white px-5 py-2.5 rounded-lg font-semibold hover:bg-green-700">
+            ✅ Tạo chiến dịch
+          </button>
+          <p id="camp-status" class="text-sm mt-3"></p>
+        </div>
+
+        <h3 class="font-bold mb-3">📋 Chiến dịch đang có</h3>
+        <div id="campaigns-list" class="space-y-3"></div>
+      </section>
+
+      <!-- AUTO REPLY TAB -->
+      <section data-panel="autoreply" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-2">🤖 Auto trả lời comment & tin nhắn</h2>
+        <p class="text-slate-500 mb-6 text-sm">Claude tự động trả lời bằng tiếng Việt mỗi 5 phút. Cần Page Token có quyền <code class="bg-slate-200 px-1 rounded">pages_manage_engagement</code> (comment) và <code class="bg-slate-200 px-1 rounded">pages_messaging</code> (inbox).</p>
+
+        <div id="autoreply-config" class="space-y-4 max-w-3xl mb-8"></div>
+
+        <h3 class="font-bold mb-3">📜 Lịch sử trả lời gần đây</h3>
+        <div id="autoreply-log" class="space-y-2 max-w-3xl"></div>
+      </section>
+
+      <!-- SETTINGS TAB -->
+      <section data-panel="settings" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-6">Cấu hình</h2>
+
+        <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6">
+          <h3 class="font-bold mb-4">🔑 API Keys</h3>
+          <p class="text-xs text-slate-500 mb-4">💡 Có thể nhập <b>nhiều key</b> (mỗi key 1 dòng hoặc cách nhau dấu phẩy). Hệ thống sẽ tự xoay vòng round-robin giữa các key để chia tải &amp; tránh rate-limit. Nếu 1 key lỗi quota, app tự chuyển sang key kế tiếp.</p>
+
+          <div class="mb-3">
+            <label class="block text-sm font-semibold mb-1">
+              Anthropic API Keys (Claude)
+              <span id="anthropic-count" class="ml-2 text-xs font-normal text-blue-600"></span>
+            </label>
+            <textarea id="key-anthropic" rows="4" placeholder="sk-ant-key1...&#10;sk-ant-key2...&#10;sk-ant-key3..."
+              class="w-full border rounded-lg px-3 py-2 font-mono text-xs"></textarea>
+          </div>
+          <div class="mb-3">
+            <label class="block text-sm font-semibold mb-1">
+              fal.ai API Keys
+              <span id="fal-count" class="ml-2 text-xs font-normal text-blue-600"></span>
+            </label>
+            <textarea id="key-fal" rows="3" placeholder="key1...&#10;key2..."
+              class="w-full border rounded-lg px-3 py-2 font-mono text-xs"></textarea>
+          </div>
+          <button id="btn-save-keys" class="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-semibold">Lưu API Keys</button>
+          <span id="keys-status" class="ml-3 text-sm text-green-600"></span>
+        </div>
+
+        <div class="bg-white rounded-xl shadow p-6 max-w-2xl">
+          <h3 class="font-bold mb-4">📘 Facebook Fanpages</h3>
+          <div id="pages-list" class="mb-4 space-y-2"></div>
+
+          <h4 class="text-sm font-semibold mt-6 mb-2">Thêm Fanpage mới</h4>
+          <input id="page-fbid" type="text" placeholder="Page ID (VD: 123456789)" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" />
+          <input id="page-token" type="password" placeholder="Page Access Token" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm font-mono" />
+          <input id="page-name" type="text" placeholder="Tên ghi chú (tùy chọn)" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" />
+          <button id="btn-add-page" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">+ Thêm Fanpage</button>
+          <p id="page-status" class="text-sm mt-2"></p>
+          <details class="mt-4 text-sm text-slate-600">
+            <summary class="cursor-pointer font-semibold">❓ Cách lấy Page Access Token</summary>
+            <ol class="list-decimal ml-5 mt-2 space-y-1">
+              <li>Vào <a href="https://developers.facebook.com/tools/explorer/" target="_blank" class="text-blue-600 underline">Graph API Explorer</a></li>
+              <li>Chọn Application, chọn User Token</li>
+              <li>Tick quyền: <code>pages_show_list</code>, <code>pages_manage_posts</code>, <code>pages_read_engagement</code></li>
+              <li>Bấm "Generate Access Token" → đăng nhập FB</li>
+              <li>Gọi <code>/me/accounts</code> để lấy token của từng Page</li>
+              <li>Copy <code>access_token</code> và <code>id</code> của page dán vào đây</li>
+            </ol>
+            <p class="mt-2">Xem HUONG-DAN.md trên VPS để biết chi tiết đổi token sang long-lived (2 tháng).</p>
+          </details>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

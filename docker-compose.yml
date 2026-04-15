@@ -1,0 +1,13 @@
+services:
+  app:
+    build: .
+    container_name: marketing-auto
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Ho_Chi_Minh

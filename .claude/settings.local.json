@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(ssh -o BatchMode=yes -o ConnectTimeout=5 root@187.77.138.179 \"echo hello\")",
+      "Bash(sshpass -V)",
+      "Bash(python -c \"import paramiko; print\\(paramiko.__version__\\)\")",
+      "Bash(VPS_PASSWORD='Gh@0986260595' python .deploy-helper/ssh_run.py 'uname -a && cat /etc/os-release | head -5 && echo --- && free -h && echo --- && nproc && echo --- && df -h / && echo --- && \\(docker --version 2>&1 || echo \"no docker\"\\) && \\(docker compose version 2>&1 || echo \"no compose\"\\)')",
+      "Bash(VPS_PASSWORD='Gh@0986260595' LOCAL_DIR=\".\" REMOTE_DIR=\"/opt/marketing-auto\" python .deploy-helper/sftp_upload.py)",
+      "Bash(VPS_PASSWORD='Gh@0986260595' LOCAL_DIR=\".\" REMOTE_DIR=\"/opt/marketing-auto\" PYTHONIOENCODING=utf-8 python .deploy-helper/sftp_upload.py)",
+      "Bash(MSYS_NO_PATHCONV=1 VPS_PASSWORD='Gh@0986260595' LOCAL_DIR=\".\" REMOTE_DIR=\"/opt/marketing-auto\" PYTHONIOENCODING=utf-8 python .deploy-helper/sftp_upload.py)",
+      "Bash(python .deploy-helper/ssh_run.py 'cd /opt/marketing-auto && cp .env.example .env && JWT=$\\(openssl rand -hex 32\\) && ADMIN=$\\(openssl rand -base64 18 | tr -d \"=+/\"\\) && sed -i \"s|JWT_SECRET=.*|JWT_SECRET=$JWT|\" .env && sed -i \"s|ADMIN_PASSWORD=.*|ADMIN_PASSWORD=$ADMIN|\" .env && echo \"=== .env created ===\" && echo \"ADMIN_PASSWORD=$ADMIN\" && echo \"=== Full .env ===\" && cat .env')",
+      "Bash(MSYS_NO_PATHCONV=1 VPS_PASSWORD='Gh@0986260595' PYTHONIOENCODING=utf-8 python .deploy-helper/ssh_run.py 'cd /opt/marketing-auto && docker compose up -d --build 2>&1 | tail -40')",
+      "Bash(MSYS_NO_PATHCONV=1 VPS_PASSWORD='Gh@0986260595' PYTHONIOENCODING=utf-8 python .deploy-helper/ssh_run.py 'cd /opt/marketing-auto && docker compose ps && echo --- LOGS --- && docker compose logs --tail=20 app && echo --- TEST HTTP --- && curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:3000/api/health && curl -s http://localhost:3000/api/health')",
+      "Bash(MSYS_NO_PATHCONV=1 VPS_PASSWORD='Gh@0986260595' PYTHONIOENCODING=utf-8 python .deploy-helper/ssh_run.py 'ufw status 2>&1 | head -10 && echo --- && \\(ufw allow 22/tcp && ufw allow 3000/tcp && ufw --force enable && ufw status\\) 2>&1 | tail -20')",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code} | time %{time_total}s\\\\n\" --max-time 10 http://187.77.138.179:3000/api/health)",
+      "Bash(curl -s --max-time 10 http://187.77.138.179:3000/api/health)",
+      "Bash(MSYS_NO_PATHCONV=1 VPS_PASSWORD='Gh@0986260595' PYTHONIOENCODING=utf-8 python .deploy-helper/ssh_run.py 'cd /opt/marketing-auto && docker compose up -d --build 2>&1 | tail -20 && sleep 3 && echo === LOGS === && docker compose logs --tail=15 app && echo === HTTP === && curl -s http://localhost:3000/api/health')",
+      "Bash(rm -rf .deploy-helper)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://187.77.138.179:3000/api/health)",
+      "Bash(start \"\" \"https://developers.facebook.com/tools/explorer/\")",
+      "Bash(start \"\" \"http://187.77.138.179:3000\")",
+      "Bash(start \"\" \"https://developers.facebook.com/apps\")"
+    ]
+  }
+}
