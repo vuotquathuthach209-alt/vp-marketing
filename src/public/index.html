@@ -37,6 +37,7 @@
         <button data-tab="media" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">🖼️ Thư viện media</button>
         <button data-tab="campaigns" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">🔁 Tự động đăng</button>
         <button data-tab="autoreply" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">🤖 Auto trả lời</button>
+        <button data-tab="wiki" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">📚 Kiến thức AI</button>
         <button data-tab="settings" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">⚙️ Cấu hình</button>
       </nav>
       <button id="logout-btn" class="mt-8 text-sm text-slate-400 hover:text-white">↩ Đăng xuất</button>
@@ -163,6 +164,82 @@
 
         <h3 class="font-bold mb-3">📜 Lịch sử trả lời gần đây</h3>
         <div id="autoreply-log" class="space-y-2 max-w-3xl"></div>
+      </section>
+
+      <!-- WIKI TAB -->
+      <section data-panel="wiki" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-2">📚 Kiến thức AI (Wiki Memory)</h2>
+        <p class="text-slate-500 mb-6 text-sm">Nhập thông tin doanh nghiệp, sản phẩm, chương trình, FAQ... AI sẽ tự động tra cứu và dùng đúng số liệu khi viết caption. <b>Càng nhiều dữ liệu, content càng chính xác.</b></p>
+
+        <!-- Stats -->
+        <div id="wiki-stats" class="grid grid-cols-5 gap-3 mb-6 max-w-4xl"></div>
+
+        <!-- Editor -->
+        <div class="bg-white rounded-xl shadow p-6 max-w-4xl mb-6">
+          <h3 class="font-bold mb-4">✍️ Thêm / Sửa bài viết</h3>
+          <input type="hidden" id="wiki-id" />
+          <div class="grid grid-cols-2 gap-4 mb-3">
+            <div>
+              <label class="block text-sm font-semibold mb-1">Loại (namespace)</label>
+              <select id="wiki-namespace" class="w-full border rounded-lg px-3 py-2">
+                <option value="business">🏢 business — Thông tin doanh nghiệp</option>
+                <option value="product">🏨 product — Sản phẩm/phòng/combo</option>
+                <option value="campaign">🎯 campaign — Chiến dịch đang chạy</option>
+                <option value="faq">❓ faq — Câu hỏi thường gặp</option>
+                <option value="lesson">📚 lesson — Bài học từ data</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-semibold mb-1">Tags (cách nhau dấu phẩy)</label>
+              <input id="wiki-tags" class="w-full border rounded-lg px-3 py-2" placeholder="vd: deluxe, cuối tuần, giảm giá" />
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="block text-sm font-semibold mb-1">Tiêu đề</label>
+            <input id="wiki-title" class="w-full border rounded-lg px-3 py-2" placeholder="VD: Phòng Deluxe view đồi thông" />
+          </div>
+          <div class="mb-3">
+            <label class="block text-sm font-semibold mb-1">Nội dung (Markdown được)</label>
+            <textarea id="wiki-content" rows="10" class="w-full border rounded-lg px-3 py-2 font-mono text-sm"
+              placeholder="VD:&#10;- Diện tích: 28m²&#10;- Giá: 1.2tr/đêm (cuối tuần 1.5tr)&#10;- Tiện nghi: ban công, máy pha cà phê, minibar miễn phí&#10;- Điểm khác biệt: view trực diện đồi thông, không bị chắn&#10;- Phù hợp: couple, honeymoon"></textarea>
+          </div>
+          <div class="mb-4">
+            <label class="flex items-center gap-2">
+              <input type="checkbox" id="wiki-always-inject" class="w-4 h-4" />
+              <span class="text-sm">⭐ Luôn đưa vào mọi caption (dùng cho business overview, brand voice)</span>
+            </label>
+          </div>
+          <div class="flex gap-3">
+            <button id="btn-wiki-save" class="bg-green-600 text-white px-5 py-2.5 rounded-lg font-semibold hover:bg-green-700">💾 Lưu</button>
+            <button id="btn-wiki-reset" class="bg-slate-300 text-slate-700 px-5 py-2.5 rounded-lg font-semibold hover:bg-slate-400">↺ Mới</button>
+          </div>
+          <p id="wiki-status" class="text-sm mt-3"></p>
+        </div>
+
+        <!-- Test context builder -->
+        <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 max-w-4xl mb-6">
+          <h3 class="font-bold mb-2">🧪 Test: AI sẽ thấy gì khi viết caption?</h3>
+          <p class="text-xs text-slate-600 mb-3">Nhập chủ đề giả lập để xem AI sẽ rút trích đúng những bài Wiki nào.</p>
+          <div class="flex gap-2">
+            <input id="wiki-preview-topic" class="flex-1 border rounded-lg px-3 py-2" placeholder="VD: Combo 2N1Đ cuối tuần Đà Lạt" />
+            <button id="btn-wiki-preview" class="bg-blue-600 text-white px-5 py-2 rounded-lg font-semibold hover:bg-blue-700">Xem context</button>
+          </div>
+          <pre id="wiki-preview-result" class="mt-3 text-xs bg-white border rounded-lg p-3 whitespace-pre-wrap font-mono hidden"></pre>
+        </div>
+
+        <!-- List -->
+        <h3 class="font-bold mb-3">📋 Danh sách Wiki entries</h3>
+        <div class="mb-3 flex gap-2">
+          <select id="wiki-filter-ns" class="border rounded-lg px-3 py-2 text-sm">
+            <option value="">-- Tất cả namespace --</option>
+            <option value="business">🏢 business</option>
+            <option value="product">🏨 product</option>
+            <option value="campaign">🎯 campaign</option>
+            <option value="faq">❓ faq</option>
+            <option value="lesson">📚 lesson</option>
+          </select>
+        </div>
+        <div id="wiki-list" class="space-y-2 max-w-4xl"></div>
       </section>
 
       <!-- SETTINGS TAB -->

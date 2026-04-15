@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config';
 import { pickKey, getAllKeys } from './keyrotator';
+import { buildContext } from './wiki';
 
 /**
  * Gọi Claude với cơ chế failover: nếu key hiện tại lỗi (rate limit, quota...)
@@ -42,7 +43,12 @@ NGUYÊN TẮC:
 - KHÔNG markdown, chỉ text thuần + emoji`;
 
 export async function generateCaption(topic: string, extraContext?: string): Promise<string> {
-  const userPrompt = `Chủ đề: ${topic}${extraContext ? `\n\nThông tin thêm: ${extraContext}` : ''}\n\nHãy viết caption Facebook cho chủ đề trên.`;
+  // Tự động inject Wiki context (RAG): doanh nghiệp, brand voice, campaign, product, faq
+  const wikiCtx = buildContext(topic);
+  const ctxBlock = wikiCtx
+    ? `\n\n--- KIẾN THỨC DOANH NGHIỆP (dùng chính xác số liệu, tên, tone bên dưới) ---\n${wikiCtx}\n--- HẾT KIẾN THỨC ---\n`
+    : '';
+  const userPrompt = `Chủ đề: ${topic}${ctxBlock}${extraContext ? `\n\nThông tin thêm: ${extraContext}` : ''}\n\nHãy viết caption Facebook cho chủ đề trên. Nếu có kiến thức doanh nghiệp bên trên, hãy dựa vào đó (giá, tên phòng, chương trình khuyến mãi) — KHÔNG bịa số liệu.`;
 
   const msg = await callWithFailover((client) =>
     client.messages.create({

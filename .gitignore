@@ -34,3 +34,6 @@ Thumbs.db
 
 # Deploy helpers (có thể chứa credentials)
 .deploy-helper/
+
+# Claude local settings (có thể chứa secrets)
+.claude/

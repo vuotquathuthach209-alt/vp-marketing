@@ -88,6 +88,22 @@ CREATE TABLE IF NOT EXISTS auto_reply_log (
   error TEXT,
   created_at INTEGER NOT NULL
 );
+
+-- Wiki-style knowledge base cho AI
+CREATE TABLE IF NOT EXISTS knowledge_wiki (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  namespace TEXT NOT NULL,     -- 'business' | 'product' | 'campaign' | 'faq' | 'lesson'
+  slug TEXT NOT NULL,          -- 'sonder-overview', 'room-deluxe', ...
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,       -- Markdown
+  tags TEXT NOT NULL DEFAULT '[]',   -- JSON array
+  always_inject INTEGER NOT NULL DEFAULT 0,  -- 1 = luôn đưa vào context
+  active INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE(namespace, slug)
+);
+CREATE INDEX IF NOT EXISTS idx_wiki_ns_active ON knowledge_wiki(namespace, active);
 `);
 
 // Helpers

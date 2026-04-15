@@ -68,6 +68,7 @@ function switchTab(tab) {
   if (tab === 'settings') loadSettings();
   if (tab === 'campaigns') loadCampaigns();
   if (tab === 'autoreply') loadAutoReply();
+  if (tab === 'wiki') loadWiki();
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
   b.addEventListener('click', () => switchTab(b.dataset.tab));
@@ -545,6 +546,150 @@ window.saveAutoReply = async (pageId) => {
     st.textContent = '❌ ' + e.message;
   }
 };
+
+// ====== Wiki (Knowledge Base) ======
+const WIKI_NS_LABELS = {
+  business: '🏢 business',
+  product: '🏨 product',
+  campaign: '🎯 campaign',
+  faq: '❓ faq',
+  lesson: '📚 lesson',
+};
+
+async function loadWiki() {
+  await loadWikiStats();
+  await loadWikiList();
+}
+
+async function loadWikiStats() {
+  const stats = await api('/wiki/stats');
+  const counts = { business: 0, product: 0, campaign: 0, faq: 0, lesson: 0 };
+  for (const s of stats) counts[s.namespace] = s.count;
+  const el = document.getElementById('wiki-stats');
+  el.innerHTML = Object.entries(WIKI_NS_LABELS).map(([ns, label]) => `
+    <div class="bg-white border rounded-lg p-4 text-center">
+      <div class="text-2xl font-bold text-blue-600">${counts[ns] || 0}</div>
+      <div class="text-xs text-slate-600 mt-1">${label}</div>
+    </div>
+  `).join('');
+}
+
+async function loadWikiList() {
+  const ns = document.getElementById('wiki-filter-ns').value;
+  const url = ns ? `/wiki?namespace=${ns}` : '/wiki';
+  const items = await api(url);
+  const el = document.getElementById('wiki-list');
+  if (items.length === 0) {
+    el.innerHTML = '<p class="text-sm text-slate-500">Chưa có bài viết nào. Thêm bài đầu tiên ở form phía trên.</p>';
+    return;
+  }
+  el.innerHTML = items.map((w) => {
+    let tags = [];
+    try { tags = JSON.parse(w.tags || '[]'); } catch {}
+    const tagBadges = tags.map((t) => `<span class="bg-slate-200 text-xs px-2 py-0.5 rounded">${t}</span>`).join(' ');
+    const star = w.always_inject ? '<span class="text-yellow-500" title="Luôn inject">⭐</span>' : '';
+    return `
+      <div class="bg-white border rounded-lg p-4 flex justify-between items-start gap-4">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 text-xs text-slate-500 mb-1">
+            <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded">${WIKI_NS_LABELS[w.namespace] || w.namespace}</span>
+            <span class="font-mono">${w.slug}</span>
+            ${star}
+          </div>
+          <div class="font-semibold">${escapeHtml(w.title)}</div>
+          <div class="text-sm text-slate-600 mt-1 line-clamp-2">${escapeHtml(w.content.slice(0, 200))}${w.content.length > 200 ? '...' : ''}</div>
+          ${tagBadges ? `<div class="mt-2 flex flex-wrap gap-1">${tagBadges}</div>` : ''}
+        </div>
+        <div class="flex flex-col gap-1">
+          <button onclick="editWiki(${w.id})" class="text-blue-600 text-sm hover:underline">Sửa</button>
+          <button onclick="delWiki(${w.id})" class="text-red-500 text-sm hover:underline">Xóa</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function resetWikiForm() {
+  document.getElementById('wiki-id').value = '';
+  document.getElementById('wiki-namespace').value = 'business';
+  document.getElementById('wiki-title').value = '';
+  document.getElementById('wiki-content').value = '';
+  document.getElementById('wiki-tags').value = '';
+  document.getElementById('wiki-always-inject').checked = false;
+  document.getElementById('wiki-status').textContent = '';
+}
+
+window.editWiki = async (id) => {
+  const items = await api('/wiki');
+  const w = items.find((x) => x.id === id);
+  if (!w) return;
+  document.getElementById('wiki-id').value = w.id;
+  document.getElementById('wiki-namespace').value = w.namespace;
+  document.getElementById('wiki-title').value = w.title;
+  document.getElementById('wiki-content').value = w.content;
+  let tags = [];
+  try { tags = JSON.parse(w.tags || '[]'); } catch {}
+  document.getElementById('wiki-tags').value = tags.join(', ');
+  document.getElementById('wiki-always-inject').checked = !!w.always_inject;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+};
+
+window.delWiki = async (id) => {
+  if (!confirm('Xóa bài Wiki này?')) return;
+  await api(`/wiki/${id}`, { method: 'DELETE' });
+  loadWiki();
+};
+
+document.getElementById('btn-wiki-save').addEventListener('click', async () => {
+  const id = document.getElementById('wiki-id').value;
+  const body = {
+    namespace: document.getElementById('wiki-namespace').value,
+    title: document.getElementById('wiki-title').value.trim(),
+    content: document.getElementById('wiki-content').value.trim(),
+    tags: document.getElementById('wiki-tags').value.split(',').map((s) => s.trim()).filter(Boolean),
+    always_inject: document.getElementById('wiki-always-inject').checked,
+  };
+  if (!body.title || !body.content) {
+    document.getElementById('wiki-status').textContent = '❌ Thiếu tiêu đề hoặc nội dung';
+    return;
+  }
+  try {
+    if (id) {
+      await api(`/wiki/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+    } else {
+      await api('/wiki', { method: 'POST', body: JSON.stringify(body) });
+    }
+    document.getElementById('wiki-status').textContent = '✅ Đã lưu';
+    resetWikiForm();
+    loadWiki();
+    setTimeout(() => document.getElementById('wiki-status').textContent = '', 3000);
+  } catch (e) {
+    document.getElementById('wiki-status').textContent = '❌ ' + e.message;
+  }
+});
+
+document.getElementById('btn-wiki-reset').addEventListener('click', resetWikiForm);
+document.getElementById('wiki-filter-ns').addEventListener('change', loadWikiList);
+
+document.getElementById('btn-wiki-preview').addEventListener('click', async () => {
+  const topic = document.getElementById('wiki-preview-topic').value.trim();
+  if (!topic) return;
+  const el = document.getElementById('wiki-preview-result');
+  el.classList.remove('hidden');
+  el.textContent = 'Đang tra cứu...';
+  try {
+    const r = await api('/wiki/preview', { method: 'POST', body: JSON.stringify({ topic }) });
+    el.textContent = r.context
+      ? `[${r.length} ký tự sẽ inject vào prompt của Claude]\n\n${r.context}`
+      : '(Không có Wiki entry nào match — AI sẽ viết caption chung chung. Hãy thêm Wiki entries.)';
+  } catch (e) {
+    el.textContent = '❌ ' + e.message;
+  }
+});
 
 // ====== Init ======
 checkAuth();
