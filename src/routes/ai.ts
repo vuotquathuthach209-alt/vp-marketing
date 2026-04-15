@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { generateCaption, generateImagePrompt } from '../services/claude';
-import { generateImage, generateVideo } from '../services/falai';
+import { generateVideo } from '../services/falai';
+import { generateImageSmart } from '../services/imagegen';
 import { authMiddleware } from '../middleware/auth';
 
 const router = Router();
@@ -27,8 +28,8 @@ router.post('/image', async (req, res) => {
       finalPrompt = await generateImagePrompt(caption);
     }
     if (!finalPrompt) return res.status(400).json({ error: 'Thiếu prompt hoặc caption' });
-    const mediaId = await generateImage(finalPrompt);
-    res.json({ mediaId, prompt: finalPrompt });
+    const r = await generateImageSmart(finalPrompt);
+    res.json({ mediaId: r.mediaId, prompt: finalPrompt, provider: r.provider, model: r.model });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

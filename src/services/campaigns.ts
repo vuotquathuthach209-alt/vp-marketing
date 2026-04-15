@@ -1,6 +1,6 @@
 import { db } from '../db';
 import { generateCaption, generateImagePrompt } from './claude';
-import { generateImage } from './falai';
+import { generateImageSmart } from './imagegen';
 import { publishText, publishImage, mediaFullPath } from './facebook';
 
 /**
@@ -44,7 +44,8 @@ export async function runCampaigns() {
       let mediaFilename: string | null = null;
       if (c.with_image) {
         const prompt = await generateImagePrompt(caption);
-        mediaId = await generateImage(prompt);
+        const imgR = await generateImageSmart(prompt);
+        mediaId = imgR.mediaId;
         const m = db.prepare(`SELECT filename FROM media WHERE id = ?`).get(mediaId) as any;
         mediaFilename = m?.filename;
       }

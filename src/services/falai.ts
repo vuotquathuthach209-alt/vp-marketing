@@ -16,24 +16,43 @@ function getKey(): string {
  */
 export async function generateImage(prompt: string): Promise<number> {
   const key = getKey();
+  if (!key) throw new Error('Chưa cấu hình fal.ai API key. Vào Cấu hình → ô 🟠 fal.ai Keys để nhập.');
 
-  const resp = await axios.post(
-    'https://fal.run/fal-ai/flux/schnell',
-    {
-      prompt,
-      image_size: 'landscape_4_3',
-      num_inference_steps: 4,
-      num_images: 1,
-      enable_safety_checker: true,
-    },
-    {
-      headers: {
-        Authorization: `Key ${key}`,
-        'Content-Type': 'application/json',
+  let resp;
+  try {
+    resp = await axios.post(
+      'https://fal.run/fal-ai/flux/schnell',
+      {
+        prompt,
+        image_size: 'landscape_4_3',
+        num_inference_steps: 4,
+        num_images: 1,
+        enable_safety_checker: true,
       },
-      timeout: 120000,
+      {
+        headers: {
+          Authorization: `Key ${key}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 120000,
+      }
+    );
+  } catch (e: any) {
+    // Trả message cụ thể từ fal.ai thay vì generic axios error
+    const status = e?.response?.status;
+    const detail = e?.response?.data?.detail || e?.response?.data?.error || e?.response?.data;
+    const detailStr = typeof detail === 'string' ? detail : JSON.stringify(detail || {});
+    if (status === 403 && /balance|locked|exhausted/i.test(detailStr)) {
+      throw new Error('fal.ai: Tài khoản hết tiền. Nạp thêm tại https://fal.ai/dashboard/billing rồi thử lại.');
     }
-  );
+    if (status === 401) {
+      throw new Error('fal.ai: API key không hợp lệ (401). Kiểm tra lại key ở tab Cấu hình.');
+    }
+    if (status === 429) {
+      throw new Error('fal.ai: Quá rate limit (429). Đợi 1-2 phút rồi thử lại.');
+    }
+    throw new Error(`fal.ai gen ảnh fail (HTTP ${status || '?'}): ${detailStr.slice(0, 200)}`);
+  }
 
   const imageUrl = resp.data?.images?.[0]?.url;
   if (!imageUrl) throw new Error('fal.ai không trả về ảnh');

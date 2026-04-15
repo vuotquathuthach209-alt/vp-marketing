@@ -32,18 +32,34 @@ router.get('/router', (req, res) => {
   res.json(getRouterStatus());
 });
 
-// Cập nhật API keys (hỗ trợ nhiều key, cách nhau bằng xuống dòng hoặc dấu phẩy)
+// Thêm API keys mới (APPEND mode — không xoá key cũ, tự dedupe)
+// Chấp nhận nhiều key trong 1 lần, cách nhau bằng xuống dòng hoặc dấu phẩy
 router.post('/keys', (req, res) => {
   const { anthropic_api_key, fal_api_key, google_api_key, groq_api_key } = req.body;
-  // Chỉ ghi đè nếu giá trị mới KHÔNG phải dạng masked (***xxxx)
-  const isMasked = (v: string) => /^\*\*\*/.test(v.trim());
-  const maybeSave = (name: string, val: any) => {
-    if (typeof val === 'string' && !isMasked(val)) setSetting(name, val.trim());
+  const isMaskedLine = (v: string) => /^\*\*\*/.test(v.trim());
+
+  // Parse input thành list key, bỏ qua các dòng masked (***xxxx)
+  const parseInput = (val: any): string[] => {
+    if (typeof val !== 'string') return [];
+    return val
+      .split(/[\n,]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0 && !isMaskedLine(s));
   };
-  maybeSave('anthropic_api_key', anthropic_api_key);
-  maybeSave('fal_api_key', fal_api_key);
-  maybeSave('google_api_key', google_api_key);
-  maybeSave('groq_api_key', groq_api_key);
+
+  // Merge key mới với key cũ, dedupe, lưu lại
+  const appendKeys = (name: string, val: any, fallback?: string) => {
+    const newKeys = parseInput(val);
+    if (newKeys.length === 0) return;
+    const existing = getAllKeys(name, fallback);
+    const merged = Array.from(new Set([...existing, ...newKeys]));
+    setSetting(name, merged.join('\n'));
+  };
+
+  appendKeys('anthropic_api_key', anthropic_api_key, config.anthropicApiKey);
+  appendKeys('fal_api_key', fal_api_key, config.falApiKey);
+  appendKeys('google_api_key', google_api_key);
+  appendKeys('groq_api_key', groq_api_key);
 
   res.json({
     ok: true,
@@ -52,6 +68,34 @@ router.post('/keys', (req, res) => {
     google_count: countKeys('google_api_key'),
     groq_count: countKeys('groq_api_key'),
   });
+});
+
+// Cấu hình provider gen ảnh (google | pollinations | fal | auto)
+router.get('/image-provider', (req, res) => {
+  res.json({ provider: getSetting('image_provider') || 'auto' });
+});
+
+router.post('/image-provider', (req, res) => {
+  const { provider } = req.body;
+  if (!['google', 'pollinations', 'fal', 'auto'].includes(provider)) {
+    return res.status(400).json({ error: 'Provider không hợp lệ' });
+  }
+  setSetting('image_provider', provider);
+  res.json({ ok: true, provider });
+});
+
+// Xoá toàn bộ key của 1 provider
+router.delete('/keys/:provider', (req, res) => {
+  const map: Record<string, string> = {
+    anthropic: 'anthropic_api_key',
+    fal: 'fal_api_key',
+    google: 'google_api_key',
+    groq: 'groq_api_key',
+  };
+  const name = map[req.params.provider];
+  if (!name) return res.status(400).json({ error: 'Provider không hợp lệ' });
+  setSetting(name, '');
+  res.json({ ok: true });
 });
 
 // Lấy danh sách Fanpage

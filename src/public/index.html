@@ -349,16 +349,19 @@
 
         <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6">
           <h3 class="font-bold mb-4">🔑 API Keys</h3>
-          <p class="text-xs text-slate-500 mb-4">💡 Có thể nhập <b>nhiều key</b> mỗi dòng. Hệ thống tự xoay vòng round-robin &amp; failover. Càng nhiều provider (Anthropic + Google + Groq) thì chi phí càng giảm.</p>
+          <p class="text-xs text-slate-500 mb-4">💡 Nhập <b>key mới</b> (mỗi dòng 1 key) — hệ thống sẽ <b>THÊM VÀO</b> danh sách, không xoá key cũ. Muốn xoá hết key của provider nào thì bấm nút 🗑️ bên cạnh. Round-robin &amp; failover tự động.</p>
 
           <div class="mb-3">
             <label class="block text-sm font-semibold mb-1">
               🟣 Anthropic Keys (Claude) — caption chính, reply phức tạp
               <span id="anthropic-count" class="ml-2 text-xs font-normal text-blue-600"></span>
             </label>
-            <textarea id="key-anthropic" rows="3" placeholder="sk-ant-key1...&#10;sk-ant-key2..."
+            <textarea id="key-anthropic" rows="3" placeholder="Dán key mới vào đây (sk-ant-...) — key cũ vẫn giữ nguyên"
               class="w-full border rounded-lg px-3 py-2 font-mono text-xs"></textarea>
-            <p class="text-xs text-slate-400 mt-1">Lấy tại: <a href="https://console.anthropic.com/settings/keys" target="_blank" class="text-blue-600 underline">console.anthropic.com</a></p>
+            <div class="flex justify-between items-center mt-1">
+              <p class="text-xs text-slate-400">Lấy tại: <a href="https://console.anthropic.com/settings/keys" target="_blank" class="text-blue-600 underline">console.anthropic.com</a></p>
+              <button data-wipe="anthropic" class="btn-wipe text-xs text-red-600 hover:underline">🗑️ Xoá tất cả</button>
+            </div>
           </div>
 
           <div class="mb-3">
@@ -366,9 +369,12 @@
               🔵 Google AI Keys (Gemini Flash) — image prompt, rewrite, rẻ 40x
               <span id="google-count" class="ml-2 text-xs font-normal text-blue-600"></span>
             </label>
-            <textarea id="key-google" rows="2" placeholder="AIzaSy..."
+            <textarea id="key-google" rows="2" placeholder="Dán key mới (AIzaSy...) — key cũ vẫn giữ"
               class="w-full border rounded-lg px-3 py-2 font-mono text-xs"></textarea>
-            <p class="text-xs text-slate-400 mt-1">Lấy MIỄN PHÍ tại: <a href="https://aistudio.google.com/apikey" target="_blank" class="text-blue-600 underline">aistudio.google.com/apikey</a></p>
+            <div class="flex justify-between items-center mt-1">
+              <p class="text-xs text-slate-400">Lấy MIỄN PHÍ tại: <a href="https://aistudio.google.com/apikey" target="_blank" class="text-blue-600 underline">aistudio.google.com/apikey</a></p>
+              <button data-wipe="google" class="btn-wipe text-xs text-red-600 hover:underline">🗑️ Xoá tất cả</button>
+            </div>
           </div>
 
           <div class="mb-3">
@@ -376,9 +382,12 @@
               🟢 Groq Keys (Gemma / Llama) — classify, reply đơn giản, gần miễn phí
               <span id="groq-count" class="ml-2 text-xs font-normal text-blue-600"></span>
             </label>
-            <textarea id="key-groq" rows="2" placeholder="gsk_..."
+            <textarea id="key-groq" rows="2" placeholder="Dán key mới (gsk_...) — key cũ vẫn giữ"
               class="w-full border rounded-lg px-3 py-2 font-mono text-xs"></textarea>
-            <p class="text-xs text-slate-400 mt-1">Lấy MIỄN PHÍ tại: <a href="https://console.groq.com/keys" target="_blank" class="text-blue-600 underline">console.groq.com/keys</a></p>
+            <div class="flex justify-between items-center mt-1">
+              <p class="text-xs text-slate-400">Lấy MIỄN PHÍ tại: <a href="https://console.groq.com/keys" target="_blank" class="text-blue-600 underline">console.groq.com/keys</a></p>
+              <button data-wipe="groq" class="btn-wipe text-xs text-red-600 hover:underline">🗑️ Xoá tất cả</button>
+            </div>
           </div>
 
           <div class="mb-3">
@@ -386,12 +395,29 @@
               🟠 fal.ai Keys — gen ảnh/video
               <span id="fal-count" class="ml-2 text-xs font-normal text-blue-600"></span>
             </label>
-            <textarea id="key-fal" rows="2" placeholder="key1..."
+            <textarea id="key-fal" rows="2" placeholder="Dán key mới — key cũ vẫn giữ"
               class="w-full border rounded-lg px-3 py-2 font-mono text-xs"></textarea>
+            <div class="flex justify-end mt-1">
+              <button data-wipe="fal" class="btn-wipe text-xs text-red-600 hover:underline">🗑️ Xoá tất cả</button>
+            </div>
           </div>
 
-          <button id="btn-save-keys" class="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-semibold">Lưu API Keys</button>
+          <button id="btn-save-keys" class="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-semibold">➕ Thêm key mới</button>
           <span id="keys-status" class="ml-3 text-sm text-green-600"></span>
+
+          <hr class="my-5">
+          <div>
+            <label class="block text-sm font-semibold mb-1">🎨 Provider gen ảnh</label>
+            <select id="image-provider" class="border rounded-lg px-3 py-2 text-sm">
+              <option value="auto">Tự động (Google → Pollinations → fal.ai)</option>
+              <option value="pollinations">🆓 Pollinations.ai (miễn phí 100%, không cần key)</option>
+              <option value="google">🟦 Google Imagen/Nano Banana (cần paid tier)</option>
+              <option value="fal">🟧 fal.ai Flux schnell (cần nạp balance)</option>
+            </select>
+            <button id="btn-save-image-provider" class="ml-2 bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-semibold">Lưu</button>
+            <span id="image-provider-status" class="ml-2 text-xs text-green-600"></span>
+            <p class="text-xs text-slate-500 mt-1">💡 <b>Pollinations</b> miễn phí hoàn toàn, dùng Flux model, không giới hạn — khuyến nghị nếu bạn không muốn nạp tiền.</p>
+          </div>
         </div>
 
         <!-- Router status -->

@@ -415,6 +415,43 @@ document.getElementById('btn-save-keys').addEventListener('click', async () => {
   }
 });
 
+// Load + save image provider
+(async () => {
+  try {
+    const r = await api('/settings/image-provider');
+    const sel = document.getElementById('image-provider');
+    if (sel && r.provider) sel.value = r.provider;
+  } catch {}
+})();
+document.getElementById('btn-save-image-provider')?.addEventListener('click', async () => {
+  const provider = document.getElementById('image-provider').value;
+  try {
+    await api('/settings/image-provider', { method: 'POST', body: JSON.stringify({ provider }) });
+    const el = document.getElementById('image-provider-status');
+    el.textContent = '✅ Đã lưu';
+    setTimeout(() => (el.textContent = ''), 3000);
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
+// Nút 🗑️ xoá toàn bộ key của 1 provider
+document.querySelectorAll('.btn-wipe').forEach((btn) => {
+  btn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const provider = btn.getAttribute('data-wipe');
+    if (!confirm(`Xoá TẤT CẢ key của ${provider}? Hành động không thể hoàn tác.`)) return;
+    try {
+      await api(`/settings/keys/${provider}`, { method: 'DELETE' });
+      document.getElementById('keys-status').textContent = `🗑️ Đã xoá toàn bộ key ${provider}`;
+      await loadSettings();
+      setTimeout(() => document.getElementById('keys-status').textContent = '', 4000);
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+});
+
 document.getElementById('btn-add-page').addEventListener('click', async () => {
   const body = {
     fb_page_id: document.getElementById('page-fbid').value.trim(),
