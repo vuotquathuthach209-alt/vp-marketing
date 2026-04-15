@@ -34,7 +34,7 @@ interface RouteConfig {
 // Mặc định — sẽ đọc override từ bảng settings (key: 'router_config' JSON)
 const DEFAULT_ROUTES: Record<TaskType, RouteConfig> = {
   caption:       { provider: 'anthropic', model: 'claude-sonnet-4-6',      maxTokens: 1024 },
-  image_prompt:  { provider: 'google',    model: 'gemini-2.0-flash',       maxTokens: 400  },
+  image_prompt:  { provider: 'google',    model: 'gemini-1.5-flash',       maxTokens: 400  },
   classify:      { provider: 'groq',      model: 'gemma2-9b-it',           maxTokens: 100  },
   reply_simple:  { provider: 'anthropic', model: 'claude-haiku-4-5-20251001', maxTokens: 400 },
   reply_complex: { provider: 'anthropic', model: 'claude-sonnet-4-6',      maxTokens: 800  },
@@ -80,7 +80,7 @@ function defaultModelFor(p: Provider, task: TaskType): string {
       ? 'claude-sonnet-4-6'
       : 'claude-haiku-4-5-20251001';
   }
-  if (p === 'google') return 'gemini-2.0-flash';
+  if (p === 'google') return 'gemini-1.5-flash';
   if (p === 'groq') return 'gemma2-9b-it';
   return '';
 }
@@ -202,8 +202,8 @@ async function callGemini(route: RouteConfig, system: string, user: string): Pro
     } catch (e: any) {
       lastErr = e;
       const status = e?.response?.status;
-      if (![401, 403, 429, 500, 503].includes(status)) throw e;
-      console.warn(`[router/gemini] key ${key.slice(-6)} lỗi ${status}, thử key kế`);
+      if (![401, 403, 404, 429, 500, 503].includes(status)) throw e;
+      console.warn(`[router/gemini] key ${key.slice(-6)} lỗi ${status} model=${route.model}, thử key kế`);
     }
   }
   throw lastErr;

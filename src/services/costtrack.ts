@@ -9,6 +9,7 @@ const PRICING: Record<string, { in: number; out: number }> = {
   'claude-sonnet-4-6': { in: 3.0, out: 15.0 },
   'claude-haiku-4-5-20251001': { in: 0.8, out: 4.0 },
   'gemini-2.0-flash': { in: 0.1, out: 0.4 },
+  'gemini-1.5-flash': { in: 0.075, out: 0.30 },
   'gemma2-9b-it': { in: 0.2, out: 0.2 },
   'text-embedding-004': { in: 0.0, out: 0.0 }, // free tier
 };
