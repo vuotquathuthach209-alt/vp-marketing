@@ -3,6 +3,8 @@ import { db } from '../db';
 import { publishText, publishImage, publishVideo, mediaFullPath } from './facebook';
 import { runCampaigns } from './campaigns';
 import { runAutoReply } from './autoreply';
+import { pullMetrics } from './analytics';
+import { decidePendingWinners } from './abtest';
 
 interface PostRow {
   id: number;
@@ -84,5 +86,20 @@ export function startScheduler() {
   cron.schedule('*/5 * * * *', () => {
     runAutoReply().catch((e) => console.error('[scheduler] auto-reply error:', e));
   });
-  console.log('[scheduler] Đã khởi động: posts+campaigns mỗi phút, auto-reply mỗi 5 phút');
+  // Mỗi 2 giờ: pull FB insights cho các post đã đăng
+  cron.schedule('0 */2 * * *', () => {
+    pullMetrics()
+      .then((r) => console.log(`[scheduler] metrics pulled: ok=${r.ok} fail=${r.fail}`))
+      .catch((e) => console.error('[scheduler] metrics error:', e));
+  });
+  // Mỗi giờ: check A/B experiments nào đã đủ 24h → quyết định winner
+  cron.schedule('15 * * * *', () => {
+    try {
+      const n = decidePendingWinners();
+      if (n > 0) console.log(`[scheduler] A/B: decided ${n} winner(s)`);
+    } catch (e) {
+      console.error('[scheduler] ab decide error:', e);
+    }
+  });
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 5p, metrics 2h, ab decide 1h');
 }

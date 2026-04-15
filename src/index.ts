@@ -12,6 +12,7 @@ import postsRoutes from './routes/posts';
 import campaignsRoutes from './routes/campaigns';
 import autoreplyRoutes from './routes/autoreply';
 import wikiRoutes from './routes/wiki';
+import analyticsRoutes from './routes/analytics';
 
 const app = express();
 
@@ -31,6 +32,7 @@ app.use('/api/posts', postsRoutes);
 app.use('/api/campaigns', campaignsRoutes);
 app.use('/api/auto-reply', autoreplyRoutes);
 app.use('/api/wiki', wikiRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 

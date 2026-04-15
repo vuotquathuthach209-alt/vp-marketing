@@ -38,6 +38,7 @@
         <button data-tab="campaigns" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">🔁 Tự động đăng</button>
         <button data-tab="autoreply" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">🤖 Auto trả lời</button>
         <button data-tab="wiki" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">📚 Kiến thức AI</button>
+        <button data-tab="analytics" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">📊 Phân tích</button>
         <button data-tab="settings" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">⚙️ Cấu hình</button>
       </nav>
       <button id="logout-btn" class="mt-8 text-sm text-slate-400 hover:text-white">↩ Đăng xuất</button>
@@ -164,6 +165,46 @@
 
         <h3 class="font-bold mb-3">📜 Lịch sử trả lời gần đây</h3>
         <div id="autoreply-log" class="space-y-2 max-w-3xl"></div>
+      </section>
+
+      <!-- ANALYTICS TAB -->
+      <section data-panel="analytics" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-2">📊 Phân tích hiệu quả</h2>
+        <p class="text-slate-500 mb-6 text-sm">Tự động pull FB insights mỗi 2h. A/B test hook, auto-learn FAQ từ comment thực tế.</p>
+
+        <!-- Overview cards -->
+        <div id="analytics-overview" class="grid grid-cols-4 gap-4 mb-6 max-w-5xl"></div>
+
+        <div class="mb-6">
+          <button id="btn-refresh-metrics" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700">🔄 Pull metrics ngay</button>
+          <span id="refresh-status" class="ml-3 text-sm"></span>
+        </div>
+
+        <!-- Top posts -->
+        <h3 class="font-bold mb-3">🏆 Top 5 bài engagement cao nhất (30 ngày)</h3>
+        <div id="top-posts" class="space-y-2 max-w-5xl mb-8"></div>
+
+        <!-- A/B Test -->
+        <div class="bg-white rounded-xl shadow p-6 max-w-4xl mb-6">
+          <h3 class="font-bold mb-2">🧪 A/B Hook Testing</h3>
+          <p class="text-xs text-slate-500 mb-4">App sẽ gen 2 variant caption khác nhau ở HOOK (câu hỏi vs con số). Đăng cả 2, sau 24h tự chọn winner và ghi vào Wiki lesson.</p>
+          <div class="grid grid-cols-2 gap-3 mb-3">
+            <input id="ab-topic" class="border rounded-lg px-3 py-2" placeholder="Chủ đề test (VD: Combo Đà Lạt cuối tuần)" />
+            <select id="ab-page" class="border rounded-lg px-3 py-2"></select>
+          </div>
+          <button id="btn-ab-create" class="bg-green-600 text-white px-5 py-2 rounded-lg text-sm font-semibold">🎲 Tạo 2 variant</button>
+          <div id="ab-preview" class="mt-4 hidden"></div>
+          <h4 class="font-semibold text-sm mt-6 mb-2">Lịch sử A/B</h4>
+          <div id="ab-list" class="space-y-2"></div>
+        </div>
+
+        <!-- FAQ Auto-learn -->
+        <div class="bg-white rounded-xl shadow p-6 max-w-4xl mb-6">
+          <h3 class="font-bold mb-2">🎓 FAQ Auto-learn</h3>
+          <p class="text-xs text-slate-500 mb-4">Scan 100 comment gần nhất, phân cụm câu hỏi lặp lại → gợi ý FAQ để bạn thêm vào Wiki.</p>
+          <button id="btn-faq-analyze" class="bg-purple-600 text-white px-5 py-2 rounded-lg text-sm font-semibold">🔍 Phân tích comment</button>
+          <div id="faq-suggestions" class="mt-4"></div>
+        </div>
       </section>
 
       <!-- WIKI TAB -->

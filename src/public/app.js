@@ -69,6 +69,7 @@ function switchTab(tab) {
   if (tab === 'campaigns') loadCampaigns();
   if (tab === 'autoreply') loadAutoReply();
   if (tab === 'wiki') loadWiki();
+  if (tab === 'analytics') loadAnalytics();
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
   b.addEventListener('click', () => switchTab(b.dataset.tab));
@@ -741,6 +742,170 @@ document.getElementById('btn-wiki-preview').addEventListener('click', async () =
     el.textContent = '❌ ' + e.message;
   }
 });
+
+// ====== Analytics ======
+async function loadAnalytics() {
+  await loadOverview();
+  await loadTopPosts();
+  await loadABList();
+  // Populate page dropdown
+  const sel = document.getElementById('ab-page');
+  sel.innerHTML = state.pages.map((p) => `<option value="${p.id}">${p.name}</option>`).join('');
+}
+
+async function loadOverview() {
+  const r = await api('/analytics/overview?days=30');
+  const el = document.getElementById('analytics-overview');
+  const rate = ((r.avg_engagement_rate || 0) * 100).toFixed(2);
+  el.innerHTML = `
+    <div class="bg-white border rounded-lg p-4">
+      <div class="text-xs text-slate-500">Tổng bài (30d)</div>
+      <div class="text-2xl font-bold text-blue-600 mt-1">${r.total_posts || 0}</div>
+    </div>
+    <div class="bg-white border rounded-lg p-4">
+      <div class="text-xs text-slate-500">Tổng Reach</div>
+      <div class="text-2xl font-bold text-green-600 mt-1">${(r.total_reach || 0).toLocaleString()}</div>
+    </div>
+    <div class="bg-white border rounded-lg p-4">
+      <div class="text-xs text-slate-500">Tổng tương tác</div>
+      <div class="text-2xl font-bold text-purple-600 mt-1">${(r.total_engagement || 0).toLocaleString()}</div>
+    </div>
+    <div class="bg-white border rounded-lg p-4">
+      <div class="text-xs text-slate-500">Engagement rate TB</div>
+      <div class="text-2xl font-bold text-orange-600 mt-1">${rate}%</div>
+    </div>
+  `;
+}
+
+async function loadTopPosts() {
+  const r = await api('/analytics/overview?days=30');
+  const el = document.getElementById('top-posts');
+  const list = r.top_posts || [];
+  if (list.length === 0) {
+    el.innerHTML = '<p class="text-sm text-slate-500">Chưa có data. Bấm "Pull metrics ngay" sau khi đã đăng bài.</p>';
+    return;
+  }
+  el.innerHTML = list.map((p, i) => `
+    <div class="bg-white border rounded-lg p-4 flex justify-between items-start gap-4">
+      <div class="flex-1 min-w-0">
+        <div class="text-xs text-slate-500 mb-1">#${i + 1} • Post ${p.id}</div>
+        <div class="text-sm line-clamp-2">${escapeHtml(p.caption.slice(0, 200))}</div>
+      </div>
+      <div class="text-right text-sm whitespace-nowrap">
+        <div>👁️ ${(p.reach || 0).toLocaleString()}</div>
+        <div>❤️ ${p.reactions || 0} • 💬 ${p.comments || 0} • 🔁 ${p.shares || 0}</div>
+        <div class="font-bold text-blue-600 mt-1">Score: ${p.engagement || 0}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+document.getElementById('btn-refresh-metrics').addEventListener('click', async () => {
+  const st = document.getElementById('refresh-status');
+  st.textContent = 'Đang pull từ Facebook...';
+  st.className = 'ml-3 text-sm text-slate-500';
+  try {
+    const r = await api('/analytics/refresh', { method: 'POST' });
+    st.textContent = `✅ OK: ${r.ok}, lỗi: ${r.fail}`;
+    st.className = 'ml-3 text-sm text-green-600';
+    loadOverview();
+    loadTopPosts();
+  } catch (e) {
+    st.textContent = '❌ ' + e.message;
+    st.className = 'ml-3 text-sm text-red-600';
+  }
+});
+
+// ===== A/B =====
+async function loadABList() {
+  const list = await api('/analytics/ab');
+  const el = document.getElementById('ab-list');
+  if (list.length === 0) {
+    el.innerHTML = '<p class="text-xs text-slate-500">Chưa có experiment nào.</p>';
+    return;
+  }
+  el.innerHTML = list.map((e) => {
+    const status = e.winner
+      ? `<span class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs">Winner: ${e.winner} (${(e.winner_score || 0).toFixed(3)})</span>`
+      : `<span class="bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded text-xs">Đang chờ data...</span>`;
+    return `
+      <div class="border rounded-lg p-3 text-sm">
+        <div class="flex justify-between items-start">
+          <div class="font-semibold">${escapeHtml(e.topic)}</div>
+          ${status}
+        </div>
+        <div class="text-xs text-slate-500 mt-1">${e.page_name || ''} • ${new Date(e.created_at).toLocaleString('vi-VN')}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+document.getElementById('btn-ab-create').addEventListener('click', async () => {
+  const topic = document.getElementById('ab-topic').value.trim();
+  const pageId = parseInt(document.getElementById('ab-page').value, 10);
+  if (!topic || !pageId) return alert('Điền chủ đề và chọn page');
+  const preview = document.getElementById('ab-preview');
+  preview.classList.remove('hidden');
+  preview.innerHTML = '<p class="text-sm text-slate-500">Đang gen 2 variant...</p>';
+  try {
+    const r = await api('/analytics/ab/create', { method: 'POST', body: JSON.stringify({ topic, page_id: pageId }) });
+    preview.innerHTML = `
+      <div class="grid grid-cols-2 gap-3">
+        <div class="border rounded-lg p-3 bg-blue-50">
+          <div class="text-xs font-bold text-blue-700 mb-2">VARIANT A — Hook: Câu hỏi</div>
+          <pre class="text-xs whitespace-pre-wrap font-sans">${escapeHtml(r.variantA)}</pre>
+        </div>
+        <div class="border rounded-lg p-3 bg-purple-50">
+          <div class="text-xs font-bold text-purple-700 mb-2">VARIANT B — Hook: Con số/Insight</div>
+          <pre class="text-xs whitespace-pre-wrap font-sans">${escapeHtml(r.variantB)}</pre>
+        </div>
+      </div>
+      <p class="text-xs text-slate-500 mt-3">Experiment #${r.experimentId} đã lưu. Tạo 2 post từ 2 variant trong tab Tạo bài đăng, app sẽ tự quyết định winner sau 24h.</p>
+    `;
+    loadABList();
+  } catch (e) {
+    preview.innerHTML = `<p class="text-red-500 text-sm">❌ ${e.message}</p>`;
+  }
+});
+
+// ===== FAQ auto-learn =====
+document.getElementById('btn-faq-analyze').addEventListener('click', async () => {
+  const el = document.getElementById('faq-suggestions');
+  el.innerHTML = '<p class="text-sm text-slate-500">Đang phân tích comment...</p>';
+  try {
+    const r = await api('/analytics/faq/analyze', { method: 'POST' });
+    if (!r.suggestions || r.suggestions.length === 0) {
+      el.innerHTML = `<p class="text-sm text-slate-500">Không tìm thấy nhóm câu hỏi lặp lại (đã scan ${r.analyzed} comment).</p>`;
+      return;
+    }
+    el.innerHTML = `<p class="text-xs text-slate-500 mb-3">Đã scan ${r.analyzed} comment, tìm thấy ${r.suggestions.length} nhóm câu hỏi:</p>` +
+      r.suggestions.map((s, i) => `
+        <div class="border rounded-lg p-3 mb-2">
+          <div class="flex justify-between items-start gap-3">
+            <div class="flex-1">
+              <div class="font-semibold text-sm">${escapeHtml(s.question)}</div>
+              <div class="text-xs text-slate-500 mt-1">Gặp ${s.count} lần</div>
+              ${s.examples.map((ex) => `<div class="text-xs text-slate-600 mt-1 italic">"${escapeHtml(ex)}"</div>`).join('')}
+            </div>
+            <button onclick="addFaqFromSuggestion(${i}, '${encodeURIComponent(s.question)}')" class="bg-green-600 text-white text-xs px-3 py-1 rounded whitespace-nowrap">+ Thêm FAQ</button>
+          </div>
+        </div>
+      `).join('');
+  } catch (e) {
+    el.innerHTML = `<p class="text-red-500 text-sm">❌ ${e.message}</p>`;
+  }
+});
+
+window.addFaqFromSuggestion = (i, encodedQ) => {
+  const q = decodeURIComponent(encodedQ);
+  switchTab('wiki');
+  setTimeout(() => {
+    document.getElementById('wiki-namespace').value = 'faq';
+    document.getElementById('wiki-title').value = q;
+    document.getElementById('wiki-content').value = `**Câu hỏi:** ${q}\n\n**Trả lời:** (bạn điền câu trả lời chuẩn ở đây)`;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, 100);
+};
 
 // ====== Init ======
 checkAuth();

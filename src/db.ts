@@ -89,6 +89,39 @@ CREATE TABLE IF NOT EXISTS auto_reply_log (
   created_at INTEGER NOT NULL
 );
 
+-- Số liệu post pull từ FB Insights (reach, engagement, click, ...)
+CREATE TABLE IF NOT EXISTS post_metrics (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  post_id INTEGER NOT NULL,
+  fb_post_id TEXT NOT NULL,
+  impressions INTEGER DEFAULT 0,
+  reach INTEGER DEFAULT 0,
+  reactions INTEGER DEFAULT 0,
+  comments INTEGER DEFAULT 0,
+  shares INTEGER DEFAULT 0,
+  clicks INTEGER DEFAULT 0,
+  engagement_rate REAL DEFAULT 0,
+  snapshot_at INTEGER NOT NULL,
+  FOREIGN KEY (post_id) REFERENCES posts(id)
+);
+CREATE INDEX IF NOT EXISTS idx_metrics_post ON post_metrics(post_id);
+
+-- A/B testing: 2 variant hook cho cùng 1 chủ đề
+CREATE TABLE IF NOT EXISTS ab_experiments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  topic TEXT NOT NULL,
+  page_id INTEGER NOT NULL,
+  variant_a_post_id INTEGER,
+  variant_b_post_id INTEGER,
+  variant_a_caption TEXT,
+  variant_b_caption TEXT,
+  winner TEXT,                -- 'A' | 'B' | null
+  winner_score REAL,
+  decided_at INTEGER,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (page_id) REFERENCES pages(id)
+);
+
 -- Wiki-style knowledge base cho AI
 CREATE TABLE IF NOT EXISTS knowledge_wiki (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
