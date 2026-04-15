@@ -3,6 +3,7 @@ import { db, getSetting, setSetting } from '../db';
 import { verifyPageToken } from '../services/facebook';
 import { authMiddleware } from '../middleware/auth';
 import { countKeys, getAllKeys } from '../services/keyrotator';
+import { getRouterStatus } from '../services/router';
 import { config } from '../config';
 
 const router = Router();
@@ -20,24 +21,35 @@ router.get('/', (req, res) => {
   res.json({
     anthropic: summarize('anthropic_api_key', config.anthropicApiKey),
     fal: summarize('fal_api_key', config.falApiKey),
+    google: summarize('google_api_key'),
+    groq: summarize('groq_api_key'),
   });
+});
+
+// Trạng thái router: task nào đang dùng model nào
+router.get('/router', (req, res) => {
+  res.json(getRouterStatus());
 });
 
 // Cập nhật API keys (hỗ trợ nhiều key, cách nhau bằng xuống dòng hoặc dấu phẩy)
 router.post('/keys', (req, res) => {
-  const { anthropic_api_key, fal_api_key } = req.body;
+  const { anthropic_api_key, fal_api_key, google_api_key, groq_api_key } = req.body;
   // Chỉ ghi đè nếu giá trị mới KHÔNG phải dạng masked (***xxxx)
   const isMasked = (v: string) => /^\*\*\*/.test(v.trim());
-  if (typeof anthropic_api_key === 'string' && !isMasked(anthropic_api_key)) {
-    setSetting('anthropic_api_key', anthropic_api_key.trim());
-  }
-  if (typeof fal_api_key === 'string' && !isMasked(fal_api_key)) {
-    setSetting('fal_api_key', fal_api_key.trim());
-  }
+  const maybeSave = (name: string, val: any) => {
+    if (typeof val === 'string' && !isMasked(val)) setSetting(name, val.trim());
+  };
+  maybeSave('anthropic_api_key', anthropic_api_key);
+  maybeSave('fal_api_key', fal_api_key);
+  maybeSave('google_api_key', google_api_key);
+  maybeSave('groq_api_key', groq_api_key);
+
   res.json({
     ok: true,
     anthropic_count: countKeys('anthropic_api_key', config.anthropicApiKey),
     fal_count: countKeys('fal_api_key', config.falApiKey),
+    google_count: countKeys('google_api_key'),
+    groq_count: countKeys('groq_api_key'),
   });
 });
 

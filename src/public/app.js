@@ -307,19 +307,68 @@ window.delMedia = async (id) => {
 // ====== Settings ======
 async function loadSettings() {
   const s = await api('/settings');
-  const aCount = s.anthropic?.count || 0;
-  const fCount = s.fal?.count || 0;
-  const aEl = document.getElementById('anthropic-count');
-  const fEl = document.getElementById('fal-count');
-  if (aEl) aEl.textContent = aCount > 0
-    ? `(đang có ${aCount} key: ${s.anthropic.masked.replace(/\n/g, ', ')})`
-    : '(chưa có key)';
-  if (fEl) fEl.textContent = fCount > 0
-    ? `(đang có ${fCount} key: ${s.fal.masked.replace(/\n/g, ', ')})`
-    : '(chưa có key)';
-  document.getElementById('key-anthropic').value = '';
-  document.getElementById('key-fal').value = '';
+  const render = (elId, summary) => {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const c = summary?.count || 0;
+    el.textContent = c > 0
+      ? `(${c} key: ${summary.masked.replace(/\n/g, ', ')})`
+      : '(chưa có)';
+    el.className = 'ml-2 text-xs font-normal ' + (c > 0 ? 'text-green-600' : 'text-slate-400');
+  };
+  render('anthropic-count', s.anthropic);
+  render('google-count', s.google);
+  render('groq-count', s.groq);
+  render('fal-count', s.fal);
+
+  ['key-anthropic', 'key-google', 'key-groq', 'key-fal'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+
+  loadRouterStatus();
   loadPagesInSettings();
+}
+
+async function loadRouterStatus() {
+  const el = document.getElementById('router-status');
+  if (!el) return;
+  try {
+    const r = await api('/settings/router');
+    const PROVIDER_COLOR = {
+      anthropic: 'bg-purple-100 text-purple-700',
+      google:    'bg-blue-100 text-blue-700',
+      groq:      'bg-green-100 text-green-700',
+    };
+    const TASK_LABEL = {
+      caption:       '✍️ Viết caption chính',
+      image_prompt:  '🎨 Tạo prompt ảnh (EN)',
+      classify:      '🏷️ Phân loại comment/intent',
+      reply_simple:  '💬 Reply comment đơn giản',
+      reply_complex: '💭 Reply inbox/khiếu nại phức tạp',
+    };
+    const rows = Object.entries(r.tasks).map(([task, info]) => {
+      if (info.error) {
+        return `<div class="flex justify-between border-b pb-1"><span>${TASK_LABEL[task] || task}</span><span class="text-red-500 text-xs">${info.error}</span></div>`;
+      }
+      const badge = PROVIDER_COLOR[info.provider] || 'bg-slate-100';
+      const note = info.default ? '' : '<span class="text-orange-500 text-xs ml-1">(fallback)</span>';
+      return `<div class="flex justify-between items-center border-b pb-1">
+        <span>${TASK_LABEL[task] || task}</span>
+        <span><span class="${badge} px-2 py-0.5 rounded text-xs font-mono">${info.provider} / ${info.model}</span>${note}</span>
+      </div>`;
+    }).join('');
+    const prov = r.providers;
+    const availRow = `<div class="text-xs text-slate-500 mt-3 pt-3 border-t">
+      Providers:
+      <span class="${prov.anthropic.configured ? 'text-green-600' : 'text-slate-400'}">Anthropic (${prov.anthropic.count})</span> •
+      <span class="${prov.google.configured ? 'text-green-600' : 'text-slate-400'}">Google (${prov.google.count})</span> •
+      <span class="${prov.groq.configured ? 'text-green-600' : 'text-slate-400'}">Groq (${prov.groq.count})</span>
+    </div>`;
+    el.innerHTML = rows + availRow;
+  } catch (e) {
+    el.innerHTML = `<div class="text-red-500 text-xs">${e.message}</div>`;
+  }
 }
 
 async function loadPagesInSettings() {
@@ -349,12 +398,14 @@ window.delPage = async (id) => {
 document.getElementById('btn-save-keys').addEventListener('click', async () => {
   const body = {
     anthropic_api_key: document.getElementById('key-anthropic').value,
+    google_api_key: document.getElementById('key-google').value,
+    groq_api_key: document.getElementById('key-groq').value,
     fal_api_key: document.getElementById('key-fal').value,
   };
   try {
     const r = await api('/settings/keys', { method: 'POST', body: JSON.stringify(body) });
     document.getElementById('keys-status').textContent =
-      `✅ Đã lưu (${r.anthropic_count || 0} Anthropic key, ${r.fal_count || 0} fal.ai key)`;
+      `✅ Đã lưu (${r.anthropic_count}A / ${r.google_count}G / ${r.groq_count}Gr / ${r.fal_count}F)`;
     await loadSettings();
     setTimeout(() => document.getElementById('keys-status').textContent = '', 4000);
   } catch (e) {

@@ -248,26 +248,56 @@
 
         <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6">
           <h3 class="font-bold mb-4">🔑 API Keys</h3>
-          <p class="text-xs text-slate-500 mb-4">💡 Có thể nhập <b>nhiều key</b> (mỗi key 1 dòng hoặc cách nhau dấu phẩy). Hệ thống sẽ tự xoay vòng round-robin giữa các key để chia tải &amp; tránh rate-limit. Nếu 1 key lỗi quota, app tự chuyển sang key kế tiếp.</p>
+          <p class="text-xs text-slate-500 mb-4">💡 Có thể nhập <b>nhiều key</b> mỗi dòng. Hệ thống tự xoay vòng round-robin &amp; failover. Càng nhiều provider (Anthropic + Google + Groq) thì chi phí càng giảm.</p>
 
           <div class="mb-3">
             <label class="block text-sm font-semibold mb-1">
-              Anthropic API Keys (Claude)
+              🟣 Anthropic Keys (Claude) — caption chính, reply phức tạp
               <span id="anthropic-count" class="ml-2 text-xs font-normal text-blue-600"></span>
             </label>
-            <textarea id="key-anthropic" rows="4" placeholder="sk-ant-key1...&#10;sk-ant-key2...&#10;sk-ant-key3..."
+            <textarea id="key-anthropic" rows="3" placeholder="sk-ant-key1...&#10;sk-ant-key2..."
               class="w-full border rounded-lg px-3 py-2 font-mono text-xs"></textarea>
+            <p class="text-xs text-slate-400 mt-1">Lấy tại: <a href="https://console.anthropic.com/settings/keys" target="_blank" class="text-blue-600 underline">console.anthropic.com</a></p>
           </div>
+
           <div class="mb-3">
             <label class="block text-sm font-semibold mb-1">
-              fal.ai API Keys
+              🔵 Google AI Keys (Gemini Flash) — image prompt, rewrite, rẻ 40x
+              <span id="google-count" class="ml-2 text-xs font-normal text-blue-600"></span>
+            </label>
+            <textarea id="key-google" rows="2" placeholder="AIzaSy..."
+              class="w-full border rounded-lg px-3 py-2 font-mono text-xs"></textarea>
+            <p class="text-xs text-slate-400 mt-1">Lấy MIỄN PHÍ tại: <a href="https://aistudio.google.com/apikey" target="_blank" class="text-blue-600 underline">aistudio.google.com/apikey</a></p>
+          </div>
+
+          <div class="mb-3">
+            <label class="block text-sm font-semibold mb-1">
+              🟢 Groq Keys (Gemma / Llama) — classify, reply đơn giản, gần miễn phí
+              <span id="groq-count" class="ml-2 text-xs font-normal text-blue-600"></span>
+            </label>
+            <textarea id="key-groq" rows="2" placeholder="gsk_..."
+              class="w-full border rounded-lg px-3 py-2 font-mono text-xs"></textarea>
+            <p class="text-xs text-slate-400 mt-1">Lấy MIỄN PHÍ tại: <a href="https://console.groq.com/keys" target="_blank" class="text-blue-600 underline">console.groq.com/keys</a></p>
+          </div>
+
+          <div class="mb-3">
+            <label class="block text-sm font-semibold mb-1">
+              🟠 fal.ai Keys — gen ảnh/video
               <span id="fal-count" class="ml-2 text-xs font-normal text-blue-600"></span>
             </label>
-            <textarea id="key-fal" rows="3" placeholder="key1...&#10;key2..."
+            <textarea id="key-fal" rows="2" placeholder="key1..."
               class="w-full border rounded-lg px-3 py-2 font-mono text-xs"></textarea>
           </div>
+
           <button id="btn-save-keys" class="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-semibold">Lưu API Keys</button>
           <span id="keys-status" class="ml-3 text-sm text-green-600"></span>
+        </div>
+
+        <!-- Router status -->
+        <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6">
+          <h3 class="font-bold mb-2">🧭 Model Router — task nào đang dùng model nào?</h3>
+          <p class="text-xs text-slate-500 mb-4">Router tự chọn provider rẻ nhất có sẵn. Thiếu Google/Groq → tự fallback về Claude (đắt hơn).</p>
+          <div id="router-status" class="space-y-2 text-sm"></div>
         </div>
 
         <div class="bg-white rounded-xl shadow p-6 max-w-2xl">

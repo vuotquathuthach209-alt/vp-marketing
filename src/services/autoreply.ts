@@ -1,7 +1,6 @@
 import axios from 'axios';
-import Anthropic from '@anthropic-ai/sdk';
-import { db, getSetting } from '../db';
-import { config } from '../config';
+import { db } from '../db';
+import { generate, TaskType } from './router';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
@@ -11,22 +10,27 @@ Khuyến khích khách inbox/gọi hotline để được tư vấn giá và đ�
 KHÔNG tự ý hứa giá cụ thể, KHÔNG chốt deal.
 Có thể thêm 1 emoji phù hợp. Không dùng hashtag.`;
 
-async function generateAIReply(systemPrompt: string, message: string): Promise<string> {
-  const apiKey = getSetting('anthropic_api_key') || config.anthropicApiKey;
-  if (!apiKey) throw new Error('Chưa có Anthropic API Key');
-  const client = new Anthropic({ apiKey });
+/**
+ * Phân loại mức độ phức tạp của tin nhắn → chọn reply_simple (Haiku) hoặc
+ * reply_complex (Sonnet) để tiết kiệm token.
+ * Rule đơn giản: dài >100 ký tự, có dấu "?", hoặc chứa từ khóa nhạy cảm → complex.
+ */
+function pickReplyTask(message: string): TaskType {
+  const m = message.trim();
+  if (m.length > 100) return 'reply_complex';
+  if (/[?？]/.test(m)) return 'reply_complex';
+  const complexKeywords = ['hoàn tiền', 'khiếu nại', 'sao lại', 'tệ', 'không tốt', 'chờ', 'hủy', 'đặt cọc'];
+  if (complexKeywords.some((k) => m.toLowerCase().includes(k))) return 'reply_complex';
+  return 'reply_simple';
+}
 
-  const msg = await client.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 300,
+async function generateAIReply(systemPrompt: string, message: string): Promise<string> {
+  const task = pickReplyTask(message);
+  return generate({
+    task,
     system: systemPrompt?.trim() || DEFAULT_SYSTEM,
-    messages: [
-      { role: 'user', content: `Khách viết: "${message}"\n\nHãy viết câu trả lời ngắn gọn.` },
-    ],
+    user: `Khách viết: "${message}"\n\nHãy viết câu trả lời ngắn gọn.`,
   });
-  const text = msg.content.find((b) => b.type === 'text');
-  if (!text || text.type !== 'text') throw new Error('Claude không trả về text');
-  return text.text.trim();
 }
 
 async function replyToComments(page: any) {
