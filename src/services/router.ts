@@ -2,6 +2,7 @@ import axios from 'axios';
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config';
 import { pickKey, getAllKeys, countKeys } from './keyrotator';
+import { logUsage } from './costtrack';
 
 /**
  * Multi-model Router — tiết kiệm 60-80% chi phí token bằng cách route task
@@ -97,18 +98,44 @@ export async function generate({ task, system, user }: GenInput): Promise<string
   const route = resolveRoute(task);
   console.log(`[router] ${task} → ${route.provider}/${route.model}`);
 
-  switch (route.provider) {
-    case 'anthropic':
-      return callAnthropic(route, system, user);
-    case 'google':
-      return callGemini(route, system, user);
-    case 'groq':
-      return callGroq(route, system, user);
+  try {
+    let result: { text: string; inTok: number; outTok: number };
+    switch (route.provider) {
+      case 'anthropic':
+        result = await callAnthropic(route, system, user);
+        break;
+      case 'google':
+        result = await callGemini(route, system, user);
+        break;
+      case 'groq':
+        result = await callGroq(route, system, user);
+        break;
+    }
+    logUsage({
+      task,
+      provider: route.provider,
+      model: route.model,
+      input_tokens: result.inTok,
+      output_tokens: result.outTok,
+      ok: true,
+    });
+    return result.text;
+  } catch (e: any) {
+    logUsage({
+      task,
+      provider: route.provider,
+      model: route.model,
+      ok: false,
+      error: e?.message || String(e),
+    });
+    throw e;
   }
 }
 
+type CallResult = { text: string; inTok: number; outTok: number };
+
 // ---------- Anthropic ----------
-async function callAnthropic(route: RouteConfig, system: string, user: string): Promise<string> {
+async function callAnthropic(route: RouteConfig, system: string, user: string): Promise<CallResult> {
   const keys = getAllKeys('anthropic_api_key', config.anthropicApiKey);
   const startKey = pickKey('anthropic_api_key', config.anthropicApiKey);
   const startIdx = keys.indexOf(startKey);
@@ -126,7 +153,11 @@ async function callAnthropic(route: RouteConfig, system: string, user: string): 
       });
       const block = msg.content.find((b) => b.type === 'text');
       if (!block || block.type !== 'text') throw new Error('Anthropic: không có text block');
-      return block.text.trim();
+      return {
+        text: block.text.trim(),
+        inTok: msg.usage?.input_tokens || 0,
+        outTok: msg.usage?.output_tokens || 0,
+      };
     } catch (e: any) {
       lastErr = e;
       const status = e?.status || e?.response?.status;
@@ -138,7 +169,7 @@ async function callAnthropic(route: RouteConfig, system: string, user: string): 
 }
 
 // ---------- Google Gemini ----------
-async function callGemini(route: RouteConfig, system: string, user: string): Promise<string> {
+async function callGemini(route: RouteConfig, system: string, user: string): Promise<CallResult> {
   const keys = getAllKeys('google_api_key');
   const startKey = pickKey('google_api_key');
   const startIdx = keys.indexOf(startKey);
@@ -162,7 +193,12 @@ async function callGemini(route: RouteConfig, system: string, user: string): Pro
       );
       const text = resp.data?.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!text) throw new Error('Gemini: không có text trả về');
-      return String(text).trim();
+      const usage = resp.data?.usageMetadata || {};
+      return {
+        text: String(text).trim(),
+        inTok: usage.promptTokenCount || 0,
+        outTok: usage.candidatesTokenCount || 0,
+      };
     } catch (e: any) {
       lastErr = e;
       const status = e?.response?.status;
@@ -174,7 +210,7 @@ async function callGemini(route: RouteConfig, system: string, user: string): Pro
 }
 
 // ---------- Groq (OpenAI-compatible, host Gemma/Llama) ----------
-async function callGroq(route: RouteConfig, system: string, user: string): Promise<string> {
+async function callGroq(route: RouteConfig, system: string, user: string): Promise<CallResult> {
   const keys = getAllKeys('groq_api_key');
   const startKey = pickKey('groq_api_key');
   const startIdx = keys.indexOf(startKey);
@@ -204,7 +240,12 @@ async function callGroq(route: RouteConfig, system: string, user: string): Promi
       );
       const text = resp.data?.choices?.[0]?.message?.content;
       if (!text) throw new Error('Groq: không có text trả về');
-      return String(text).trim();
+      const usage = resp.data?.usage || {};
+      return {
+        text: String(text).trim(),
+        inTok: usage.prompt_tokens || 0,
+        outTok: usage.completion_tokens || 0,
+      };
     } catch (e: any) {
       lastErr = e;
       const status = e?.response?.status;

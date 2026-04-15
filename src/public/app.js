@@ -750,6 +750,8 @@ async function loadAnalytics() {
   await loadABList();
   await loadBestTime();
   await loadBookingLatest();
+  await loadCostOverview();
+  await loadContentCalendar();
   // Populate page dropdown
   const sel = document.getElementById('ab-page');
   sel.innerHTML = state.pages.map((p) => `<option value="${p.id}">${p.name}</option>`).join('');
@@ -954,6 +956,116 @@ window.addFaqFromSuggestion = (i, encodedQ) => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, 100);
 };
+
+async function loadCostOverview() {
+  const el = document.getElementById('cost-overview');
+  if (!el) return;
+  try {
+    const r = await api('/analytics/cost?days=30');
+    if (!r.calls) {
+      el.innerHTML = '<div class="text-slate-500">Chưa có AI call nào trong 30 ngày.</div>';
+      return;
+    }
+    const provRows = (r.by_provider || []).map(p =>
+      `<tr><td class="py-1 pr-4">${p.provider}</td><td class="text-right">${p.calls}</td><td class="text-right">${(p.tokens || 0).toLocaleString()}</td><td class="text-right text-green-700">$${(p.cost_usd || 0).toFixed(4)}</td></tr>`
+    ).join('');
+    const taskRows = (r.by_task || []).map(t =>
+      `<tr><td class="py-1 pr-4">${t.task}</td><td class="text-right">${t.calls}</td><td class="text-right text-green-700">$${(t.cost_usd || 0).toFixed(4)}</td></tr>`
+    ).join('');
+    el.innerHTML = `
+      <div class="grid grid-cols-4 gap-3 mb-4">
+        <div class="border rounded-lg p-3"><div class="text-xs text-slate-500">Tổng call</div><div class="text-xl font-bold">${r.calls}</div></div>
+        <div class="border rounded-lg p-3"><div class="text-xs text-slate-500">Fail</div><div class="text-xl font-bold text-red-600">${r.fails}</div></div>
+        <div class="border rounded-lg p-3"><div class="text-xs text-slate-500">Tokens (in+out)</div><div class="text-xl font-bold">${(r.input_tokens + r.output_tokens).toLocaleString()}</div></div>
+        <div class="border rounded-lg p-3"><div class="text-xs text-slate-500">Tổng chi phí</div><div class="text-xl font-bold text-green-700">$${(r.total_usd || 0).toFixed(4)}</div></div>
+      </div>
+      <div class="grid grid-cols-2 gap-6">
+        <div>
+          <div class="font-semibold mb-1">Theo provider</div>
+          <table class="w-full text-xs"><thead><tr class="border-b"><th class="text-left">Provider</th><th class="text-right">Calls</th><th class="text-right">Tokens</th><th class="text-right">USD</th></tr></thead><tbody>${provRows}</tbody></table>
+        </div>
+        <div>
+          <div class="font-semibold mb-1">Theo task</div>
+          <table class="w-full text-xs"><thead><tr class="border-b"><th class="text-left">Task</th><th class="text-right">Calls</th><th class="text-right">USD</th></tr></thead><tbody>${taskRows}</tbody></table>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="text-red-500 text-xs">Lỗi: ${e.message}</div>`;
+  }
+}
+
+async function loadContentCalendar() {
+  const el = document.getElementById('content-calendar');
+  if (!el) return;
+  try {
+    const posts = await api('/posts');
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const days = [];
+    for (let i = 0; i < 14; i++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() + i);
+      days.push(d);
+    }
+    const dayNames = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+    const byDay = {};
+    for (const p of posts) {
+      const t = p.scheduled_at || p.published_at;
+      if (!t) continue;
+      const d = new Date(t);
+      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      if (!byDay[key]) byDay[key] = [];
+      byDay[key].push(p);
+    }
+    const statusColor = {
+      scheduled: 'bg-blue-100 text-blue-700',
+      published: 'bg-green-100 text-green-700',
+      publishing: 'bg-yellow-100 text-yellow-700',
+      failed: 'bg-red-100 text-red-700',
+      draft: 'bg-slate-100 text-slate-600',
+    };
+    el.innerHTML = days.map(d => {
+      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      const dayPosts = byDay[key] || [];
+      const isToday = d.toDateString() === new Date().toDateString();
+      const items = dayPosts.slice(0, 3).map(p => {
+        const hhmm = new Date(p.scheduled_at || p.published_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+        const cls = statusColor[p.status] || 'bg-slate-100';
+        return `<div class="${cls} rounded px-1 py-0.5 mb-1 truncate" title="${escapeHtml(p.caption || '')}">${hhmm} ${escapeHtml((p.caption || '').slice(0, 20))}</div>`;
+      }).join('');
+      const more = dayPosts.length > 3 ? `<div class="text-slate-400">+${dayPosts.length - 3} khác</div>` : '';
+      return `
+        <div class="border rounded-lg p-2 min-h-24 ${isToday ? 'ring-2 ring-blue-500' : ''}">
+          <div class="font-semibold text-slate-600">${dayNames[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}</div>
+          ${items}${more}
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="text-red-500 text-xs col-span-7">Lỗi: ${e.message}</div>`;
+  }
+}
+
+// Smart schedule button
+const btnSmartSlot = document.getElementById('btn-smart-slot');
+if (btnSmartSlot) {
+  btnSmartSlot.addEventListener('click', async () => {
+    const hint = document.getElementById('smart-slot-hint');
+    hint.textContent = 'Đang tính...';
+    try {
+      const r = await api('/analytics/smart-slot');
+      const d = new Date(r.slot_epoch);
+      // Format to datetime-local: YYYY-MM-DDTHH:MM
+      const pad = (n) => String(n).padStart(2, '0');
+      const val = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      document.getElementById('compose-schedule').value = val;
+      hint.textContent = r.reason;
+    } catch (e) {
+      hint.innerHTML = `<span class="text-red-500">${e.message}</span>`;
+    }
+  });
+}
 
 // Booking sync button
 const btnBookingSync = document.getElementById('btn-booking-sync');

@@ -150,6 +150,23 @@ try {
   console.error('[db] migrate embedding failed:', e);
 }
 
+// Sprint 5: AI usage log (cost tracker)
+db.exec(`
+CREATE TABLE IF NOT EXISTS ai_usage_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  cost_usd REAL DEFAULT 0,
+  ok INTEGER NOT NULL DEFAULT 1,
+  error TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_usage_created ON ai_usage_log(created_at);
+`);
+
 // Helpers
 export function getSetting(key: string): string | null {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;

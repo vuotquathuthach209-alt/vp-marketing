@@ -83,7 +83,11 @@
 
           <div class="mb-4">
             <label class="block text-sm font-semibold mb-2">Lên lịch đăng (để trống = lưu nháp)</label>
-            <input id="compose-schedule" type="datetime-local" class="border rounded-lg px-3 py-2" />
+            <div class="flex gap-2 items-center">
+              <input id="compose-schedule" type="datetime-local" class="border rounded-lg px-3 py-2" />
+              <button type="button" id="btn-smart-slot" class="bg-amber-500 text-white text-sm px-3 py-2 rounded-lg hover:bg-amber-600" title="Gợi ý giờ vàng tiếp theo dựa trên analytics">⚡ Giờ vàng</button>
+              <span id="smart-slot-hint" class="text-xs text-slate-500"></span>
+            </div>
           </div>
 
           <div class="flex gap-3">
@@ -174,6 +178,18 @@
 
         <!-- Overview cards -->
         <div id="analytics-overview" class="grid grid-cols-4 gap-4 mb-6 max-w-5xl"></div>
+
+        <!-- Cost Tracker -->
+        <div class="bg-white rounded-xl shadow p-6 max-w-5xl mb-6">
+          <h3 class="font-bold mb-3">💰 AI Cost Tracker (30 ngày)</h3>
+          <div id="cost-overview" class="text-sm"></div>
+        </div>
+
+        <!-- Content Calendar -->
+        <div class="bg-white rounded-xl shadow p-6 max-w-5xl mb-6">
+          <h3 class="font-bold mb-3">🗓️ Lịch nội dung (14 ngày tới)</h3>
+          <div id="content-calendar" class="grid grid-cols-7 gap-2 text-xs"></div>
+        </div>
 
         <div class="mb-6">
           <button id="btn-refresh-metrics" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700">🔄 Pull metrics ngay</button>
