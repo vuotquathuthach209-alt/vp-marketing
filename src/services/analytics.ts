@@ -159,3 +159,100 @@ export function getOverview(days = 30) {
 
   return { ...totals, top_posts: top, period_days: days };
 }
+
+/**
+ * Best posting time: group metric snapshots theo giờ trong ngày và thứ trong tuần,
+ * tính avg engagement score = (reactions + comments*2 + shares*3) / max(reach,1).
+ * Trả về top slot (hour 0-23) và day (0=CN..6=T7) có engagement cao nhất.
+ */
+export function getBestPostingTime(days = 60) {
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const rows = db
+    .prepare(
+      `SELECT p.published_at, m.reach, m.reactions, m.comments, m.shares
+       FROM posts p
+       JOIN post_metrics m ON m.id = (
+         SELECT id FROM post_metrics WHERE post_id = p.id ORDER BY snapshot_at DESC LIMIT 1
+       )
+       WHERE p.status = 'published'
+         AND p.published_at >= ?
+         AND p.published_at IS NOT NULL`
+    )
+    .all(cutoff) as {
+    published_at: number;
+    reach: number;
+    reactions: number;
+    comments: number;
+    shares: number;
+  }[];
+
+  const byHour: Record<number, { score: number; n: number }> = {};
+  const byDow: Record<number, { score: number; n: number }> = {};
+  for (let i = 0; i < 24; i++) byHour[i] = { score: 0, n: 0 };
+  for (let i = 0; i < 7; i++) byDow[i] = { score: 0, n: 0 };
+
+  for (const r of rows) {
+    const d = new Date(r.published_at);
+    const h = d.getHours();
+    const dow = d.getDay();
+    const engScore = (r.reactions + r.comments * 2 + r.shares * 3) / Math.max(r.reach, 1);
+    byHour[h].score += engScore;
+    byHour[h].n++;
+    byDow[dow].score += engScore;
+    byDow[dow].n++;
+  }
+
+  const hours = Object.entries(byHour).map(([h, v]) => ({
+    hour: parseInt(h, 10),
+    avg_score: v.n > 0 ? v.score / v.n : 0,
+    samples: v.n,
+  }));
+  const dows = Object.entries(byDow).map(([d, v]) => ({
+    dow: parseInt(d, 10),
+    avg_score: v.n > 0 ? v.score / v.n : 0,
+    samples: v.n,
+  }));
+
+  const bestHour = [...hours].sort((a, b) => b.avg_score - a.avg_score)[0];
+  const bestDow = [...dows].sort((a, b) => b.avg_score - a.avg_score)[0];
+
+  return {
+    hours,
+    dows,
+    best_hour: bestHour,
+    best_dow: bestDow,
+    total_samples: rows.length,
+    period_days: days,
+  };
+}
+
+/**
+ * KPI chi tiết: trend theo ngày (reach & engagement) trong N ngày gần nhất.
+ */
+export function getDailyTrend(days = 14) {
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const rows = db
+    .prepare(
+      `SELECT p.published_at, m.reach, m.reactions, m.comments, m.shares
+       FROM posts p
+       JOIN post_metrics m ON m.id = (
+         SELECT id FROM post_metrics WHERE post_id = p.id ORDER BY snapshot_at DESC LIMIT 1
+       )
+       WHERE p.status = 'published' AND p.published_at >= ?`
+    )
+    .all(cutoff) as any[];
+
+  const byDay: Record<string, { reach: number; engagement: number; posts: number }> = {};
+  for (const r of rows) {
+    const d = new Date(r.published_at);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (!byDay[key]) byDay[key] = { reach: 0, engagement: 0, posts: 0 };
+    byDay[key].reach += r.reach || 0;
+    byDay[key].engagement += (r.reactions || 0) + (r.comments || 0) + (r.shares || 0);
+    byDay[key].posts += 1;
+  }
+
+  return Object.entries(byDay)
+    .map(([date, v]) => ({ date, ...v }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}

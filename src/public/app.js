@@ -748,9 +748,57 @@ async function loadAnalytics() {
   await loadOverview();
   await loadTopPosts();
   await loadABList();
+  await loadBestTime();
+  await loadBookingLatest();
   // Populate page dropdown
   const sel = document.getElementById('ab-page');
   sel.innerHTML = state.pages.map((p) => `<option value="${p.id}">${p.name}</option>`).join('');
+}
+
+async function loadBestTime() {
+  const el = document.getElementById('best-time');
+  if (!el) return;
+  try {
+    const r = await api('/analytics/best-time?days=60');
+    if (!r.total_samples) {
+      el.innerHTML = '<div class="text-slate-500">Chưa đủ dữ liệu (cần ít nhất 5-10 post có metric).</div>';
+      return;
+    }
+    const dowNames = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+    const bh = r.best_hour;
+    const bd = r.best_dow;
+    const topHours = [...r.hours].sort((a, b) => b.avg_score - a.avg_score).slice(0, 3)
+      .map(h => `${String(h.hour).padStart(2, '0')}:00 (${(h.avg_score * 100).toFixed(2)}%)`).join(', ');
+    const topDows = [...r.dows].sort((a, b) => b.avg_score - a.avg_score).slice(0, 3)
+      .map(d => `${dowNames[d.dow]} (${(d.avg_score * 100).toFixed(2)}%)`).join(', ');
+    el.innerHTML = `
+      <div class="mb-2"><b>Khung giờ vàng:</b> ${String(bh.hour).padStart(2, '0')}:00 — engagement ${(bh.avg_score * 100).toFixed(2)}%</div>
+      <div class="mb-2"><b>Ngày vàng:</b> ${dowNames[bd.dow]} — engagement ${(bd.avg_score * 100).toFixed(2)}%</div>
+      <div class="text-xs text-slate-500 mt-3">Top 3 giờ: ${topHours}</div>
+      <div class="text-xs text-slate-500">Top 3 ngày: ${topDows}</div>
+      <div class="text-xs text-slate-400 mt-2">Dựa trên ${r.total_samples} bài đăng.</div>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="text-red-500 text-xs">Lỗi: ${e.message}</div>`;
+  }
+}
+
+async function loadBookingLatest() {
+  const el = document.getElementById('booking-latest');
+  if (!el) return;
+  try {
+    const r = await api('/analytics/booking');
+    if (!r) {
+      el.innerHTML = '<div class="text-slate-500">Chưa có dữ liệu booking.</div>';
+      return;
+    }
+    el.innerHTML = `
+      <div class="border-t pt-3 mt-3">
+        <b>Snapshot hiện tại</b> (cập nhật ${new Date(r.updated_at).toLocaleString('vi-VN')}):
+        <pre class="bg-slate-50 p-2 rounded mt-1 whitespace-pre-wrap">${escapeHtml(r.content)}</pre>
+      </div>
+    `;
+  } catch {}
 }
 
 async function loadOverview() {
@@ -906,6 +954,30 @@ window.addFaqFromSuggestion = (i, encodedQ) => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, 100);
 };
+
+// Booking sync button
+const btnBookingSync = document.getElementById('btn-booking-sync');
+if (btnBookingSync) {
+  btnBookingSync.addEventListener('click', async () => {
+    const content = document.getElementById('booking-content').value.trim();
+    const status = document.getElementById('booking-status');
+    if (!content) {
+      status.innerHTML = '<span class="text-red-500">Nhập nội dung trước</span>';
+      return;
+    }
+    status.innerHTML = '<span class="text-slate-500">Đang lưu...</span>';
+    try {
+      const r = await api('/analytics/booking/sync', {
+        method: 'POST',
+        body: JSON.stringify({ content, source: 'manual' }),
+      });
+      status.innerHTML = `<span class="text-green-600">✓ Đã lưu (${r.content_length} ký tự)</span>`;
+      await loadBookingLatest();
+    } catch (e) {
+      status.innerHTML = `<span class="text-red-500">❌ ${e.message}</span>`;
+    }
+  });
+}
 
 // ====== Init ======
 checkAuth();

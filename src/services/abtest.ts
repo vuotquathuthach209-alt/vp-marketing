@@ -32,7 +32,7 @@ const HOOK_STYLES: Record<'A' | 'B', { name: string; desc: string }> = {
 };
 
 export async function generateVariant(topic: string, variant: 'A' | 'B'): Promise<string> {
-  const wikiCtx = buildContext(topic);
+  const wikiCtx = await buildContext(topic);
   const ctxBlock = wikiCtx
     ? `\n\n--- KIẾN THỨC DOANH NGHIỆP ---\n${wikiCtx}\n--- HẾT ---\n`
     : '';

@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { authMiddleware } from '../middleware/auth';
-import { pullMetrics, getLatestMetrics, getOverview } from '../services/analytics';
+import { pullMetrics, getLatestMetrics, getOverview, getBestPostingTime, getDailyTrend } from '../services/analytics';
 import { createExperiment, listExperiments, decidePendingWinners } from '../services/abtest';
 import { analyzeRecentComments } from '../services/faqlearn';
+import { syncBooking, getLatestBooking } from '../services/booking';
 
 const router = Router();
 router.use(authMiddleware);
@@ -58,6 +59,31 @@ router.post('/faq/analyze', async (req, res) => {
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ===== Sprint 4: Advanced KPI =====
+router.get('/best-time', (req, res) => {
+  const days = parseInt((req.query.days as string) || '60', 10);
+  res.json(getBestPostingTime(days));
+});
+
+router.get('/trend', (req, res) => {
+  const days = parseInt((req.query.days as string) || '14', 10);
+  res.json(getDailyTrend(days));
+});
+
+// ===== Sprint 4: Booking data sync =====
+router.post('/booking/sync', async (req, res) => {
+  try {
+    const r = await syncBooking(req.body || {});
+    res.json({ ok: true, ...r });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/booking', (req, res) => {
+  res.json(getLatestBooking() || null);
 });
 
 export default router;

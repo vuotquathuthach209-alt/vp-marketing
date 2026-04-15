@@ -27,7 +27,7 @@ Chỉ trả về prompt, không giải thích.`;
 
 export async function generateCaption(topic: string, extraContext?: string): Promise<string> {
   // Tự động inject Wiki context (RAG): doanh nghiệp, brand voice, campaign, product, faq
-  const wikiCtx = buildContext(topic);
+  const wikiCtx = await buildContext(topic);
   const ctxBlock = wikiCtx
     ? `\n\n--- KIẾN THỨC DOANH NGHIỆP (dùng chính xác số liệu, tên, tone bên dưới) ---\n${wikiCtx}\n--- HẾT KIẾN THỨC ---\n`
     : '';

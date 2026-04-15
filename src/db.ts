@@ -139,6 +139,17 @@ CREATE TABLE IF NOT EXISTS knowledge_wiki (
 CREATE INDEX IF NOT EXISTS idx_wiki_ns_active ON knowledge_wiki(namespace, active);
 `);
 
+// Sprint 4: thêm cột embedding (BLOB = Float32Array) cho semantic search
+try {
+  const cols = db.prepare(`PRAGMA table_info(knowledge_wiki)`).all() as { name: string }[];
+  if (!cols.find((c) => c.name === 'embedding')) {
+    db.exec(`ALTER TABLE knowledge_wiki ADD COLUMN embedding BLOB`);
+    db.exec(`ALTER TABLE knowledge_wiki ADD COLUMN embedding_model TEXT`);
+  }
+} catch (e) {
+  console.error('[db] migrate embedding failed:', e);
+}
+
 // Helpers
 export function getSetting(key: string): string | null {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;

@@ -198,6 +198,25 @@
           <div id="ab-list" class="space-y-2"></div>
         </div>
 
+        <!-- Best Posting Time -->
+        <div class="bg-white rounded-xl shadow p-6 max-w-4xl mb-6">
+          <h3 class="font-bold mb-2">⏰ Best Posting Time</h3>
+          <p class="text-xs text-slate-500 mb-4">Dựa trên metric 60 ngày gần nhất — thời điểm nào đăng cho engagement cao nhất.</p>
+          <div id="best-time" class="text-sm"></div>
+        </div>
+
+        <!-- Booking Sync -->
+        <div class="bg-white rounded-xl shadow p-6 max-w-4xl mb-6">
+          <h3 class="font-bold mb-2">🛏️ Dữ liệu phòng / khuyến mãi (real-time)</h3>
+          <p class="text-xs text-slate-500 mb-4">Push phòng trống & promo → AI tự dùng khi viết caption. Push từ Google Sheet/Zapier bằng <code>POST /api/analytics/booking/sync</code> hoặc nhập tay dưới đây.</p>
+          <textarea id="booking-content" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" rows="5" placeholder="VD:&#10;- Deluxe: còn 3 phòng&#10;- Suite: còn 1 phòng&#10;- Tỷ lệ lấp đầy: 75%&#10;- Promo: Giảm 15% đặt trước 7 ngày"></textarea>
+          <div class="mt-3">
+            <button id="btn-booking-sync" class="bg-indigo-600 text-white px-5 py-2 rounded-lg text-sm font-semibold">💾 Cập nhật</button>
+            <span id="booking-status" class="ml-3 text-sm"></span>
+          </div>
+          <div id="booking-latest" class="mt-4 text-xs text-slate-600"></div>
+        </div>
+
         <!-- FAQ Auto-learn -->
         <div class="bg-white rounded-xl shadow p-6 max-w-4xl mb-6">
           <h3 class="font-bold mb-2">🎓 FAQ Auto-learn</h3>
