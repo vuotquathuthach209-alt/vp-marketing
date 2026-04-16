@@ -579,9 +579,24 @@ document.getElementById('btn-add-page').addEventListener('click', async () => {
   }
 });
 
-// ====== Facebook Connect (Auto) ======
+// ====== Facebook Connect ======
 let fbConnectPages = []; // Pages returned from FB
 
+// CÁCH 1: Paste User Token → Lấy Pages
+document.getElementById('btn-fb-fetch-pages').addEventListener('click', async () => {
+  const userToken = document.getElementById('fb-user-token').value.trim();
+  const statusEl = document.getElementById('fb-connect-status');
+  if (!userToken) {
+    statusEl.className = 'text-sm mt-2 text-red-600';
+    statusEl.textContent = '❌ Paste User Access Token vào ô trên';
+    return;
+  }
+  statusEl.className = 'text-sm mt-2 text-blue-600';
+  statusEl.textContent = '⏳ Đang lấy danh sách Pages...';
+  await fetchFBPages(userToken);
+});
+
+// CÁCH 2: FB SDK Login (backup)
 document.getElementById('btn-fb-connect').addEventListener('click', async () => {
   const statusEl = document.getElementById('fb-connect-status');
   statusEl.className = 'text-sm mt-2 text-blue-600';

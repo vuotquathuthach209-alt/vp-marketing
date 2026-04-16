@@ -679,19 +679,24 @@
           <div id="token-status-list" class="mb-3 space-y-1 text-sm"></div>
           <div id="pages-list" class="mb-4 space-y-2"></div>
 
-          <!-- ═══ CÁCH 1: Kết nối Facebook tự động (Recommended) ═══ -->
-          <h4 class="text-sm font-semibold mt-6 mb-2">🔗 Kết nối Facebook (Tự động)</h4>
-          <p class="text-xs text-slate-500 mb-3">Bấm nút bên dưới → Đăng nhập Facebook → Chọn Pages → Xong! Token được lấy tự động.</p>
-          <button id="btn-fb-connect" class="bg-blue-600 text-white px-5 py-2.5 rounded-lg text-sm font-semibold hover:bg-blue-700 flex items-center gap-2">
-            <svg class="w-5 h-5" fill="white" viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
-            Kết nối Facebook
-          </button>
+          <!-- ═══ CÁCH 1: Paste User Token (Doanh nghiệp) ═══ -->
+          <h4 class="text-sm font-semibold mt-6 mb-2">🔗 Kết nối Facebook Pages</h4>
+          <p class="text-xs text-slate-500 mb-3">Paste <b>User Access Token</b> từ Graph API Explorer (có quyền pages_manage_posts). Hệ thống tự lấy Page Tokens cho tất cả Pages của bạn.</p>
+          <div class="flex gap-2 mb-2">
+            <input id="fb-user-token" type="password" placeholder="Paste User Access Token từ Graph API Explorer..." class="flex-1 border rounded-lg px-3 py-2 text-sm font-mono" />
+            <button id="btn-fb-fetch-pages" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap hover:bg-blue-700">🔍 Lấy Pages</button>
+          </div>
           <div id="fb-pages-picker" class="mt-3 hidden">
             <p class="text-sm font-semibold mb-2">Chọn Pages để kết nối:</p>
             <div id="fb-pages-list" class="space-y-2 max-h-64 overflow-y-auto"></div>
             <button id="btn-fb-add-selected" class="mt-3 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">✅ Thêm Pages đã chọn</button>
           </div>
           <p id="fb-connect-status" class="text-sm mt-2"></p>
+
+          <!-- FB SDK Login (backup) -->
+          <div class="mt-3">
+            <button id="btn-fb-connect" class="bg-slate-200 text-slate-700 px-4 py-2 rounded-lg text-xs hover:bg-slate-300">Hoặc: Đăng nhập Facebook trực tiếp</button>
+          </div>
 
           <!-- ═══ CÁCH 2: Thêm thủ công ═══ -->
           <details class="mt-6">
