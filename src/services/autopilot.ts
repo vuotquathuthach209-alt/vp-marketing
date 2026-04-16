@@ -7,6 +7,7 @@ import { config } from '../config';
 import { getCachedRoomTypes } from './ota-sync';
 import { getRandomDriveImage, syncDriveFolder } from './gdrive';
 import { getNewsForContent } from './news-scraper';
+import { getHotelPhoto } from './unsplash';
 
 /**
  * Autopilot v2 — Content Calendar Engine
@@ -316,7 +317,29 @@ async function getImageForPost(
     }
   }
 
-  // 2) AI-generated image (default fallback)
+  // 2) Unsplash — stock photos miễn phí
+  if (imageSource === 'unsplash' || imageSource === 'web') {
+    try {
+      const hotel = db.prepare(`SELECT name FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
+      const hotelName = hotel?.name || 'hotel';
+      // Extract content type from caption context
+      const contentType = caption.includes('tip') ? 'tips' : caption.includes('ẩm thực') ? 'lifestyle' : 'product';
+      const photo = await getHotelPhoto(hotelName, contentType);
+      if (photo) {
+        // Save to media with attribution
+        const captionWithCredit = `${caption}\n\n${photo.attribution}`;
+        const result = db.prepare(
+          `INSERT INTO media (filename, mime_type, size, source, prompt, hotel_id, created_at)
+           VALUES (?, 'image/jpeg', 0, 'unsplash', ?, ?, ?)`
+        ).run(photo.imageUrl, photo.attribution, hotelId, Date.now());
+        return { mediaId: Number(result.lastInsertRowid), imageUrl: photo.imageUrl };
+      }
+    } catch (e: any) {
+      console.warn(`[autopilot] Unsplash failed, falling back to AI:`, e.message);
+    }
+  }
+
+  // 3) AI-generated image (default fallback)
   try {
     const imgPrompt = await generateImagePrompt(caption);
     const imgResult = await generateImageSmart(imgPrompt);

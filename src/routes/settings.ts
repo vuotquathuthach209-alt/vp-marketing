@@ -31,7 +31,7 @@ router.get('/', (req: AuthRequest, res) => {
 });
 
 // Generic get setting (for API keys loading)
-const ALLOWED_KEYS = ['anthropic_api_key', 'deepseek_api_key', 'openai_api_key', 'google_api_key', 'groq_api_key', 'mistral_api_key', 'fal_api_key'];
+const ALLOWED_KEYS = ['anthropic_api_key', 'deepseek_api_key', 'openai_api_key', 'google_api_key', 'groq_api_key', 'mistral_api_key', 'fal_api_key', 'unsplash_access_key'];
 router.get('/get', (req: AuthRequest, res) => {
   const key = req.query.key as string;
   if (!key || !ALLOWED_KEYS.includes(key)) return res.json({ value: '' });

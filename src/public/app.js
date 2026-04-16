@@ -109,6 +109,7 @@ function switchTab(tab) {
   if (tab === 'autoreply') loadAutoReply();
   if (tab === 'wiki') loadWiki();
   if (tab === 'analytics') loadAnalytics();
+  if (tab === 'autopilot') loadAutopilotStatus();
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
   b.addEventListener('click', () => switchTab(b.dataset.tab));
@@ -1746,6 +1747,7 @@ const API_KEY_MAP = {
   'key-groq': 'groq_api_key',
   'key-mistral': 'mistral_api_key',
   'key-fal': 'fal_api_key',
+  'key-unsplash': 'unsplash_access_key',
 };
 
 async function loadAllApiKeys() {
