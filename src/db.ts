@@ -367,6 +367,19 @@ CREATE TABLE IF NOT EXISTS ai_cache (
   PRIMARY KEY (prompt_hash, type)
 );
 
+-- Room images: hotel-uploaded room photos
+CREATE TABLE IF NOT EXISTS room_images (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  room_type_name TEXT NOT NULL,
+  image_url TEXT NOT NULL,
+  caption TEXT DEFAULT '',
+  display_order INTEGER DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_room_images_hotel ON room_images(hotel_id);
+
 -- Email log
 CREATE TABLE IF NOT EXISTS email_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

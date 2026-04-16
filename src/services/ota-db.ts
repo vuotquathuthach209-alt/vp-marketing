@@ -521,6 +521,40 @@ export async function getOtaHotelStats(hotelId: number): Promise<OtaHotelStats> 
   };
 }
 
+/** Lấy hình ảnh phòng từ OTA DB */
+export async function getOtaRoomImages(hotelId: number): Promise<Array<{room_type_id: number; room_type_name: string; image_url: string; caption: string}>> {
+  try {
+    // Try room_type_images table first
+    return await query(`
+      SELECT rti.room_type_id, rt.name as room_type_name,
+             rti.image_url, COALESCE(rti.caption, '') as caption
+      FROM room_type_images rti
+      JOIN room_types rt ON rt.id = rti.room_type_id
+      WHERE rt.hotel_id = $1 AND rt.status = 'active'
+      ORDER BY rt.name, rti.display_order
+    `, [hotelId]);
+  } catch {
+    // Fallback: try images column on room_types
+    try {
+      const rows = await query<{id: number; name: string; images: any}>(`
+        SELECT id, name, images FROM room_types
+        WHERE hotel_id = $1 AND status = 'active'
+      `, [hotelId]);
+      const result: any[] = [];
+      for (const r of rows) {
+        const imgs = Array.isArray(r.images) ? r.images : [];
+        for (const img of imgs) {
+          const url = typeof img === 'string' ? img : img?.url;
+          if (url) result.push({ room_type_id: r.id, room_type_name: r.name, image_url: url, caption: '' });
+        }
+      }
+      return result;
+    } catch {
+      return [];
+    }
+  }
+}
+
 /** Close pool on shutdown */
 export function closeOtaPool() {
   if (pool) {

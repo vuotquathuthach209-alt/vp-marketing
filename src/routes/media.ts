@@ -73,4 +73,36 @@ router.delete('/:id', (req: AuthRequest, res) => {
   res.json({ ok: true });
 });
 
+// ══════ Room Images Management ══════
+
+// GET /api/media/room-images — list room images for current hotel
+router.get('/room-images', (req: any, res) => {
+  const hotelId = req.hotelId || 1;
+  const images = db.prepare(
+    `SELECT * FROM room_images WHERE hotel_id = ? ORDER BY room_type_name, display_order`
+  ).all(hotelId);
+  res.json(images);
+});
+
+// POST /api/media/room-images — add a room image (URL-based)
+router.post('/room-images', (req: any, res) => {
+  const hotelId = req.hotelId || 1;
+  const { room_type_name, image_url, caption, display_order } = req.body;
+  if (!room_type_name || !image_url) {
+    return res.status(400).json({ error: 'room_type_name và image_url là bắt buộc' });
+  }
+  const result = db.prepare(
+    `INSERT INTO room_images (hotel_id, room_type_name, image_url, caption, display_order, active, created_at)
+     VALUES (?, ?, ?, ?, ?, 1, ?)`
+  ).run(hotelId, room_type_name, image_url, caption || '', display_order || 0, Date.now());
+  res.json({ id: result.lastInsertRowid, ok: true });
+});
+
+// DELETE /api/media/room-images/:id — delete a room image
+router.delete('/room-images/:id', (req: any, res) => {
+  const hotelId = req.hotelId || 1;
+  db.prepare(`DELETE FROM room_images WHERE id = ? AND hotel_id = ?`).run(req.params.id, hotelId);
+  res.json({ ok: true });
+});
+
 export default router;

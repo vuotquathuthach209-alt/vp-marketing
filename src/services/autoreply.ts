@@ -126,13 +126,33 @@ async function replyToMessages(page: any) {
           }
         }
 
-        const { reply } = await smartReplyWithSender(
+        const { reply, images } = await smartReplyWithSender(
           messageText || '(ảnh)',
           senderId,
           senderName,
-          hasImage
+          hasImage,
+          page.hotel_id || 1
         );
         await sendFBMessage(page.access_token, senderId, reply);
+
+        // Send room images gallery if available
+        if (images && images.length > 0) {
+          try {
+            await sendFBGallery(page.access_token, senderId, images.map(img => ({
+              title: img.title,
+              subtitle: img.subtitle,
+              image_url: img.image_url,
+            })));
+          } catch (imgErr: any) {
+            console.error(`[auto-reply] Gallery send failed:`, imgErr?.response?.data?.error?.message || imgErr.message);
+            // Fallback: send images one by one
+            for (const img of images.slice(0, 3)) {
+              try {
+                await sendFBImage(page.access_token, senderId, img.image_url);
+              } catch {}
+            }
+          }
+        }
         db.prepare(
           `INSERT INTO auto_reply_log (page_id, kind, fb_id, original_text, reply_text, status, created_at)
            VALUES (?, 'message', ?, ?, ?, 'sent', ?)`
@@ -181,10 +201,68 @@ export async function sendFBMessageToSender(senderId: string, text: string) {
   await sendFBMessage(page.access_token, senderId, text);
 }
 
+/** Send an image to a Facebook user via Messenger */
+export async function sendFBImage(accessToken: string, recipientId: string, imageUrl: string) {
+  await axios.post(
+    `${GRAPH}/me/messages`,
+    {
+      recipient: { id: recipientId },
+      message: {
+        attachment: {
+          type: 'image',
+          payload: { url: imageUrl, is_reusable: true }
+        }
+      },
+      messaging_type: 'RESPONSE',
+    },
+    {
+      params: { access_token: accessToken },
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 15000,
+    }
+  );
+}
+
+/** Send a gallery (generic template) of room images via Messenger */
+export async function sendFBGallery(
+  accessToken: string,
+  recipientId: string,
+  elements: Array<{ title: string; subtitle: string; image_url: string; buttons?: Array<{type: string; title: string; url?: string; payload?: string}> }>
+) {
+  // FB limits to 10 elements
+  const limited = elements.slice(0, 10);
+  await axios.post(
+    `${GRAPH}/me/messages`,
+    {
+      recipient: { id: recipientId },
+      message: {
+        attachment: {
+          type: 'template',
+          payload: {
+            template_type: 'generic',
+            elements: limited.map(el => ({
+              title: el.title,
+              subtitle: el.subtitle,
+              image_url: el.image_url,
+              buttons: el.buttons || [{ type: 'web_url', title: 'Đặt phòng', url: 'https://sondervn.com' }],
+            })),
+          },
+        },
+      },
+      messaging_type: 'RESPONSE',
+    },
+    {
+      params: { access_token: accessToken },
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 15000,
+    }
+  );
+}
+
 export async function runAutoReply() {
   const rows = db
     .prepare(
-      `SELECT p.id, p.name, p.fb_page_id, p.access_token,
+      `SELECT p.id, p.name, p.fb_page_id, p.access_token, p.hotel_id,
               COALESCE(c.reply_comments, 0) as reply_comments,
               COALESCE(c.reply_messages, 0) as reply_messages,
               COALESCE(c.system_prompt, '') as system_prompt
