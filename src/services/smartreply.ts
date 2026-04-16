@@ -1,6 +1,12 @@
 import { db } from '../db';
 import { generate, TaskType } from './router';
 import { buildContext } from './wiki';
+import {
+  isBookingIntent,
+  hasActiveBooking,
+  processBookingStep,
+  markTransferReceived,
+} from './bookingflow';
 
 /**
  * Smart Reply Engine — 3 tầng:
@@ -307,6 +313,45 @@ async function aiReply(message: string): Promise<string> {
 /* ═══════════════════════════════════════════
    MAIN ENTRY POINT
    ═══════════════════════════════════════════ */
+
+/**
+ * Smart reply with sender context — booking flow aware.
+ * If senderId is provided, checks for active booking or booking intent.
+ */
+export async function smartReplyWithSender(
+  message: string,
+  senderId?: string,
+  senderName?: string,
+  hasImage?: boolean
+): Promise<SmartReplyResult> {
+  const t0 = Date.now();
+  const msg = message.trim();
+
+  if (senderId) {
+    // If sender has image and is awaiting transfer → mark transfer received
+    if (hasImage) {
+      const result = markTransferReceived(senderId);
+      if (result) {
+        return { reply: result.reply, tier: 'rules', latency_ms: Date.now() - t0 };
+      }
+    }
+
+    // If sender has active booking → delegate to booking flow
+    if (hasActiveBooking(senderId)) {
+      const reply = processBookingStep(senderId, msg, senderName);
+      return { reply, tier: 'rules', latency_ms: Date.now() - t0 };
+    }
+
+    // If message has booking intent → start new booking flow
+    if (isBookingIntent(msg)) {
+      const reply = processBookingStep(senderId, msg, senderName);
+      return { reply, tier: 'rules', latency_ms: Date.now() - t0 };
+    }
+  }
+
+  // Fall through to standard smart reply
+  return smartReply(msg);
+}
 
 export async function smartReply(message: string): Promise<SmartReplyResult> {
   const t0 = Date.now();

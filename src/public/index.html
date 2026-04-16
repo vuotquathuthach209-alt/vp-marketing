@@ -347,6 +347,81 @@
         </div>
 
 
+        <!-- Sprint 8: Booking Config -->
+        <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6">
+          <h3 class="font-bold mb-2">🏨 Cấu hình Đặt phòng</h3>
+          <p class="text-xs text-slate-500 mb-4">Cấu hình luồng đặt phòng tự động qua Messenger. Khách nhắn → báo giá → chờ CK → lễ tân xác nhận.</p>
+
+          <div class="grid grid-cols-2 gap-3 mb-3">
+            <div>
+              <label class="block text-xs font-semibold mb-1">Tên khách sạn</label>
+              <input id="bk-hotel-name" class="w-full border rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">Hotline</label>
+              <input id="bk-hotline" class="w-full border rounded-lg px-3 py-2 text-sm" />
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="block text-xs font-semibold mb-1">Địa chỉ</label>
+            <input id="bk-address" class="w-full border rounded-lg px-3 py-2 text-sm" />
+          </div>
+
+          <div class="mb-3">
+            <label class="block text-xs font-semibold mb-1">Google Maps link</label>
+            <input id="bk-maps" class="w-full border rounded-lg px-3 py-2 text-sm font-mono text-xs" />
+          </div>
+
+          <div class="grid grid-cols-3 gap-3 mb-3">
+            <div>
+              <label class="block text-xs font-semibold mb-1">Check-in</label>
+              <input id="bk-checkin-time" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="14:00" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">Check-out</label>
+              <input id="bk-checkout-time" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="12:00" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">Cọc (%)</label>
+              <input id="bk-deposit" type="number" class="w-full border rounded-lg px-3 py-2 text-sm" />
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="block text-xs font-semibold mb-1">Chính sách huỷ</label>
+            <textarea id="bk-cancel-policy" rows="2" class="w-full border rounded-lg px-3 py-2 text-sm"></textarea>
+          </div>
+
+          <div class="mb-3">
+            <label class="block text-xs font-semibold mb-1">Loại phòng (JSON)</label>
+            <textarea id="bk-room-types" rows="6" class="w-full border rounded-lg px-3 py-2 text-xs font-mono" placeholder='{"standard":{"name":"Standard","price_weekday":450000,"price_weekend":550000}}'></textarea>
+            <p class="text-xs text-slate-400 mt-1">Mỗi key: name, price_weekday, price_weekend</p>
+          </div>
+
+          <div class="mb-3">
+            <label class="block text-xs font-semibold mb-1">Ảnh QR ngân hàng</label>
+            <div class="flex items-center gap-2">
+              <label class="bg-slate-200 px-3 py-2 rounded-lg text-sm cursor-pointer hover:bg-slate-300">
+                📁 Upload QR
+                <input id="bk-qr-upload" type="file" accept="image/*" class="hidden" />
+              </label>
+              <span id="bk-qr-status" class="text-xs text-slate-500"></span>
+            </div>
+          </div>
+
+          <div class="flex gap-2">
+            <button id="btn-bk-save" class="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-semibold">💾 Lưu cấu hình</button>
+            <span id="bk-save-status" class="text-sm"></span>
+          </div>
+
+          <!-- Pending bookings -->
+          <div class="mt-6 border-t pt-4">
+            <h4 class="font-semibold text-sm mb-2">📋 Booking đang chờ</h4>
+            <div id="bk-pending-list" class="space-y-2 text-sm"></div>
+          </div>
+        </div>
+
         <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6">
           <h3 class="font-bold mb-4">🔑 API Keys</h3>
           <p class="text-xs text-slate-500 mb-4">💡 Nhập <b>key mới</b> (mỗi dòng 1 key) — hệ thống sẽ <b>THÊM VÀO</b> danh sách, không xoá key cũ. Muốn xoá hết key của provider nào thì bấm nút 🗑️ bên cạnh. Round-robin &amp; failover tự động.</p>

@@ -15,6 +15,7 @@ import autoreplyRoutes from './routes/autoreply';
 import wikiRoutes from './routes/wiki';
 import analyticsRoutes from './routes/analytics';
 import autopilotRouter from './routes/autopilot';
+import bookingRouter from './routes/booking';
 
 const app = express();
 
@@ -36,6 +37,7 @@ app.use('/api/auto-reply', autoreplyRoutes);
 app.use('/api/wiki', wikiRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/autopilot', autopilotRouter);
+app.use('/api/booking', bookingRouter);
 
 app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 

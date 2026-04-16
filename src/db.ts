@@ -176,6 +176,29 @@ CREATE TABLE IF NOT EXISTS telegram_chats (
   created_at INTEGER NOT NULL,
   last_seen INTEGER NOT NULL
 );
+
+-- Sprint 8: Booking flow
+CREATE TABLE IF NOT EXISTS pending_bookings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  fb_sender_id TEXT NOT NULL,
+  fb_sender_name TEXT,
+  room_type TEXT,
+  checkin_date TEXT,
+  checkout_date TEXT,
+  nights INTEGER DEFAULT 1,
+  guests INTEGER DEFAULT 1,
+  total_price INTEGER DEFAULT 0,
+  deposit_amount INTEGER DEFAULT 0,
+  transfer_image_url TEXT,
+  status TEXT NOT NULL DEFAULT 'collecting',
+  assigned_room TEXT,
+  reject_reason TEXT,
+  confirmed_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bookings_status ON pending_bookings(status);
+CREATE INDEX IF NOT EXISTS idx_bookings_sender ON pending_bookings(fb_sender_id);
 `);
 
 // Helpers

@@ -5,6 +5,14 @@ import { getOverview, getBestPostingTime } from './analytics';
 import { buildContext, getWikiStats } from './wiki';
 import { syncBooking } from './booking';
 import { publishText, publishImage, mediaFullPath } from './facebook';
+import {
+  getPendingBookings,
+  confirmBooking,
+  rejectBooking,
+  getBookingConfig,
+  getBookingById,
+} from './bookingflow';
+import { sendFBMessageToSender } from './autoreply';
 
 /**
  * Sprint 6 — Telegram Bot (long-polling, no webhook).
@@ -98,6 +106,15 @@ async function sendMessage(chatId: string | number, text: string, extra: any = {
   });
 }
 
+export async function sendPhoto(chatId: string | number, photoUrl: string, caption?: string) {
+  return tg('sendPhoto', {
+    chat_id: chatId,
+    photo: photoUrl,
+    caption: caption ? (caption.length > 1000 ? caption.slice(0, 990) + '...' : caption) : undefined,
+    parse_mode: 'Markdown',
+  });
+}
+
 // ---------- Auth ----------
 function upsertChat(chatId: string, username?: string, firstName?: string) {
   const now = Date.now();
@@ -139,6 +156,10 @@ _Trước khi dùng:_ \`/unlock <code>\`
 • \`/besttime\` — khung giờ vàng
 • \`/wiki <chủ đề>\` — preview Wiki context
 • \`/booking <nội dung>\` — cập nhật phòng trống
+• \`/bookings\` — xem booking đang chờ
+• \`/confirm [id] <phòng>\` — xác nhận booking
+• \`/reject [id] [lý do]\` — từ chối booking
+• \`/rooms\` — bảng giá phòng
 • \`/notify on|off\` — bật/tắt thông báo
 • \`/whoami\` — xem chat ID
 • \`/help\` — menu này`;
@@ -282,6 +303,84 @@ async function handleCommand(chatId: string, text: string, from: any) {
         if (!arg) return sendMessage(chatId, 'Cú pháp: `/booking <nội dung>`');
         const r = await syncBooking({ content: arg, source: 'telegram' });
         return sendMessage(chatId, `✅ Đã cập nhật booking (entry #${r.id}, ${r.content_length} ký tự).`);
+      }
+
+      case '/confirm': {
+        // /confirm <booking_id> <room>  OR  /confirm <room> (uses latest pending)
+        const parts = arg.trim().split(/\s+/);
+        let bookingId: number;
+        let roomNumber: string;
+
+        if (parts.length >= 2 && /^\d+$/.test(parts[0])) {
+          bookingId = parseInt(parts[0], 10);
+          roomNumber = parts.slice(1).join(' ');
+        } else {
+          // Use latest pending booking
+          const pending = getPendingBookings();
+          const awaiting = pending.find((b) => b.status === 'awaiting_confirm');
+          if (!awaiting) return sendMessage(chatId, '❌ Không có booking nào đang chờ xác nhận.');
+          bookingId = awaiting.id;
+          roomNumber = arg.trim() || 'N/A';
+        }
+
+        const result = confirmBooking(bookingId, roomNumber);
+        // Send confirmation to customer via FB
+        try {
+          await sendFBMessageToSender(result.senderId, result.reply);
+        } catch (e: any) {
+          await sendMessage(chatId, `⚠️ Không gửi được tin FB cho khách: ${e.message}`);
+        }
+        return sendMessage(chatId, `✅ Booking #${bookingId} confirmed, phòng ${roomNumber}`);
+      }
+
+      case '/reject': {
+        const parts = arg.trim().split(/\s+/);
+        let bookingId: number;
+        let reason: string;
+
+        if (parts.length >= 1 && /^\d+$/.test(parts[0])) {
+          bookingId = parseInt(parts[0], 10);
+          reason = parts.slice(1).join(' ') || '';
+        } else {
+          const pending = getPendingBookings();
+          const awaiting = pending.find((b) => b.status === 'awaiting_confirm');
+          if (!awaiting) return sendMessage(chatId, '❌ Không có booking nào đang chờ xác nhận.');
+          bookingId = awaiting.id;
+          reason = arg.trim();
+        }
+
+        const result = rejectBooking(bookingId, reason || undefined);
+        try {
+          await sendFBMessageToSender(result.senderId, result.reply);
+        } catch (e: any) {
+          await sendMessage(chatId, `⚠️ Không gửi được tin FB cho khách: ${e.message}`);
+        }
+        return sendMessage(chatId, `❌ Booking #${bookingId} rejected${reason ? ': ' + reason : ''}`);
+      }
+
+      case '/bookings': {
+        const pending = getPendingBookings();
+        if (pending.length === 0) return sendMessage(chatId, '📭 Không có booking nào đang chờ.');
+        const lines = pending.map((b) => {
+          const status: Record<string, string> = {
+            collecting: '📝 Đang thu thập',
+            quoting: '💰 Đang báo giá',
+            awaiting_transfer: '⏳ Chờ CK',
+            awaiting_confirm: '🔔 CHỜ XÁC NHẬN',
+          };
+          return `#${b.id} | ${status[b.status] || b.status} | ${b.fb_sender_name || b.fb_sender_id}\n` +
+            `   ${b.room_type || '?'} | ${b.checkin_date || '?'} → ${b.checkout_date || '?'} | ${b.nights}đ | ${(b.total_price || 0).toLocaleString()}₫`;
+        });
+        return sendMessage(chatId, `*📋 Pending Bookings (${pending.length}):*\n\n${lines.join('\n\n')}`);
+      }
+
+      case '/rooms':
+      case '/price': {
+        const cfg = getBookingConfig();
+        const lines = Object.entries(cfg.room_types).map(([key, rt]) =>
+          `🛏️ *${rt.name}* (\`${key}\`)\n   Ngày thường: ${rt.price_weekday.toLocaleString()}₫ | Cuối tuần: ${rt.price_weekend.toLocaleString()}₫`
+        );
+        return sendMessage(chatId, `*🏨 ${cfg.hotel_name} — Bảng giá:*\n\n${lines.join('\n\n')}\n\n📍 ${cfg.address}\n📱 ${cfg.hotline}`);
       }
 
       case '/notify': {

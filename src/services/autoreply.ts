@@ -1,6 +1,8 @@
 import axios from 'axios';
 import { db } from '../db';
-import { smartReply } from './smartreply';
+import { smartReply, smartReplyWithSender } from './smartreply';
+import { markTransferReceived, hasActiveBooking } from './bookingflow';
+import { notifyAll } from './telegram';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
@@ -62,7 +64,7 @@ async function replyToMessages(page: any) {
   try {
     const resp = await axios.get(`${GRAPH}/${page.fb_page_id}/conversations`, {
       params: {
-        fields: 'id,updated_time,messages.limit(3){id,from,message,created_time}',
+        fields: 'id,updated_time,messages.limit(3){id,from,message,created_time,attachments}',
         limit: 15,
         access_token: page.access_token,
       },
@@ -74,32 +76,66 @@ async function replyToMessages(page: any) {
       const messages = convo.messages?.data || [];
       if (messages.length === 0) continue;
       const latest = messages[0]; // Mới nhất
-      if (!latest.id || !latest.message) continue;
+      if (!latest.id) continue;
       // Tin mới nhất là của page → không cần reply
       if (latest.from?.id === page.fb_page_id) continue;
 
       const exists = db.prepare(`SELECT id FROM auto_reply_log WHERE fb_id = ?`).get(latest.id);
       if (exists) continue;
 
+      // Detect image attachments
+      const attachments = latest.attachments?.data || [];
+      const imageAttach = attachments.find((a: any) =>
+        a.mime_type?.startsWith('image/') || a.type === 'image'
+      );
+      const hasImage = !!imageAttach;
+      const imageUrl = imageAttach?.image_data?.url || imageAttach?.url || null;
+      const messageText = latest.message || '';
+      const senderId = latest.from?.id;
+      const senderName = latest.from?.name;
+
+      // If no text and no image, skip
+      if (!messageText && !hasImage) continue;
+
       try {
-        const { reply } = await smartReply(latest.message);
-        await axios.post(
-          `${GRAPH}/me/messages`,
-          {
-            recipient: { id: latest.from.id },
-            message: { text: reply },
-            messaging_type: 'RESPONSE',
-          },
-          {
-            params: { access_token: page.access_token },
-            headers: { 'Content-Type': 'application/json' },
-            timeout: 15000,
+        // If image + awaiting transfer → handle transfer
+        if (hasImage && senderId && hasActiveBooking(senderId)) {
+          const transferResult = markTransferReceived(senderId, imageUrl);
+          if (transferResult) {
+            // Send reply to customer
+            await sendFBMessage(page.access_token, senderId, transferResult.reply);
+            db.prepare(
+              `INSERT INTO auto_reply_log (page_id, kind, fb_id, original_text, reply_text, status, created_at)
+               VALUES (?, 'message', ?, ?, ?, 'sent', ?)`
+            ).run(page.id, latest.id, '[ảnh chuyển khoản]', transferResult.reply, Date.now());
+
+            // Notify Telegram
+            const b = transferResult.booking;
+            const tgMsg = `📸 CHUYỂN KHOẢN MỚI\n` +
+              `Booking #${b.id}\n` +
+              `Khách: ${b.fb_sender_name || senderId}\n` +
+              `Phòng: ${b.room_type || 'N/A'}, ${b.nights} đêm (${b.checkin_date} → ${b.checkout_date})\n` +
+              `Tổng: ${b.total_price.toLocaleString('vi-VN')}₫ | Cọc: ${b.deposit_amount.toLocaleString('vi-VN')}₫\n\n` +
+              `Lễ tân xác nhận: /confirm ${b.id} [số phòng]\n` +
+              `Từ chối: /reject ${b.id} [lý do]`;
+            notifyAll(tgMsg).catch(() => {});
+
+            console.log(`[auto-reply] ✅ Transfer image received, booking #${b.id}`);
+            continue;
           }
+        }
+
+        const { reply } = await smartReplyWithSender(
+          messageText || '(ảnh)',
+          senderId,
+          senderName,
+          hasImage
         );
+        await sendFBMessage(page.access_token, senderId, reply);
         db.prepare(
           `INSERT INTO auto_reply_log (page_id, kind, fb_id, original_text, reply_text, status, created_at)
            VALUES (?, 'message', ?, ?, ?, 'sent', ?)`
-        ).run(page.id, latest.id, latest.message, reply, Date.now());
+        ).run(page.id, latest.id, messageText, reply, Date.now());
         console.log(`[auto-reply] ✅ Reply message ${latest.id}`);
       } catch (err: any) {
         const msg = err?.response?.data?.error?.message || err?.message;
@@ -107,7 +143,7 @@ async function replyToMessages(page: any) {
           db.prepare(
             `INSERT INTO auto_reply_log (page_id, kind, fb_id, original_text, reply_text, status, error, created_at)
              VALUES (?, 'message', ?, ?, '', 'failed', ?, ?)`
-          ).run(page.id, latest.id, latest.message, msg, Date.now());
+          ).run(page.id, latest.id, messageText, msg, Date.now());
         } catch {}
         console.error(`[auto-reply] ❌ Message ${latest.id}: ${msg}`);
       }
@@ -115,6 +151,33 @@ async function replyToMessages(page: any) {
   } catch (err: any) {
     console.error(`[auto-reply] Fetch messages ${page.name}:`, err?.response?.data?.error?.message || err.message);
   }
+}
+
+/** Send a message to a Facebook user via Messenger */
+export async function sendFBMessage(accessToken: string, recipientId: string, text: string) {
+  await axios.post(
+    `${GRAPH}/me/messages`,
+    {
+      recipient: { id: recipientId },
+      message: { text },
+      messaging_type: 'RESPONSE',
+    },
+    {
+      params: { access_token: accessToken },
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 15000,
+    }
+  );
+}
+
+/**
+ * Send a FB message to a sender using the first available page token.
+ * Used by Telegram commands to send booking confirmations.
+ */
+export async function sendFBMessageToSender(senderId: string, text: string) {
+  const page = db.prepare(`SELECT access_token FROM pages LIMIT 1`).get() as { access_token: string } | undefined;
+  if (!page) throw new Error('Chưa có Fanpage nào được cấu hình');
+  await sendFBMessage(page.access_token, senderId, text);
 }
 
 export async function runAutoReply() {

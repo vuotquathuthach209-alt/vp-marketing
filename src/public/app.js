@@ -330,6 +330,8 @@ async function loadSettings() {
   loadRouterStatus();
   loadTelegramStatus();
   loadPagesInSettings();
+  loadBookingConfig();
+  loadPendingBookings();
 }
 
 async function loadRouterStatus() {
@@ -1271,6 +1273,146 @@ if (btnBookingSync) {
       await loadBookingLatest();
     } catch (e) {
       status.innerHTML = `<span class="text-red-500">❌ ${e.message}</span>`;
+    }
+  });
+}
+
+// ====== Sprint 8: Booking Config ======
+async function loadBookingConfig() {
+  try {
+    const cfg = await api('/booking/config');
+    document.getElementById('bk-hotel-name').value = cfg.hotel_name || '';
+    document.getElementById('bk-hotline').value = cfg.hotline || '';
+    document.getElementById('bk-address').value = cfg.address || '';
+    document.getElementById('bk-maps').value = cfg.google_maps_link || '';
+    document.getElementById('bk-checkin-time').value = cfg.checkin_time || '14:00';
+    document.getElementById('bk-checkout-time').value = cfg.checkout_time || '12:00';
+    document.getElementById('bk-deposit').value = cfg.deposit_percent || 50;
+    document.getElementById('bk-cancel-policy').value = cfg.cancellation_policy || '';
+    document.getElementById('bk-room-types').value = JSON.stringify(cfg.room_types || {}, null, 2);
+    const qrStatus = document.getElementById('bk-qr-status');
+    if (cfg.bank_qr_image_id) {
+      qrStatus.textContent = `Media ID: ${cfg.bank_qr_image_id}`;
+    }
+  } catch {}
+}
+
+async function loadPendingBookings() {
+  const el = document.getElementById('bk-pending-list');
+  if (!el) return;
+  try {
+    const list = await api('/booking/pending');
+    if (list.length === 0) {
+      el.innerHTML = '<p class="text-slate-500 text-xs">Không có booking nào đang chờ.</p>';
+      return;
+    }
+    const statusLabels = {
+      collecting: '📝 Thu thập',
+      quoting: '💰 Báo giá',
+      awaiting_transfer: '⏳ Chờ CK',
+      awaiting_confirm: '🔔 Chờ xác nhận',
+    };
+    el.innerHTML = list.map((b) => `
+      <div class="border rounded-lg p-3">
+        <div class="flex justify-between items-start">
+          <div>
+            <span class="font-semibold">#${b.id}</span>
+            <span class="ml-2 text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-700">${statusLabels[b.status] || b.status}</span>
+          </div>
+          <div class="flex gap-1">
+            ${b.status === 'awaiting_confirm' ? `
+              <button onclick="confirmBookingUI(${b.id})" class="bg-green-600 text-white text-xs px-2 py-1 rounded">Confirm</button>
+              <button onclick="rejectBookingUI(${b.id})" class="bg-red-500 text-white text-xs px-2 py-1 rounded">Reject</button>
+            ` : ''}
+          </div>
+        </div>
+        <div class="text-xs text-slate-600 mt-1">
+          Khách: ${escapeHtml(b.fb_sender_name || b.fb_sender_id)} |
+          Phòng: ${b.room_type || '?'} |
+          ${b.checkin_date || '?'} → ${b.checkout_date || '?'} |
+          ${b.nights} đêm |
+          ${(b.total_price || 0).toLocaleString()}₫
+        </div>
+      </div>
+    `).join('');
+  } catch {}
+}
+
+window.confirmBookingUI = async (id) => {
+  const room = prompt('Số phòng:');
+  if (room === null) return;
+  try {
+    await api(`/booking/${id}/confirm`, { method: 'POST', body: JSON.stringify({ room: room || 'N/A' }) });
+    alert('Đã xác nhận!');
+    loadPendingBookings();
+  } catch (e) {
+    alert('Lỗi: ' + e.message);
+  }
+};
+
+window.rejectBookingUI = async (id) => {
+  const reason = prompt('Lý do từ chối (tùy chọn):');
+  if (reason === null) return;
+  try {
+    await api(`/booking/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
+    alert('Đã từ chối.');
+    loadPendingBookings();
+  } catch (e) {
+    alert('Lỗi: ' + e.message);
+  }
+};
+
+const btnBkSave = document.getElementById('btn-bk-save');
+if (btnBkSave) {
+  btnBkSave.addEventListener('click', async () => {
+    const st = document.getElementById('bk-save-status');
+    let room_types;
+    try {
+      room_types = JSON.parse(document.getElementById('bk-room-types').value);
+    } catch {
+      st.textContent = '❌ JSON loại phòng không hợp lệ';
+      st.className = 'text-sm text-red-600';
+      return;
+    }
+    const body = {
+      hotel_name: document.getElementById('bk-hotel-name').value.trim(),
+      hotline: document.getElementById('bk-hotline').value.trim(),
+      address: document.getElementById('bk-address').value.trim(),
+      google_maps_link: document.getElementById('bk-maps').value.trim(),
+      checkin_time: document.getElementById('bk-checkin-time').value.trim(),
+      checkout_time: document.getElementById('bk-checkout-time').value.trim(),
+      deposit_percent: parseInt(document.getElementById('bk-deposit').value, 10) || 50,
+      cancellation_policy: document.getElementById('bk-cancel-policy').value.trim(),
+      room_types,
+    };
+    try {
+      await api('/booking/config', { method: 'POST', body: JSON.stringify(body) });
+      st.textContent = '✅ Đã lưu';
+      st.className = 'text-sm text-green-600';
+      setTimeout(() => (st.textContent = ''), 3000);
+    } catch (e) {
+      st.textContent = '❌ ' + e.message;
+      st.className = 'text-sm text-red-600';
+    }
+  });
+}
+
+const bkQrUpload = document.getElementById('bk-qr-upload');
+if (bkQrUpload) {
+  bkQrUpload.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    const st = document.getElementById('bk-qr-status');
+    st.textContent = 'Đang upload...';
+    try {
+      const resp = await fetch('/api/booking/bank-image', { method: 'POST', body: fd, credentials: 'include' });
+      const r = await resp.json();
+      if (!resp.ok) throw new Error(r.error);
+      st.textContent = `✅ Media ID: ${r.mediaId}`;
+    } catch (err) {
+      st.textContent = '❌ ' + err.message;
     }
   });
 }

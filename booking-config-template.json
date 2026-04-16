@@ -1,0 +1,167 @@
+{
+  "=== HƯỚNG DẪN ===": "Điền thông tin bên dưới, lưu lại, rồi gửi cho bot để cấu hình. Các trường có (BẮT BUỘC) phải điền.",
+
+  "hotel_info": {
+    "=== THÔNG TIN KHÁCH SẠN ===": "",
+
+    "hotel_name": "Sonder Airport",
+    "hotel_star": 3,
+    "address": "B12 Đ. Bạch Đằng, Phường 2, Tân Bình, TP.HCM",
+    "google_maps_link": "https://maps.google.com/?q=10.8152176,106.668148",
+    "hotline": "0986 260 595",
+    "email": "support@sonder.vn",
+    "website": "https://sondervn.com",
+
+    "directions": {
+      "=== HƯỚNG DẪN ĐẾN KHÁCH SẠN ===": "Gửi cho khách sau khi xác nhận",
+      "from_airport": "Từ sân bay Tân Sơn Nhất: ra cổng → rẽ phải Trường Sơn → đi thẳng 500m → rẽ trái Bạch Đằng → 200m bên phải",
+      "from_district_1": "Từ Quận 1: đi Cộng Hòa → rẽ Bạch Đằng → 1km bên trái",
+      "landmark": "Đối diện quán phở XYZ, cạnh cây xăng ABC",
+      "parking": "Có bãi đậu xe miễn phí tại khách sạn"
+    },
+
+    "checkin_guide": {
+      "=== HƯỚNG DẪN CHECK-IN ===": "",
+      "checkin_time": "14:00",
+      "checkout_time": "12:00",
+      "early_checkin": "Có thể nhận phòng sớm từ 12:00 (phụ thu 100.000₫, tuỳ tình trạng phòng)",
+      "late_checkout": "Trả phòng muộn đến 14:00 (phụ thu 100.000₫, tuỳ tình trạng phòng)",
+      "checkin_process": "Đến quầy lễ tân → xuất trình CCCD/Passport → nhận chìa khoá phòng",
+      "required_documents": "CCCD hoặc Passport (bắt buộc)"
+    }
+  },
+
+  "room_types": {
+    "=== LOẠI PHÒNG & GIÁ ===": "Thêm/xoá phòng tuỳ ý, đặt tên code ngắn gọn",
+
+    "standard": {
+      "name": "Phòng Standard",
+      "description": "Phòng tiêu chuẩn, đầy đủ tiện nghi cơ bản",
+      "capacity": "2 người lớn",
+      "bed": "1 giường đôi",
+      "amenities": "WiFi, điều hoà, TV, tủ lạnh mini, nước suối miễn phí",
+      "price_weekday": 450000,
+      "price_weekend": 550000,
+      "price_holiday": 650000,
+      "extra_bed": 150000,
+      "hourly_price": 200000,
+      "hourly_min": 2
+    },
+
+    "deluxe": {
+      "name": "Phòng Deluxe",
+      "description": "Phòng cao cấp, view đẹp, rộng rãi hơn",
+      "capacity": "2 người lớn + 1 trẻ em",
+      "bed": "1 giường king",
+      "amenities": "WiFi, điều hoà, TV 50\", tủ lạnh, minibar, bồn tắm, áo choàng",
+      "price_weekday": 650000,
+      "price_weekend": 750000,
+      "price_holiday": 900000,
+      "extra_bed": 200000,
+      "hourly_price": 300000,
+      "hourly_min": 2
+    },
+
+    "suite": {
+      "name": "Phòng Suite",
+      "description": "Phòng hạng sang, phòng khách riêng",
+      "capacity": "2 người lớn + 2 trẻ em",
+      "bed": "1 giường king + 1 sofa bed",
+      "amenities": "WiFi, điều hoà, TV 55\", minibar full, bồn tắm jacuzzi, view thành phố",
+      "price_weekday": 950000,
+      "price_weekend": 1100000,
+      "price_holiday": 1300000,
+      "extra_bed": 250000,
+      "hourly_price": 0,
+      "hourly_min": 0
+    }
+  },
+
+  "payment_policy": {
+    "=== CHÍNH SÁCH THANH TOÁN & ĐẶT CỌC (BẮT BUỘC) ===": "",
+
+    "deposit_percent": 50,
+    "deposit_note": "Đặt cọc 50% qua chuyển khoản để giữ phòng. Phần còn lại thanh toán tại quầy lễ tân khi check-in.",
+
+    "bank_accounts": [
+      {
+        "bank_name": "Vietcombank",
+        "account_number": "0123456789",
+        "account_holder": "NGUYEN VAN A",
+        "branch": "Chi nhánh Tân Bình"
+      },
+      {
+        "bank_name": "MoMo",
+        "account_number": "0986260595",
+        "account_holder": "NGUYEN VAN A"
+      }
+    ],
+
+    "transfer_content": "SONDER [Tên khách] [Ngày check-in]",
+    "transfer_note": "Ví dụ: SONDER NGUYEN VAN B 20042026",
+
+    "accepted_payments_onsite": ["Tiền mặt", "VNPay", "MoMo", "ZaloPay", "Visa/Mastercard"],
+
+    "cancellation_policy": {
+      "free_cancel_hours": 24,
+      "free_cancel_note": "Huỷ miễn phí trước 24h so với giờ check-in",
+      "late_cancel_penalty": "Mất 100% tiền cọc nếu huỷ trong 24h trước check-in",
+      "no_show": "Không đến (no-show): mất 100% tiền cọc"
+    }
+  },
+
+  "promotions": {
+    "=== KHUYẾN MÃI HIỆN TẠI ===": "Để trống nếu không có",
+
+    "active_promos": [
+      {
+        "name": "Early Bird",
+        "description": "Đặt trước 7 ngày giảm 10%",
+        "discount_percent": 10,
+        "conditions": "Áp dụng ngày thường, không kết hợp khuyến mãi khác",
+        "valid_until": "2026-06-30"
+      },
+      {
+        "name": "Weekend Getaway",
+        "description": "Đặt 2 đêm cuối tuần tặng 1 bữa sáng",
+        "discount_percent": 0,
+        "conditions": "Thứ 6-CN, phòng Deluxe trở lên",
+        "valid_until": "2026-05-31"
+      }
+    ]
+  },
+
+  "auto_messages": {
+    "=== TIN NHẮN TỰ ĐỘNG (tuỳ chỉnh) ===": "",
+
+    "welcome": "Chào bạn! 👋 Cảm ơn bạn đã nhắn tin cho {hotel_name}.\nMình có thể giúp bạn đặt phòng, báo giá hoặc tư vấn.\nBạn cần gì ạ?",
+
+    "ask_booking_details": "Để mình báo giá chính xác, bạn cho mình biết:\n📅 Ngày check-in?\n🌙 Số đêm?\n👥 Số người?\n🛏️ Loại phòng mong muốn?",
+
+    "quote_template": "📋 *THÔNG TIN ĐẶT PHÒNG*\n\n🏨 {hotel_name}\n🛏️ {room_type}: {price}₫/đêm\n📅 {checkin} → {checkout} ({nights} đêm)\n👥 {guests} người\n💰 Tổng: {total}₫\n\n💳 Đặt cọc {deposit_percent}%: {deposit}₫\n\n🏦 Chuyển khoản:\n{bank_info}\n📝 Nội dung CK: {transfer_content}\n\n✅ Sau khi chuyển khoản, gửi ảnh xác nhận cho mình nhé!",
+
+    "received_transfer": "📸 Đã nhận ảnh chuyển khoản!\n⏳ Mình đang chuyển cho lễ tân xác nhận, vui lòng chờ 5-10 phút.\nCảm ơn bạn! 🙏",
+
+    "confirmed_template": "✅ *XÁC NHẬN ĐẶT PHÒNG THÀNH CÔNG!*\n\n🏨 {hotel_name}\n🔑 Phòng: {room_number}\n📅 Check-in: {checkin} lúc {checkin_time}\n📅 Check-out: {checkout} lúc {checkout_time}\n💰 Đã cọc: {deposit}₫ | Còn lại: {remaining}₫\n\n📍 Địa chỉ: {address}\n🗺️ Map: {google_maps_link}\n🚕 Hướng dẫn: {directions}\n\n📋 Khi đến:\n{checkin_process}\n\n📞 Hotline: {hotline}\nChúc bạn có kỳ nghỉ tuyệt vời! ❤️",
+
+    "rejected_template": "❌ Xin lỗi bạn, ảnh chuyển khoản chưa khớp hoặc chưa nhận được tiền.\nBạn vui lòng kiểm tra lại:\n🏦 {bank_info}\n📝 Nội dung CK: {transfer_content}\n\nNếu đã chuyển, vui lòng gửi lại ảnh rõ hơn. Cảm ơn bạn! 🙏"
+  },
+
+  "telegram_commands": {
+    "=== LỆNH TELEGRAM CHO LỄ TÂN ===": "Không cần sửa",
+
+    "/confirm [room_number]": "Xác nhận thanh toán + gán phòng → bot gửi thông tin cho khách",
+    "/reject [lý do]": "Từ chối ảnh CK → bot báo khách gửi lại",
+    "/rooms": "Xem danh sách phòng trống",
+    "/bookings": "Xem booking đang chờ xác nhận",
+    "Ví dụ": "/confirm 301 → Bot gửi khách: ✅ Phòng 301, địa chỉ, hướng dẫn đến"
+  },
+
+  "=== GHI CHÚ ===": {
+    "1": "Điền xong → gửi file này cho bot hoặc paste vào Cấu hình trên dashboard",
+    "2": "Giá phòng nên cập nhật theo mùa (weekday/weekend/holiday)",
+    "3": "Thông tin ngân hàng PHẢI chính xác — bot sẽ gửi cho khách",
+    "4": "Template tin nhắn có thể tuỳ chỉnh, dùng {biến} để bot tự điền",
+    "5": "Sau khi cấu hình, test bằng cách nhắn thử cho Fanpage"
+  }
+}
