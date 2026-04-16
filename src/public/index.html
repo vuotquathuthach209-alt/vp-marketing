@@ -52,28 +52,75 @@
 <div id="app-view" class="hidden">
   <!-- Sidebar -->
   <div class="flex min-h-screen">
-    <aside class="w-64 bg-slate-900 text-white p-5">
-      <h1 class="text-xl font-bold mb-8">🏨 Marketing Auto</h1>
-      <nav class="space-y-1">
-        <button data-tab="compose" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">✍️ Tạo bài đăng</button>
-        <button data-tab="posts" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">📋 Danh sách bài</button>
-        <button data-tab="media" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">🖼️ Thư viện media</button>
-        <button data-tab="campaigns" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">🔁 Tự động đăng</button>
-        <button data-tab="autoreply" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">🤖 Auto trả lời</button>
-        <button data-tab="wiki" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">📚 Kiến thức AI</button>
-        <button data-tab="analytics" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">📊 Phân tích</button>
-        <button data-tab="settings" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">⚙️ Cấu hình</button>
-        <button data-tab="onboarding" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">🚀 Onboarding</button>
-        <button data-tab="monitoring" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">📈 Monitoring</button>
-        <button data-tab="subscription" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">💳 Goi dich vu</button>
-        <button data-tab="sysconfig" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800 admin-only">🔧 He thong</button>
+    <aside class="w-56 bg-slate-900 text-white p-4 flex flex-col">
+      <h1 class="text-lg font-bold mb-6 px-2">🏨 VP Marketing</h1>
+      <nav class="space-y-0.5 flex-1">
+        <button data-tab="dashboard" class="nav-btn w-full text-left px-3 py-2.5 rounded-lg hover:bg-slate-800 text-sm font-medium">📊 Tong quan</button>
+
+        <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Noi dung</div>
+        <button data-tab="compose" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">✍️ Tao bai</button>
+        <button data-tab="posts" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">📋 Danh sach</button>
+        <button data-tab="media" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">🖼️ Media</button>
+
+        <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Tu dong</div>
+        <button data-tab="campaigns" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">🔁 Chien dich</button>
+        <button data-tab="autoreply" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">💬 Chatbot</button>
+        <button data-tab="wiki" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">📚 Kien thuc AI</button>
+
+        <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Bao cao</div>
+        <button data-tab="analytics" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">📈 Thong ke</button>
+
+        <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Quan ly</div>
+        <button data-tab="settings" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">⚙️ Cai dat</button>
       </nav>
-      <button id="logout-btn" class="mt-8 text-sm text-slate-400 hover:text-white">↩ Đăng xuất</button>
+      <button id="logout-btn" class="mt-4 text-xs text-slate-500 hover:text-white px-3 py-2">↩ Dang xuat</button>
     </aside>
 
     <main class="flex-1 p-8 overflow-auto">
+      <!-- DASHBOARD TAB -->
+      <section data-panel="dashboard" class="panel">
+        <h2 class="text-2xl font-bold mb-6">📊 Tong quan</h2>
+        <div class="max-w-4xl space-y-6">
+          <!-- Quick stats -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="dash-stats"></div>
+
+          <!-- Onboarding progress (hide when 100%) -->
+          <div id="dash-onboarding" class="bg-white rounded-xl shadow p-5">
+            <div class="flex justify-between items-center mb-2">
+              <h3 class="font-bold">🚀 Thiet lap khach san</h3>
+              <span id="dash-ob-pct" class="text-sm text-slate-500"></span>
+            </div>
+            <div class="w-full bg-slate-200 rounded-full h-2 mb-3">
+              <div id="dash-ob-bar" class="bg-blue-600 h-2 rounded-full transition-all" style="width:0%"></div>
+            </div>
+            <div id="dash-ob-steps" class="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm"></div>
+          </div>
+
+          <!-- Plan info -->
+          <div id="dash-plan" class="bg-white rounded-xl shadow p-5"></div>
+
+          <!-- Recent activity -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="bg-white rounded-xl shadow p-5">
+              <h3 class="font-bold mb-3">📝 Bai dang gan day</h3>
+              <div id="dash-recent-posts" class="space-y-2 text-sm max-h-60 overflow-auto"></div>
+            </div>
+            <div class="bg-white rounded-xl shadow p-5">
+              <h3 class="font-bold mb-3">💬 Tra loi gan day</h3>
+              <div id="dash-recent-replies" class="space-y-2 text-sm max-h-60 overflow-auto"></div>
+            </div>
+          </div>
+
+          <!-- Errors (admin) -->
+          <div id="dash-errors" class="bg-white rounded-xl shadow p-5 hidden">
+            <h3 class="font-bold mb-3 text-red-600">⚠️ Loi gan day</h3>
+            <div id="dash-error-list" class="space-y-1 text-sm"></div>
+          </div>
+        </div>
+      </section>
+
       <!-- COMPOSE TAB -->
-      <section data-panel="compose" class="panel">
+      <section data-panel="compose" class="panel hidden">
         <h2 class="text-2xl font-bold mb-6">Tạo bài đăng mới</h2>
         <div class="bg-white rounded-xl shadow p-6 max-w-3xl">
           <div class="mb-4">
@@ -347,7 +394,7 @@
 
       <!-- SETTINGS TAB -->
       <section data-panel="settings" class="panel hidden">
-        <h2 class="text-2xl font-bold mb-6">Cấu hình</h2>
+        <h2 class="text-2xl font-bold mb-6">⚙️ Cai dat</h2>
 
         <!-- Telegram Bot -->
         <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6">

@@ -40,7 +40,7 @@ function showApp() {
   document.getElementById('login-view').classList.add('hidden');
   document.getElementById('app-view').classList.remove('hidden');
   loadPages();
-  switchTab('compose');
+  switchTab('dashboard');
 
   // Show/hide admin-only elements
   const isAdmin = currentUser.role === 'superadmin';
@@ -101,9 +101,10 @@ function switchTab(tab) {
   document.querySelectorAll('.panel').forEach((p) => {
     p.classList.toggle('hidden', p.dataset.panel !== tab);
   });
+  if (tab === 'dashboard') loadDashboard();
   if (tab === 'posts') loadPosts();
   if (tab === 'media') loadMedia();
-  if (tab === 'settings') loadSettings();
+  if (tab === 'settings') { loadSettings(); loadAllApiKeys(); loadSysConfig(); }
   if (tab === 'campaigns') loadCampaigns();
   if (tab === 'autoreply') loadAutoReply();
   if (tab === 'wiki') loadWiki();
@@ -1701,6 +1702,108 @@ if (typeof origShowTab === 'function') {
   });
 }
 
+// ====== DASHBOARD ======
+async function loadDashboard() {
+  try {
+    // Load stats, onboarding, plan in parallel
+    const [statsRes, obRes, planRes] = await Promise.all([
+      api('/api/monitoring/overview?days=7').catch(() => null),
+      api('/api/onboarding/status').catch(() => null),
+      api('/api/subscription/current').catch(() => null),
+    ]);
+
+    // Stats cards
+    if (statsRes) {
+      const s = await statsRes.json();
+      document.getElementById('dash-stats').innerHTML = `
+        <div class="bg-white rounded-xl shadow p-4 text-center">
+          <div class="text-2xl font-bold">${s.posts?.published || 0}</div>
+          <div class="text-xs text-slate-500">Bai da dang</div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4 text-center">
+          <div class="text-2xl font-bold">${s.replies?.total || 0}</div>
+          <div class="text-xs text-slate-500">Tin da tra loi</div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4 text-center">
+          <div class="text-2xl font-bold">${s.ai?.total_calls || 0}</div>
+          <div class="text-xs text-slate-500">AI calls</div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4 text-center">
+          <div class="text-2xl font-bold">$${s.ai?.estimated_cost_usd || 0}</div>
+          <div class="text-xs text-slate-500">Chi phi AI</div>
+        </div>`;
+    }
+
+    // Onboarding
+    if (obRes) {
+      const ob = await obRes.json();
+      const obEl = document.getElementById('dash-onboarding');
+      if (ob.progress >= 100) {
+        obEl.classList.add('hidden');
+      } else {
+        obEl.classList.remove('hidden');
+        document.getElementById('dash-ob-pct').textContent = ob.progress + '%';
+        document.getElementById('dash-ob-bar').style.width = ob.progress + '%';
+        const labels = { hotel_info: '🏨 Hotel', fb_page: '📘 FB Page', telegram: '📱 Telegram', chatbot: '🤖 Chatbot', autopilot: '🚀 Autopilot', wiki: '📚 Wiki' };
+        document.getElementById('dash-ob-steps').innerHTML = Object.entries(ob.steps).map(([k, v]) =>
+          `<span class="${v ? 'text-green-600' : 'text-slate-400'}">${v ? '✅' : '⬜'} ${labels[k] || k}</span>`
+        ).join('');
+      }
+    }
+
+    // Plan
+    if (planRes) {
+      const p = await planRes.json();
+      document.getElementById('dash-plan').innerHTML = `
+        <div class="flex justify-between items-center">
+          <div>
+            <span class="text-sm text-slate-500">Goi hien tai</span>
+            <span class="ml-2 font-bold text-blue-600 uppercase">${p.plan}</span>
+          </div>
+          <div class="text-sm text-right text-slate-500">
+            Bai: ${p.usage?.posts_today || 0}/${p.limits?.max_posts_per_day || 0} |
+            AI: ${p.usage?.ai_calls_today || 0}/${p.limits?.ai_calls_per_day || 0} |
+            Pages: ${p.usage?.pages || 0}/${p.limits?.max_pages || 0}
+          </div>
+        </div>`;
+    }
+
+    // Recent posts
+    try {
+      const postsRes = await api('/api/posts');
+      const posts = await postsRes.json();
+      document.getElementById('dash-recent-posts').innerHTML = posts.slice(0, 8).map(p =>
+        `<div class="flex justify-between border-b pb-1">
+          <span class="truncate flex-1">${(p.content || '').slice(0, 50)}...</span>
+          <span class="${p.status === 'published' ? 'text-green-600' : p.status === 'failed' ? 'text-red-500' : 'text-yellow-600'} text-xs">${p.status}</span>
+        </div>`).join('') || '<p class="text-slate-400">Chua co bai dang</p>';
+    } catch(e) {}
+
+    // Recent replies
+    try {
+      const repliesRes = await api('/api/auto-reply/log');
+      const replies = await repliesRes.json();
+      document.getElementById('dash-recent-replies').innerHTML = replies.slice(0, 8).map(r =>
+        `<div class="border-b pb-1 truncate">${r.sender_name || 'User'}: ${(r.message || '').slice(0, 40)}</div>`
+      ).join('') || '<p class="text-slate-400">Chua co tin nhan</p>';
+    } catch(e) {}
+
+    // Errors (admin)
+    try {
+      const errRes = await api('/api/monitoring/errors?limit=5');
+      const errs = await errRes.json();
+      if (errs.length > 0) {
+        document.getElementById('dash-errors').classList.remove('hidden');
+        document.getElementById('dash-error-list').innerHTML = errs.map(e =>
+          `<div class="text-red-600">${new Date(e.created_at).toLocaleDateString()}: ${e.error || 'Unknown'}</div>`
+        ).join('');
+      }
+    } catch(e) {}
+  } catch(e) {
+    console.error('Dashboard load error:', e);
+  }
+}
+
 // ====== ONBOARDING ======
 async function loadOnboarding() {
   try {
@@ -2095,10 +2198,7 @@ async function saveSysConfig() {
 // ====== Tab hooks for new tabs ======
 document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    if (btn.dataset.tab === 'onboarding') setTimeout(loadOnboarding, 100);
-    if (btn.dataset.tab === 'monitoring') setTimeout(() => loadMonitoring(7), 100);
-    if (btn.dataset.tab === 'subscription') setTimeout(loadSubscription, 100);
-    if (btn.dataset.tab === 'sysconfig') setTimeout(loadSysConfig, 100);
+    if (btn.dataset.tab === 'dashboard') setTimeout(loadDashboard, 100);
   });
 });
 
