@@ -619,7 +619,9 @@ export async function smartReply(
   // Short/simple questions → Lightweight AI (Gemma/Groq, ~500ms)
   // Long/complex questions → Full AI (Claude/Gemini, 3-15s)
   try {
-    const isSimple = msg.length < 80 && !/[?？]/.test(msg);
+    // Dùng lightweight AI cho hầu hết chat (nhanh ~300ms)
+    // Chỉ dùng full AI cho câu dài > 150 ký tự
+    const isSimple = msg.length < 150;
     const reply = await aiReplyWithContext(msg, history, hotelId, isSimple);
     const tier = isSimple ? 'ai_light' : 'ai';
     if (senderId) saveMessage(senderId, pageId || 0, 'bot', reply, 'ai');

@@ -91,10 +91,19 @@ export function startScheduler() {
     processDuePosts().catch((e) => console.error('[scheduler] posts error:', e));
     runCampaigns().catch((e) => console.error('[scheduler] campaigns error:', e));
   });
-  // Mỗi phút: auto reply comment & tin nhắn (near real-time)
-  cron.schedule('* * * * *', () => {
-    runAutoReply().catch((e) => console.error('[scheduler] auto-reply error:', e));
-  });
+  // Auto reply: poll mỗi 15 giây (near real-time)
+  let replyRunning = false;
+  setInterval(async () => {
+    if (replyRunning) return; // Tránh chạy chồng
+    replyRunning = true;
+    try {
+      await runAutoReply();
+    } catch (e) {
+      console.error('[scheduler] auto-reply error:', e);
+    } finally {
+      replyRunning = false;
+    }
+  }, 15_000);
   // Mỗi 2 giờ: pull FB insights cho các post đã đăng
   cron.schedule('0 */2 * * *', () => {
     pullMetrics()

@@ -39,8 +39,8 @@ const DEFAULT_ROUTES: Record<TaskType, RouteConfig> = {
   caption:       { provider: 'anthropic', model: 'claude-sonnet-4-6',      maxTokens: 1024 },
   image_prompt:  { provider: 'google',    model: 'gemini-2.5-flash',       maxTokens: 400  },
   classify:      { provider: 'groq',      model: 'gemma2-9b-it',           maxTokens: 100  },
-  reply_simple:  { provider: 'anthropic', model: 'claude-haiku-4-5-20251001', maxTokens: 400 },
-  reply_complex: { provider: 'anthropic', model: 'claude-sonnet-4-6',      maxTokens: 800  },
+  reply_simple:  { provider: 'groq',      model: 'gemma2-9b-it',           maxTokens: 400  },
+  reply_complex: { provider: 'google',    model: 'gemini-2.5-flash',       maxTokens: 600  },
 };
 
 /**
