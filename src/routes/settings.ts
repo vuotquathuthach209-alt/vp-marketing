@@ -111,6 +111,86 @@ router.delete('/keys/:provider', (req, res) => {
   res.json({ ok: true });
 });
 
+// ═══ FB App ID (public — để frontend load FB SDK) ═══
+router.get('/fb-app-id', (req, res) => {
+  res.json({ app_id: config.fbAppId || '' });
+});
+
+// ═══ Connect Facebook — nhận User Token, trả về danh sách Pages + Page Tokens ═══
+router.post('/fb-connect', async (req: AuthRequest, res) => {
+  const { user_access_token } = req.body;
+  if (!user_access_token) return res.status(400).json({ error: 'Thiếu user_access_token' });
+
+  try {
+    // Đổi sang long-lived user token trước
+    let longToken = user_access_token;
+    if (config.fbAppId && config.fbAppSecret) {
+      try {
+        const ll = await exchangeLongLivedToken(user_access_token);
+        longToken = ll.access_token;
+      } catch { /* keep short-lived if exchange fails */ }
+    }
+
+    // Gọi /me/accounts để lấy danh sách Pages + Page Access Tokens
+    const axios = require('axios');
+    const resp = await axios.get('https://graph.facebook.com/v21.0/me/accounts', {
+      params: {
+        access_token: longToken,
+        fields: 'id,name,access_token,category,fan_count,picture{url}',
+        limit: 50,
+      },
+      timeout: 15000,
+    });
+
+    const pages = (resp.data?.data || []).map((p: any) => ({
+      fb_page_id: p.id,
+      name: p.name,
+      access_token: p.access_token,
+      category: p.category,
+      fan_count: p.fan_count || 0,
+      picture: p.picture?.data?.url || '',
+    }));
+
+    res.json({ pages });
+  } catch (e: any) {
+    const msg = e?.response?.data?.error?.message || e?.message;
+    res.status(400).json({ error: `Lỗi kết nối Facebook: ${msg}` });
+  }
+});
+
+// ═══ Add multiple pages at once (from fb-connect) ═══
+router.post('/pages/bulk-add', async (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
+  const { pages } = req.body; // Array of { fb_page_id, access_token, name }
+  if (!Array.isArray(pages) || pages.length === 0) {
+    return res.status(400).json({ error: 'Danh sách pages trống' });
+  }
+
+  const results: any[] = [];
+  for (const p of pages) {
+    try {
+      // Check if page already exists
+      const existing = db.prepare(`SELECT id FROM pages WHERE fb_page_id = ? AND hotel_id = ?`).get(p.fb_page_id, hotelId);
+      if (existing) {
+        // Update token
+        db.prepare(`UPDATE pages SET access_token = ?, name = ? WHERE fb_page_id = ? AND hotel_id = ?`)
+          .run(p.access_token, p.name, p.fb_page_id, hotelId);
+        results.push({ fb_page_id: p.fb_page_id, name: p.name, status: 'updated' });
+      } else {
+        // Verify & add
+        const verified = await verifyPageToken(p.fb_page_id, p.access_token);
+        db.prepare(`INSERT INTO pages (name, fb_page_id, access_token, hotel_id, created_at) VALUES (?, ?, ?, ?, ?)`)
+          .run(p.name || verified.name, verified.id, p.access_token, hotelId, Date.now());
+        results.push({ fb_page_id: p.fb_page_id, name: verified.name, status: 'added' });
+      }
+    } catch (e: any) {
+      results.push({ fb_page_id: p.fb_page_id, name: p.name, status: 'error', error: e.message });
+    }
+  }
+
+  res.json({ ok: true, results });
+});
+
 // ═══ Fanpage — hotel_id isolated ═══
 
 router.get('/pages', (req: AuthRequest, res) => {

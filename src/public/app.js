@@ -579,6 +579,134 @@ document.getElementById('btn-add-page').addEventListener('click', async () => {
   }
 });
 
+// ====== Facebook Connect (Auto) ======
+let fbConnectPages = []; // Pages returned from FB
+
+document.getElementById('btn-fb-connect').addEventListener('click', async () => {
+  const statusEl = document.getElementById('fb-connect-status');
+  statusEl.className = 'text-sm mt-2 text-blue-600';
+  statusEl.textContent = '⏳ Đang kết nối Facebook...';
+
+  // Get FB App ID from server
+  let appId = '';
+  try {
+    const r = await api('/settings/fb-app-id');
+    appId = r.app_id;
+  } catch {}
+
+  if (!appId) {
+    statusEl.className = 'text-sm mt-2 text-red-600';
+    statusEl.textContent = '❌ Chưa cấu hình FB App ID. Admin vào Hệ thống → Facebook App để nhập.';
+    return;
+  }
+
+  // Load FB SDK dynamically
+  if (!window.FB) {
+    await new Promise((resolve) => {
+      window.fbAsyncInit = function() {
+        FB.init({ appId, cookie: true, xfbml: false, version: 'v21.0' });
+        resolve();
+      };
+      const s = document.createElement('script');
+      s.src = 'https://connect.facebook.net/vi_VN/sdk.js';
+      s.async = true;
+      document.head.appendChild(s);
+    });
+  }
+
+  // Login with required permissions
+  FB.login(function(response) {
+    if (response.authResponse) {
+      const userToken = response.authResponse.accessToken;
+      statusEl.textContent = '⏳ Đang lấy danh sách Pages...';
+      fetchFBPages(userToken);
+    } else {
+      statusEl.className = 'text-sm mt-2 text-red-600';
+      statusEl.textContent = '❌ Bạn đã huỷ đăng nhập Facebook';
+    }
+  }, {
+    scope: 'pages_show_list,pages_manage_posts,pages_read_engagement,pages_messaging,pages_read_user_content',
+    auth_type: 'rerequest'
+  });
+});
+
+async function fetchFBPages(userToken) {
+  const statusEl = document.getElementById('fb-connect-status');
+  try {
+    const r = await api('/settings/fb-connect', {
+      method: 'POST',
+      body: JSON.stringify({ user_access_token: userToken }),
+    });
+    fbConnectPages = r.pages || [];
+
+    if (fbConnectPages.length === 0) {
+      statusEl.className = 'text-sm mt-2 text-orange-600';
+      statusEl.textContent = '⚠️ Không tìm thấy Page nào. Bạn cần là Admin của Page.';
+      return;
+    }
+
+    // Show page picker
+    const pickerEl = document.getElementById('fb-pages-picker');
+    const listEl = document.getElementById('fb-pages-list');
+    pickerEl.classList.remove('hidden');
+
+    listEl.innerHTML = fbConnectPages.map((p, i) => `
+      <label class="flex items-center gap-3 border rounded-lg p-3 cursor-pointer hover:bg-blue-50">
+        <input type="checkbox" class="fb-page-check" data-idx="${i}" checked class="w-4 h-4" />
+        ${p.picture ? `<img src="${p.picture}" class="w-10 h-10 rounded-full" />` : ''}
+        <div>
+          <div class="font-semibold text-sm">${p.name}</div>
+          <div class="text-xs text-slate-500">ID: ${p.fb_page_id} ${p.category ? '• ' + p.category : ''} ${p.fan_count ? '• ' + p.fan_count.toLocaleString() + ' likes' : ''}</div>
+        </div>
+      </label>
+    `).join('');
+
+    statusEl.className = 'text-sm mt-2 text-green-600';
+    statusEl.textContent = `✅ Tìm thấy ${fbConnectPages.length} Page. Chọn và bấm "Thêm Pages đã chọn"`;
+  } catch (e) {
+    statusEl.className = 'text-sm mt-2 text-red-600';
+    statusEl.textContent = '❌ ' + e.message;
+  }
+}
+
+document.getElementById('btn-fb-add-selected')?.addEventListener('click', async () => {
+  const statusEl = document.getElementById('fb-connect-status');
+  const checks = document.querySelectorAll('.fb-page-check:checked');
+  const selected = Array.from(checks).map(cb => fbConnectPages[parseInt(cb.dataset.idx)]);
+
+  if (selected.length === 0) {
+    statusEl.className = 'text-sm mt-2 text-orange-600';
+    statusEl.textContent = '⚠️ Chọn ít nhất 1 Page';
+    return;
+  }
+
+  statusEl.className = 'text-sm mt-2 text-blue-600';
+  statusEl.textContent = `⏳ Đang thêm ${selected.length} Page...`;
+
+  try {
+    const r = await api('/settings/pages/bulk-add', {
+      method: 'POST',
+      body: JSON.stringify({ pages: selected }),
+    });
+    const added = r.results.filter(x => x.status === 'added').length;
+    const updated = r.results.filter(x => x.status === 'updated').length;
+    const errors = r.results.filter(x => x.status === 'error');
+
+    let msg = `✅ Thành công! ${added} page mới`;
+    if (updated > 0) msg += `, ${updated} page cập nhật token`;
+    if (errors.length > 0) msg += `, ${errors.length} lỗi`;
+
+    statusEl.className = 'text-sm mt-2 text-green-600';
+    statusEl.textContent = msg;
+    document.getElementById('fb-pages-picker').classList.add('hidden');
+    loadPagesInSettings();
+    loadPages();
+  } catch (e) {
+    statusEl.className = 'text-sm mt-2 text-red-600';
+    statusEl.textContent = '❌ ' + e.message;
+  }
+});
+
 // ====== Campaigns ======
 async function loadCampaigns() {
   // Populate page dropdown

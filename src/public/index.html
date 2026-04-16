@@ -679,23 +679,39 @@
           <div id="token-status-list" class="mb-3 space-y-1 text-sm"></div>
           <div id="pages-list" class="mb-4 space-y-2"></div>
 
-          <h4 class="text-sm font-semibold mt-6 mb-2">Thêm Fanpage mới</h4>
-          <input id="page-fbid" type="text" placeholder="Page ID (VD: 123456789)" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" />
-          <input id="page-token" type="password" placeholder="Page Access Token" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm font-mono" />
-          <input id="page-name" type="text" placeholder="Tên ghi chú (tùy chọn)" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" />
-          <button id="btn-add-page" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">+ Thêm Fanpage</button>
-          <p id="page-status" class="text-sm mt-2"></p>
-          <details class="mt-4 text-sm text-slate-600">
-            <summary class="cursor-pointer font-semibold">❓ Cách lấy Page Access Token</summary>
-            <ol class="list-decimal ml-5 mt-2 space-y-1">
-              <li>Vào <a href="https://developers.facebook.com/tools/explorer/" target="_blank" class="text-blue-600 underline">Graph API Explorer</a></li>
-              <li>Chọn Application, chọn User Token</li>
-              <li>Tick quyền: <code>pages_show_list</code>, <code>pages_manage_posts</code>, <code>pages_read_engagement</code></li>
-              <li>Bấm "Generate Access Token" → đăng nhập FB</li>
-              <li>Gọi <code>/me/accounts</code> để lấy token của từng Page</li>
-              <li>Copy <code>access_token</code> và <code>id</code> của page dán vào đây</li>
-            </ol>
-            <p class="mt-2">Xem HUONG-DAN.md trên VPS để biết chi tiết đổi token sang long-lived (2 tháng).</p>
+          <!-- ═══ CÁCH 1: Kết nối Facebook tự động (Recommended) ═══ -->
+          <h4 class="text-sm font-semibold mt-6 mb-2">🔗 Kết nối Facebook (Tự động)</h4>
+          <p class="text-xs text-slate-500 mb-3">Bấm nút bên dưới → Đăng nhập Facebook → Chọn Pages → Xong! Token được lấy tự động.</p>
+          <button id="btn-fb-connect" class="bg-blue-600 text-white px-5 py-2.5 rounded-lg text-sm font-semibold hover:bg-blue-700 flex items-center gap-2">
+            <svg class="w-5 h-5" fill="white" viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+            Kết nối Facebook
+          </button>
+          <div id="fb-pages-picker" class="mt-3 hidden">
+            <p class="text-sm font-semibold mb-2">Chọn Pages để kết nối:</p>
+            <div id="fb-pages-list" class="space-y-2 max-h-64 overflow-y-auto"></div>
+            <button id="btn-fb-add-selected" class="mt-3 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">✅ Thêm Pages đã chọn</button>
+          </div>
+          <p id="fb-connect-status" class="text-sm mt-2"></p>
+
+          <!-- ═══ CÁCH 2: Thêm thủ công ═══ -->
+          <details class="mt-6">
+            <summary class="text-sm font-semibold cursor-pointer text-slate-600">📝 Thêm thủ công (dùng khi không kết nối được)</summary>
+            <div class="mt-3">
+              <input id="page-fbid" type="text" placeholder="Page ID (VD: 123456789)" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" />
+              <input id="page-token" type="password" placeholder="Page Access Token" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm font-mono" />
+              <input id="page-name" type="text" placeholder="Tên ghi chú (tùy chọn)" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" />
+              <button id="btn-add-page" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">+ Thêm Fanpage</button>
+              <p id="page-status" class="text-sm mt-2"></p>
+              <details class="mt-3 text-sm text-slate-600">
+                <summary class="cursor-pointer">❓ Cách lấy Page Access Token thủ công</summary>
+                <ol class="list-decimal ml-5 mt-2 space-y-1">
+                  <li>Vào <a href="https://developers.facebook.com/tools/explorer/" target="_blank" class="text-blue-600 underline">Graph API Explorer</a></li>
+                  <li>Chọn App → "Get Page Access Token"</li>
+                  <li>Tick quyền: <code>pages_manage_posts</code>, <code>pages_read_engagement</code>, <code>pages_messaging</code></li>
+                  <li>Bấm "Generate" → copy token và Page ID</li>
+                </ol>
+              </details>
+            </div>
           </details>
         </div>
 
