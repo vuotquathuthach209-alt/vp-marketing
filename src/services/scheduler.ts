@@ -87,8 +87,8 @@ export function startScheduler() {
     processDuePosts().catch((e) => console.error('[scheduler] posts error:', e));
     runCampaigns().catch((e) => console.error('[scheduler] campaigns error:', e));
   });
-  // Mỗi 5 phút: auto reply comment & tin nhắn
-  cron.schedule('*/5 * * * *', () => {
+  // Mỗi phút: auto reply comment & tin nhắn (near real-time)
+  cron.schedule('* * * * *', () => {
     runAutoReply().catch((e) => console.error('[scheduler] auto-reply error:', e));
   });
   // Mỗi 2 giờ: pull FB insights cho các post đã đăng
@@ -138,5 +138,5 @@ export function startScheduler() {
     }
   });
 
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 5p, metrics 2h, ab decide 1h, autopilot 6:30/21:00');
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00');
 }
