@@ -505,12 +505,14 @@ async function loadAutopilotStatus() {
     // Load GDrive settings
     const gd = await api('/autopilot/gdrive').catch(() => ({}));
     if (gd.folderId) document.getElementById('gdrive-folder-id').value = gd.folderId;
+    const gdKeyEl = document.getElementById('gdrive-api-key');
+    if (gd.apiKey && gdKeyEl) gdKeyEl.placeholder = `✅ Da co key (${gd.keySource || ''})`;
     const keyStatus = document.getElementById('gdrive-key-status');
     if (keyStatus) {
       if (gd.apiKey) {
-        keyStatus.innerHTML = `✅ <b>API Key:</b> Dang dung <span class="text-blue-600">${gd.keySource || 'configured'}</span> — Drive API can duoc bat tren Cloud Console.`;
+        keyStatus.innerHTML = `✅ <b>API Key:</b> <span class="text-green-600">${gd.keySource || 'configured'}</span>`;
       } else {
-        keyStatus.innerHTML = `⚠️ Chua co Google API Key. Vao <b>Cai dat → API Keys → Google</b> de nhap key.`;
+        keyStatus.innerHTML = `⚠️ Nhap Google API Key (phai bat Drive API tren Cloud Console)`;
       }
     }
   } catch {}
@@ -631,9 +633,11 @@ document.getElementById('btn-autopilot-evening')?.addEventListener('click', asyn
 document.getElementById('btn-gdrive-save')?.addEventListener('click', async () => {
   const st = document.getElementById('gdrive-status');
   try {
+    const apiKeyVal = document.getElementById('gdrive-api-key').value.trim();
     await api('/autopilot/gdrive', { method: 'POST', body: JSON.stringify({
       folderId: document.getElementById('gdrive-folder-id').value,
-      clearKey: true, // Clear any bad gdrive_api_key, use google_api_key instead
+      apiKey: apiKeyVal || undefined,
+      clearKey: !apiKeyVal, // Clear bad key if field is empty
     })});
     st.textContent = '✅ Da luu';
     st.className = 'text-sm text-green-600';

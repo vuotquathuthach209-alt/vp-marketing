@@ -108,8 +108,12 @@ router.post('/gdrive', (req: AuthRequest, res) => {
   const hotelId = getHotelId(req);
   const { folderId, apiKey, clearKey } = req.body;
   if (folderId !== undefined) setSetting('gdrive_folder_id', folderId, hotelId);
-  // Only save if it looks like a real API key (starts with AIza)
-  if (apiKey && apiKey.startsWith('AIza')) setSetting('gdrive_api_key', apiKey);
+  // Save API key — also set as google_api_key so Gemini can use it too
+  if (apiKey && apiKey.startsWith('AIza')) {
+    setSetting('gdrive_api_key', apiKey);
+    // Also save as google_api_key if not already set
+    if (!getSetting('google_api_key')) setSetting('google_api_key', apiKey);
+  }
   // Allow clearing bad key
   if (clearKey) {
     try { db.prepare(`DELETE FROM settings WHERE key = 'gdrive_api_key'`).run(); } catch {}

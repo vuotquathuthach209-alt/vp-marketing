@@ -159,9 +159,15 @@
           <div class="bg-white rounded-xl shadow p-6 border-l-4 border-green-500">
             <h3 class="font-bold text-lg mb-2">📁 Google Drive — Anh Khach San</h3>
             <p class="text-xs text-slate-500 mb-4">Ket noi folder Google Drive chua anh khach san. Autopilot se tu dong chon anh dang bai vao nhung ngay "Hotel Photo".</p>
-            <div class="mb-3">
-              <label class="block text-xs font-semibold mb-1">Google Drive Folder ID</label>
-              <input id="gdrive-folder-id" type="text" placeholder="1abc...xyz (lay tu URL folder)" class="w-full border rounded-lg px-3 py-2 text-sm" />
+            <div class="flex gap-3 mb-3">
+              <div class="flex-1">
+                <label class="block text-xs font-semibold mb-1">Google Drive Folder ID</label>
+                <input id="gdrive-folder-id" type="text" placeholder="1abc...xyz (lay tu URL folder)" class="w-full border rounded-lg px-3 py-2 text-sm" />
+              </div>
+              <div class="w-72">
+                <label class="block text-xs font-semibold mb-1">Google API Key (Drive API)</label>
+                <input id="gdrive-api-key" type="password" placeholder="AIza..." class="w-full border rounded-lg px-3 py-2 text-sm" />
+              </div>
             </div>
             <div id="gdrive-key-status" class="text-xs mb-3"></div>
             <div class="flex gap-2 items-center">
