@@ -149,7 +149,7 @@ function getAllBranches(): Array<{ id: number; name: string; address?: string; p
    ═══════════════════════════════════════════ */
 
 type Intent = 'greeting' | 'price' | 'rooms' | 'room_images' | 'booking' | 'checkin' |
-  'location' | 'amenities' | 'payment' | 'cancel' | 'promo' | 'hourly' | 'contact' |
+  'check_dates' | 'location' | 'amenities' | 'payment' | 'cancel' | 'promo' | 'hourly' | 'contact' |
   'pet' | 'review' | 'thanks' | 'branch_select' | 'unknown';
 
 interface IntentRule {
@@ -162,26 +162,39 @@ interface IntentRule {
 
 const INTENT_RULES: IntentRule[] = [
   { intent: 'room_images', keywords: ['hình', 'ảnh', 'photo', 'image', 'xem phòng', 'hình phòng', 'ảnh phòng', 'picture', 'gallery', 'cho xem', 'gửi hình', 'gửi ảnh'], weight: 15 },
-  { intent: 'checkin', keywords: ['check-in', 'checkin', 'check in', 'check-out', 'checkout', 'check out', 'nhận phòng', 'trả phòng', 'giờ nhận', 'giờ trả', 'sớm', 'muộn'], weight: 12 },
   { intent: 'cancel', keywords: ['huỷ', 'hủy', 'cancel', 'hoàn tiền', 'refund'], weight: 12 },
   { intent: 'booking', keywords: ['đặt phòng', 'book', 'booking', 'reserve', 'muốn ở', 'muốn thuê', 'đặt ngay'], weight: 10 },
-  { intent: 'price', keywords: ['giá', 'bao nhiêu', 'price', 'phí', 'tiền', 'cost', 'rate', 'vnđ', 'vnd'], excludeKeywords: ['hình', 'ảnh'], weight: 10 },
+  { intent: 'price', keywords: ['giá', 'bao nhiêu', 'price', 'phí', 'tiền', 'cost', 'rate', 'vnđ', 'vnd', 'xem giá'], excludeKeywords: ['hình', 'ảnh'], weight: 10 },
+  { intent: 'rooms', keywords: ['phòng', 'room', 'loại phòng', 'các phòng', 'có phòng', 'phòng nào', 'còn phòng'], excludeKeywords: ['hình', 'ảnh', 'đặt', 'huỷ', 'hủy'], weight: 10 },
   { intent: 'location', keywords: ['địa chỉ', 'ở đâu', 'location', 'chỗ nào', 'đường nào', 'quận', 'vị trí', 'map', 'bản đồ'], weight: 10 },
   { intent: 'payment', keywords: ['thanh toán', 'payment', 'trả tiền', 'chuyển khoản', 'momo', 'vnpay', 'visa', 'thẻ'], weight: 10 },
   { intent: 'hourly', keywords: ['thuê giờ', 'theo giờ', 'hourly', 'vài giờ', 'nghỉ trưa'], weight: 10 },
   { intent: 'pet', keywords: ['thú cưng', 'pet', 'chó', 'mèo'], weight: 10 },
+  { intent: 'checkin', keywords: ['giờ nhận', 'giờ trả', 'giờ check', 'mấy giờ', 'sớm', 'muộn'], weight: 9 },
   { intent: 'promo', keywords: ['khuyến mãi', 'giảm giá', 'deal', 'voucher', 'ưu đãi', 'rẻ'], weight: 8 },
   { intent: 'amenities', keywords: ['tiện ích', 'amenities', 'wifi', 'hồ bơi', 'gym', 'spa', 'đỗ xe', 'parking', 'có gì', 'dịch vụ'], weight: 8 },
   { intent: 'contact', keywords: ['hotline', 'liên hệ', 'contact', 'số điện thoại', 'phone', 'email', 'gọi'], weight: 8 },
   { intent: 'review', keywords: ['review', 'đánh giá', 'feedback', 'rating'], weight: 8 },
-  { intent: 'rooms', keywords: ['phòng', 'room', 'loại phòng', 'các phòng', 'có phòng'], excludeKeywords: ['hình', 'ảnh', 'giá', 'đặt', 'check', 'huỷ', 'hủy'], weight: 6 },
   { intent: 'thanks', keywords: ['cảm ơn', 'thanks', 'thank', 'cám ơn', 'tks', 'ok'], weight: 2, maxMsgLength: 30 },
   { intent: 'greeting', keywords: ['hi', 'hello', 'xin chào', 'chào bạn', 'chào', 'alo', 'hey'], weight: 2, maxMsgLength: 30 },
 ];
 
+/** Detect if message contains dates like 17/05, 2025-05-17, ngày 17, etc. */
+function containsDate(msg: string): boolean {
+  return /\d{1,2}[\/\-\.]\d{1,2}/.test(msg) || /ngày\s*\d{1,2}/.test(msg) || /\d{1,2}\s*tháng\s*\d{1,2}/.test(msg);
+}
+
 function detectIntent(msg: string): { intent: Intent; score: number } {
   const msgL = msg.toLowerCase().trim();
   const msgNorm = removeDiacritics(msgL);
+
+  // Date detection takes priority — if message has dates + "check" or "phòng", it's about availability
+  if (containsDate(msgL)) {
+    const hasCheckKeywords = countMatches(msgL, msgNorm, ['check', 'phòng', 'room', 'ngày', 'đêm', 'ở', 'thuê', 'out', 'in']);
+    if (hasCheckKeywords > 0) {
+      return { intent: 'check_dates', score: 20 };
+    }
+  }
 
   let bestIntent: Intent = 'unknown';
   let bestScore = 0;
@@ -250,11 +263,36 @@ function handleGreeting(hotelName: string, senderName?: string): FaqResult {
   };
 }
 
-function handleFaq(intent: Intent, msg: string, hotelId: number, senderName?: string): FaqResult | null {
+/** Fetch rooms from OTA real-time (when cache is empty) */
+async function fetchRoomsRealtime(hotelId: number): Promise<any[]> {
+  try {
+    const mktHotel = db.prepare(`SELECT ota_hotel_id FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
+    const otaId = mktHotel?.ota_hotel_id;
+    if (!otaId || !getOtaDbConfig()) return [];
+    const roomTypes = await getOtaRoomTypes(otaId);
+    return roomTypes.map(rt => ({
+      name: rt.name,
+      base_price: rt.base_price,
+      hourly_price: rt.hourly_price,
+      max_guests: rt.max_guests,
+      bed_type: rt.bed_type,
+      room_count: rt.room_count,
+      available_count: rt.available_count,
+    }));
+  } catch { return []; }
+}
+
+async function handleFaq(intent: Intent, msg: string, hotelId: number, senderName?: string): Promise<FaqResult | null> {
   const msgL = msg.toLowerCase().trim();
   const msgNorm = removeDiacritics(msgL);
-  const { hotel, rooms, hotelCache } = getHotelCache(hotelId);
+  const { hotel, rooms: cachedRooms, hotelCache } = getHotelCache(hotelId);
   const hotelName = hotel?.name || 'Khách sạn';
+
+  // Nếu cache trống → fetch real-time từ OTA
+  let rooms = cachedRooms;
+  if (rooms.length === 0 && ['price', 'rooms', 'room_images', 'branch_select', 'hourly', 'check_dates'].includes(intent)) {
+    rooms = await fetchRoomsRealtime(hotelId);
+  }
 
   switch (intent) {
     case 'greeting':
@@ -267,7 +305,8 @@ function handleFaq(intent: Intent, msg: string, hotelId: number, senderName?: st
         const nameL = branches[i].name.toLowerCase();
         if (msgL === num || msgL.includes(nameL) || removeDiacritics(msgL).includes(removeDiacritics(nameL))) {
           const b = branches[i];
-          const { rooms: bRooms } = getHotelCache(b.id);
+          let bRooms = getHotelCache(b.id).rooms;
+          if (bRooms.length === 0) bRooms = await fetchRoomsRealtime(b.id);
           let roomInfo = '';
           if (bRooms.length > 0) {
             roomInfo = '\n\n💰 Các loại phòng:\n' + bRooms.map((r: any) =>
@@ -281,6 +320,21 @@ function handleFaq(intent: Intent, msg: string, hotelId: number, senderName?: st
         }
       }
       return null;
+    }
+
+    // ── Khách gửi ngày check-in/out → check phòng trống ──
+    case 'check_dates': {
+      if (rooms.length > 0) {
+        const roomList = rooms.map((r: any) => {
+          const avail = r.available_count ?? r.room_count ?? '?';
+          return `🏨 ${r.name} — ${r.base_price?.toLocaleString('vi-VN')}₫/đêm | Còn ${avail} phòng`;
+        }).join('\n');
+        return {
+          reply: `📅 Phòng trống tại ${hotelName}:\n\n${roomList}\n\n✅ Bạn muốn đặt phòng nào? Nhắn tên phòng hoặc gõ "đặt phòng" nhé!`,
+          intent: 'check_dates',
+        };
+      }
+      return null; // Fall through to AI
     }
 
     case 'room_images': {
@@ -595,7 +649,7 @@ export async function smartReply(
 
   // ── FAQ match (score > 0) → instant response ──
   if (intent !== 'unknown' && score > 0) {
-    const faqResult = handleFaq(intent, msg, hotelId, senderName);
+    const faqResult = await handleFaq(intent, msg, hotelId, senderName);
     if (faqResult) {
       if (senderId) saveMessage(senderId, pageId || 0, 'bot', faqResult.reply, faqResult.intent);
       return {
