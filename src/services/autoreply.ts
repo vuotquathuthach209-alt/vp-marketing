@@ -1,37 +1,8 @@
 import axios from 'axios';
 import { db } from '../db';
-import { generate, TaskType } from './router';
+import { smartReply } from './smartreply';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
-
-const DEFAULT_SYSTEM = `Bạn là nhân viên chăm sóc khách hàng của khách sạn/du lịch tại Việt Nam.
-Trả lời bằng tiếng Việt, ngắn gọn (2-3 câu), thân thiện, chuyên nghiệp.
-Khuyến khích khách inbox/gọi hotline để được tư vấn giá và đặt phòng.
-KHÔNG tự ý hứa giá cụ thể, KHÔNG chốt deal.
-Có thể thêm 1 emoji phù hợp. Không dùng hashtag.`;
-
-/**
- * Phân loại mức độ phức tạp của tin nhắn → chọn reply_simple (Haiku) hoặc
- * reply_complex (Sonnet) để tiết kiệm token.
- * Rule đơn giản: dài >100 ký tự, có dấu "?", hoặc chứa từ khóa nhạy cảm → complex.
- */
-function pickReplyTask(message: string): TaskType {
-  const m = message.trim();
-  if (m.length > 100) return 'reply_complex';
-  if (/[?？]/.test(m)) return 'reply_complex';
-  const complexKeywords = ['hoàn tiền', 'khiếu nại', 'sao lại', 'tệ', 'không tốt', 'chờ', 'hủy', 'đặt cọc'];
-  if (complexKeywords.some((k) => m.toLowerCase().includes(k))) return 'reply_complex';
-  return 'reply_simple';
-}
-
-async function generateAIReply(systemPrompt: string, message: string): Promise<string> {
-  const task = pickReplyTask(message);
-  return generate({
-    task,
-    system: systemPrompt?.trim() || DEFAULT_SYSTEM,
-    user: `Khách viết: "${message}"\n\nHãy viết câu trả lời ngắn gọn.`,
-  });
-}
 
 async function replyToComments(page: any) {
   try {
@@ -56,7 +27,7 @@ async function replyToComments(page: any) {
         if (exists) continue;
 
         try {
-          const reply = await generateAIReply(page.system_prompt || '', comment.message);
+          const { reply } = await smartReply(comment.message);
           await axios.post(
             `${GRAPH}/${comment.id}/comments`,
             null,
@@ -111,7 +82,7 @@ async function replyToMessages(page: any) {
       if (exists) continue;
 
       try {
-        const reply = await generateAIReply(page.system_prompt || '', latest.message);
+        const { reply } = await smartReply(latest.message);
         await axios.post(
           `${GRAPH}/me/messages`,
           {
