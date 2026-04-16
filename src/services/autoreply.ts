@@ -131,7 +131,8 @@ async function replyToMessages(page: any) {
           senderId,
           senderName,
           hasImage,
-          page.hotel_id || 1
+          page.hotel_id || 1,
+          page.id
         );
         await sendFBMessage(page.access_token, senderId, reply);
 

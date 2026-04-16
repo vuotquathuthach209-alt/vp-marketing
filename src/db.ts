@@ -390,6 +390,18 @@ CREATE TABLE IF NOT EXISTS email_log (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_email_log_to ON email_log(to_email);
+
+-- Conversation memory: store recent messages per sender for context
+CREATE TABLE IF NOT EXISTS conversation_memory (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sender_id TEXT NOT NULL,
+  page_id INTEGER NOT NULL,
+  role TEXT NOT NULL,          -- 'user' | 'bot'
+  message TEXT NOT NULL,
+  intent TEXT,                 -- detected intent: greeting, price, rooms, booking, etc.
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_convo_sender ON conversation_memory(sender_id, created_at);
 `);
 
 // 1.1 Migration: thêm hotel_id vào các bảng hiện tại (safe — chỉ ADD COLUMN nếu chưa có)

@@ -10,17 +10,80 @@ import {
 import { getOtaDbConfig, getOtaRoomTypes, getOtaHotelStats } from './ota-db';
 
 /**
- * Smart Reply Engine — 3 tầng:
- *   1) Dynamic FAQ (0ms, miễn phí) — scoring-based match → data-driven response
- *   2) Wiki Search (10ms, miễn phí) — tìm trong knowledge base
- *   3) AI Generate (3-15s, tốn quota) — chỉ khi 2 tầng trên không đủ
+ * Smart Reply Engine v3 — Context-Aware Chatbot
+ *
+ * ARCHITECTURE:
+ *   1) Conversation Memory — lưu lịch sử chat, đọc ngữ cảnh
+ *   2) Intent Detection — dùng Gemma (nhẹ, nhanh) phân tích ý định
+ *   3) Dynamic FAQ — trả lời từ data cache (0ms)
+ *   4) Lightweight AI — Gemma/Groq cho câu hỏi cần hiểu ngữ cảnh (~500ms)
+ *   5) Full AI — Claude/Gemini cho câu hỏi phức tạp (3-15s)
+ *
+ * FLOW:
+ *   Greeting → Giới thiệu chi nhánh → Khách chọn → Q&A theo context
  */
 
 export interface SmartReplyResult {
   reply: string;
-  tier: 'rules' | 'wiki' | 'ai';
+  tier: 'rules' | 'wiki' | 'ai' | 'ai_light';
   latency_ms: number;
+  intent?: string;
   images?: Array<{ title: string; subtitle: string; image_url: string }>;
+}
+
+/* ═══════════════════════════════════════════
+   CONVERSATION MEMORY
+   ═══════════════════════════════════════════ */
+
+const MAX_HISTORY = 8; // Giữ 8 tin gần nhất cho context
+
+function saveMessage(senderId: string, pageId: number, role: 'user' | 'bot', message: string, intent?: string) {
+  try {
+    db.prepare(
+      `INSERT INTO conversation_memory (sender_id, page_id, role, message, intent, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(senderId, pageId, role, message.slice(0, 500), intent || null, Date.now());
+
+    // Cleanup: giữ tối đa 20 tin mỗi sender
+    db.prepare(
+      `DELETE FROM conversation_memory WHERE sender_id = ? AND id NOT IN (
+        SELECT id FROM conversation_memory WHERE sender_id = ? ORDER BY created_at DESC LIMIT 20
+      )`
+    ).run(senderId, senderId);
+  } catch {}
+}
+
+function getConversationHistory(senderId: string): Array<{ role: string; message: string; intent: string | null }> {
+  try {
+    return db.prepare(
+      `SELECT role, message, intent FROM conversation_memory
+       WHERE sender_id = ? ORDER BY created_at DESC LIMIT ?`
+    ).all(senderId, MAX_HISTORY).reverse() as any[];
+  } catch {
+    return [];
+  }
+}
+
+function getLastBotIntent(senderId: string): string | null {
+  try {
+    const row = db.prepare(
+      `SELECT intent FROM conversation_memory WHERE sender_id = ? AND role = 'bot' AND intent IS NOT NULL
+       ORDER BY created_at DESC LIMIT 1`
+    ).get(senderId) as any;
+    return row?.intent || null;
+  } catch {
+    return null;
+  }
+}
+
+function isFirstMessage(senderId: string): boolean {
+  try {
+    const row = db.prepare(
+      `SELECT COUNT(*) as cnt FROM conversation_memory WHERE sender_id = ?`
+    ).get(senderId) as any;
+    return (row?.cnt || 0) <= 1; // 0 or 1 (just saved current)
+  } catch {
+    return true;
+  }
 }
 
 /* ═══════════════════════════════════════════
@@ -31,7 +94,6 @@ function removeDiacritics(str: string): string {
   return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
 }
 
-/** Count how many keywords match in msg — used for scoring */
 function countMatches(msg: string, msgNorm: string, keywords: string[]): number {
   let count = 0;
   for (const kw of keywords) {
@@ -50,7 +112,6 @@ function getHotelCache(hotelId: number) {
   const mktHotel = db.prepare(`SELECT ota_hotel_id, name, config FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
   const otaId = mktHotel?.ota_hotel_id;
   if (!otaId) return { hotel: mktHotel, rooms: [], hotelCache: null };
-
   const hotelCache = db.prepare(`SELECT * FROM mkt_hotels_cache WHERE ota_hotel_id = ?`).get(otaId) as any;
   const rooms = db.prepare(`SELECT * FROM mkt_rooms_cache WHERE ota_hotel_id = ? ORDER BY base_price`).all(otaId) as any[];
   return { hotel: mktHotel, rooms, hotelCache };
@@ -60,337 +121,302 @@ function getRoomImages(hotelId: number) {
   return db.prepare(`SELECT * FROM room_images WHERE hotel_id = ? AND active = 1 ORDER BY display_order`).all(hotelId) as any[];
 }
 
-/* ═══════════════════════════════════════════
-   TẦNG 1: SCORING-BASED FAQ ENGINE
-   ═══════════════════════════════════════════
+/** Get all hotel branches (for greeting) */
+function getAllBranches(): Array<{ id: number; name: string; address?: string; phone?: string }> {
+  try {
+    const hotels = db.prepare(
+      `SELECT h.id, h.name, h.ota_hotel_id FROM mkt_hotels h WHERE h.status = 'active' ORDER BY h.id`
+    ).all() as any[];
 
-   Mỗi intent có keywords + priority weight.
-   Tính score = số keywords match × weight.
-   Intent có score cao nhất thắng → tránh match sai.
-
-   VD: "cho mình hình phòng khách sạn bạch đằng"
-     - greeting: "cho" → 0 match (không có "cho" riêng lẻ)
-     - images: "hình" + "phòng" → 2 match × 10 = 20 ← THẮNG
-     - price: "phòng" → 1 match × 8 = 8
-*/
-
-interface FaqResult {
-  reply: string;
-  images?: Array<{ title: string; subtitle: string; image_url: string }>;
-}
-
-interface FaqIntent {
-  id: string;
-  keywords: string[];
-  excludeKeywords?: string[];  // Nếu có từ này → không match
-  weight: number;
-  minMatches?: number;         // Tối thiểu bao nhiêu keyword phải match (default 1)
-  maxMsgLength?: number;       // Chỉ match nếu tin nhắn ngắn hơn
-  handler: (msg: string, msgNorm: string, hotelName: string, rooms: any[], hotelCache: any, hotelId: number) => FaqResult;
-}
-
-function buildIntents(): FaqIntent[] {
-  return [
-    // ── Hình ảnh phòng (PRIORITY CAO NHẤT cho image queries) ──
-    {
-      id: 'room_images',
-      keywords: ['hình', 'ảnh', 'photo', 'image', 'xem phòng', 'hình phòng', 'ảnh phòng', 'picture', 'gallery', 'cho xem', 'gửi hình', 'gửi ảnh'],
-      weight: 15,
-      handler: (msg, msgNorm, hotelName, rooms, hotelCache, hotelId) => {
-        const roomImgs = getRoomImages(hotelId);
-        if (roomImgs.length > 0) {
-          const grouped: Record<string, any[]> = {};
-          for (const img of roomImgs) {
-            if (!grouped[img.room_type_name]) grouped[img.room_type_name] = [];
-            grouped[img.room_type_name].push(img);
-          }
-          const images = roomImgs.map((img: any) => ({
-            title: img.room_type_name,
-            subtitle: img.caption || hotelName,
-            image_url: img.image_url,
-          }));
-          const roomList = Object.keys(grouped).map(name => `📸 ${name} (${grouped[name].length} ảnh)`).join('\n');
-          return { reply: `📸 Hình ảnh các phòng tại ${hotelName}:\n\n${roomList}\n\nMời bạn xem ảnh bên dưới 👇`, images };
+    return hotels.map((h: any) => {
+      let address = '', phone = '';
+      if (h.ota_hotel_id) {
+        const cache = db.prepare(`SELECT address, district, city, phone FROM mkt_hotels_cache WHERE ota_hotel_id = ?`).get(h.ota_hotel_id) as any;
+        if (cache) {
+          address = [cache.address, cache.district, cache.city].filter(Boolean).join(', ');
+          phone = cache.phone || '';
         }
-        if (rooms.length > 0) {
-          const roomList = rooms.map((r: any) =>
-            `🏨 ${r.name}: ${r.base_price?.toLocaleString('vi-VN')}₫/đêm | ${r.max_guests} khách`
-          ).join('\n');
-          return { reply: `Hiện mình chưa có ảnh phòng online, nhưng đây là các loại phòng tại ${hotelName}:\n\n${roomList}\n\n📲 Xem ảnh chi tiết tại website hoặc nhắn mình để được gửi ảnh trực tiếp!` };
-        }
-        return { reply: `📸 Để xem hình ảnh phòng tại ${hotelName}, bạn có thể:\n📲 Truy cập website\n💬 Hoặc cho mình biết bạn quan tâm loại phòng nào, mình gửi ảnh cho nhé!` };
-      },
-    },
-
-    // ── Giá phòng ──
-    {
-      id: 'price',
-      keywords: ['giá', 'bao nhiêu', 'price', 'phí', 'tiền', 'cost', 'rate', 'vnđ', 'vnd', 'đồng'],
-      excludeKeywords: ['hình', 'ảnh', 'photo', 'image'],  // Nếu hỏi hình thì không match giá
-      weight: 10,
-      handler: (msg, msgNorm, hotelName, rooms) => {
-        if (rooms.length > 0) {
-          const roomList = rooms.map((r: any) => {
-            let line = `🏨 *${r.name}*\n   Từ ${r.base_price?.toLocaleString('vi-VN')}₫/đêm | Tối đa ${r.max_guests} khách`;
-            if (r.hourly_price) line += ` | Theo giờ: ${r.hourly_price.toLocaleString('vi-VN')}₫`;
-            if (r.bed_type) line += ` | ${r.bed_type}`;
-            const avail = r.available_count ?? r.room_count;
-            if (avail !== undefined) line += `\n   Còn ${avail} phòng trống`;
-            return line;
-          }).join('\n\n');
-          return { reply: `💰 Giá phòng tại ${hotelName}:\n\n${roomList}\n\n✅ Giá tốt nhất khi đặt trực tiếp!\n📲 Bạn muốn đặt phòng nào ạ?` };
-        }
-        return { reply: `💰 Để xem giá phòng mới nhất tại ${hotelName}, bạn vui lòng:\n📲 Truy cập website hoặc nhắn ngày check-in, mình báo giá ngay!` };
-      },
-    },
-
-    // ── Loại phòng (hỏi "phòng" nhưng không hỏi giá/hình) ──
-    {
-      id: 'room_types',
-      keywords: ['phòng', 'room', 'loại phòng', 'các phòng', 'phòng nào', 'có phòng'],
-      excludeKeywords: ['hình', 'ảnh', 'giá', 'bao nhiêu', 'đặt', 'book', 'check', 'huỷ', 'hủy'],
-      weight: 6,
-      handler: (msg, msgNorm, hotelName, rooms) => {
-        if (rooms.length > 0) {
-          const roomList = rooms.map((r: any) => {
-            let line = `🏨 ${r.name} — ${r.base_price?.toLocaleString('vi-VN')}₫/đêm`;
-            if (r.max_guests) line += ` | ${r.max_guests} khách`;
-            if (r.bed_type) line += ` | ${r.bed_type}`;
-            return line;
-          }).join('\n');
-          return { reply: `🏨 Các loại phòng tại ${hotelName}:\n\n${roomList}\n\nBạn muốn xem chi tiết phòng nào? Gõ "giá phòng" hoặc "hình phòng" nhé!` };
-        }
-        return { reply: `🏨 ${hotelName} có nhiều loại phòng phù hợp. Nhắn mình ngày check-in để báo phòng trống nhé!` };
-      },
-    },
-
-    // ── Check-in / Check-out ──
-    {
-      id: 'checkin',
-      keywords: ['check-in', 'checkin', 'check in', 'check-out', 'checkout', 'check out', 'nhận phòng', 'trả phòng', 'giờ nhận', 'giờ trả'],
-      weight: 12,
-      handler: (msg, msgNorm, hotelName, rooms, hotelCache) => {
-        const checkIn = hotelCache?.check_in_time || '14:00';
-        const checkOut = hotelCache?.check_out_time || '12:00';
-        if (msgContains(msg, msgNorm, ['sớm', 'early', 'trước'])) {
-          return { reply: `⏰ Giờ nhận phòng tiêu chuẩn: ${checkIn}\n\n💡 ${hotelName} hỗ trợ nhận phòng sớm tùy tình trạng phòng trống.\n• Trước 2 giờ: +30% giá phòng\n• Trước 4 giờ: +50% giá phòng\n\nBạn muốn check-in sớm lúc mấy giờ?` };
-        }
-        if (msgContains(msg, msgNorm, ['muộn', 'trễ', 'late'])) {
-          return { reply: `⏰ Giờ trả phòng tiêu chuẩn: ${checkOut}\n\n💡 ${hotelName} hỗ trợ trả phòng muộn:\n• Muộn 2 giờ: +30%\n• Muộn 4 giờ: +50%\n• Sau 18:00: tính thêm 1 đêm\n\nBạn cần trả muộn đến mấy giờ ạ?` };
-        }
-        return { reply: `🕐 Giờ nhận/trả phòng tại ${hotelName}:\n\n⬆️ Check-in: ${checkIn}\n⬇️ Check-out: ${checkOut}\n\n💡 Cần nhận sớm hoặc trả muộn? Inbox mình nhé!` };
-      },
-    },
-
-    // ── Địa chỉ ──
-    {
-      id: 'location',
-      keywords: ['địa chỉ', 'ở đâu', 'location', 'chỗ nào', 'đường nào', 'quận', 'vị trí', 'map', 'bản đồ', 'đường đi', 'chỉ đường'],
-      weight: 10,
-      handler: (msg, msgNorm, hotelName, rooms, hotelCache) => {
-        if (hotelCache) {
-          const parts = [hotelCache.address, hotelCache.district, hotelCache.city].filter(Boolean);
-          return { reply: `📍 Địa chỉ ${hotelName}:\n\n🏨 ${parts.join(', ') || 'Liên hệ để biết'}\n${hotelCache.phone ? `📞 ${hotelCache.phone}` : ''}\n\nBạn cần chỉ đường không ạ?` };
-        }
-        return { reply: `📍 Vui lòng liên hệ ${hotelName} để biết địa chỉ chi tiết ạ!` };
-      },
-    },
-
-    // ── Tiện ích ──
-    {
-      id: 'amenities',
-      keywords: ['tiện ích', 'amenities', 'wifi', 'bể bơi', 'hồ bơi', 'gym', 'spa', 'đỗ xe', 'parking', 'bãi đậu', 'nhà hàng', 'có gì', 'dịch vụ'],
-      weight: 8,
-      handler: (msg, msgNorm, hotelName, rooms, hotelCache) => {
-        if (hotelCache?.amenities) {
-          let amenities: string[] = [];
-          try {
-            const parsed = typeof hotelCache.amenities === 'string' ? JSON.parse(hotelCache.amenities) : hotelCache.amenities;
-            amenities = Array.isArray(parsed) ? parsed : Object.keys(parsed).filter(k => parsed[k]);
-          } catch {}
-          if (amenities.length > 0) {
-            const emojiMap: Record<string, string> = {
-              'wifi': '📶', 'pool': '🏊', 'gym': '💪', 'spa': '🧖', 'parking': '🅿️',
-              'restaurant': '🍽️', 'elevator': '🛗', 'ac': '❄️', 'reception': '👨‍💼',
-              'laundry': '👔', 'bar': '🍸', 'garden': '🌿',
-            };
-            const formatted = amenities.map(a => {
-              const key = a.toLowerCase().replace(/\s+/g, '');
-              const emoji = Object.entries(emojiMap).find(([k]) => key.includes(k))?.[1] || '✅';
-              return `${emoji} ${a}`;
-            }).join('\n');
-            return { reply: `🏨 Tiện ích tại ${hotelName}:\n\n${formatted}` };
-          }
-        }
-        return { reply: `🏨 ${hotelName} có đầy đủ tiện nghi. Liên hệ mình để biết chi tiết nhé!` };
-      },
-    },
-
-    // ── Đặt phòng ──
-    {
-      id: 'booking',
-      keywords: ['đặt phòng', 'book', 'booking', 'reserve', 'muốn ở', 'muốn thuê', 'đặt ngay'],
-      weight: 10,
-      handler: (msg, msgNorm, hotelName) => ({
-        reply: `📲 Đặt phòng ${hotelName} rất dễ:\n\n1️⃣ Nhắn cho mình: ngày check-in, số đêm, số khách\n2️⃣ Mình báo giá & phòng trống\n3️⃣ Xác nhận trong 30 giây!\n\n✅ Thanh toán tại nơi\n✅ Huỷ miễn phí\n\nBạn muốn đặt ngày nào ạ?`,
-      }),
-    },
-
-    // ── Khuyến mãi ──
-    {
-      id: 'promo',
-      keywords: ['khuyến mãi', 'giảm giá', 'deal', 'voucher', 'mã giảm', 'promotion', 'sale', 'ưu đãi', 'rẻ'],
-      weight: 8,
-      handler: (msg, msgNorm, hotelName) => ({
-        reply: `🎉 Ưu đãi từ ${hotelName}:\n\n🔥 Giá tốt nhất khi đặt trực tiếp!\n💎 Ưu đãi riêng cho khách quen\n📱 Inbox ngày check-in để mình check deal cho bạn!`,
-      }),
-    },
-
-    // ── Thanh toán ──
-    {
-      id: 'payment',
-      keywords: ['thanh toán', 'payment', 'trả tiền', 'chuyển khoản', 'momo', 'vnpay', 'visa', 'thẻ', 'banking'],
-      weight: 10,
-      handler: (msg, msgNorm, hotelName) => ({
-        reply: `💳 Phương thức thanh toán tại ${hotelName}:\n\n✅ Thanh toán tại nơi lưu trú\n💚 Chuyển khoản ngân hàng\n💳 Visa / Mastercard\n📱 VNPay, MoMo\n\nKhông phụ phí ẩn.`,
-      }),
-    },
-
-    // ── Huỷ phòng ──
-    {
-      id: 'cancel',
-      keywords: ['huỷ', 'hủy', 'cancel', 'hoàn tiền', 'refund'],
-      weight: 12,
-      handler: (msg, msgNorm, hotelName) => ({
-        reply: `🔄 Chính sách huỷ phòng ${hotelName}:\n\n✅ Huỷ miễn phí trước ngày check-in\n✅ Không charge phí nếu huỷ sớm\n\nCần huỷ? Nhắn mình mã booking!`,
-      }),
-    },
-
-    // ── Liên hệ ──
-    {
-      id: 'contact',
-      keywords: ['hotline', 'liên hệ', 'contact', 'số điện thoại', 'phone', 'email', 'gọi', 'tổng đài'],
-      weight: 8,
-      handler: (msg, msgNorm, hotelName, rooms, hotelCache) => ({
-        reply: `📞 Liên hệ ${hotelName}:\n\n${hotelCache?.phone ? `📱 Hotline: ${hotelCache.phone}\n` : ''}💬 Nhắn tin ngay tại đây — hỗ trợ 24/7!`,
-      }),
-    },
-
-    // ── Thuê giờ ──
-    {
-      id: 'hourly',
-      keywords: ['thuê giờ', 'theo giờ', 'hourly', 'vài giờ', 'nghỉ trưa', 'nghỉ giờ'],
-      weight: 10,
-      handler: (msg, msgNorm, hotelName, rooms) => {
-        const hourlyRooms = rooms.filter((r: any) => r.hourly_price);
-        if (hourlyRooms.length > 0) {
-          const list = hourlyRooms.map((r: any) => `⏰ ${r.name}: ${r.hourly_price.toLocaleString('vi-VN')}₫/giờ`).join('\n');
-          return { reply: `⏰ Đặt phòng theo giờ tại ${hotelName}:\n\n${list}\n\nNhắn mình ngày + giờ cần nhé!` };
-        }
-        return { reply: `⏰ ${hotelName} hỗ trợ đặt phòng theo giờ! Nhắn mình ngày + giờ cần nhé!` };
-      },
-    },
-
-    // ── Thú cưng ──
-    {
-      id: 'pet',
-      keywords: ['thú cưng', 'pet', 'chó', 'mèo', 'dog', 'cat'],
-      weight: 10,
-      handler: (msg, msgNorm, hotelName) => ({
-        reply: `🐾 Chính sách thú cưng tại ${hotelName}:\n\nVui lòng liên hệ trực tiếp vì mỗi loại phòng có quy định riêng ạ.\n\nBạn dự định mang theo thú cưng gì?`,
-      }),
-    },
-
-    // ── Review ──
-    {
-      id: 'review',
-      keywords: ['review', 'đánh giá', 'feedback', 'rating', 'nhận xét'],
-      weight: 8,
-      handler: (msg, msgNorm, hotelName, rooms, hotelCache) => ({
-        reply: `⭐ ${hotelName}${hotelCache?.star_rating ? ` (${hotelCache.star_rating} sao)` : ''}:\n\nXem đánh giá từ khách hàng trên Google Maps hoặc Booking.com.\n💬 Bạn đã từng ở đây chưa?`,
-      }),
-    },
-
-    // ── Chào hỏi (PRIORITY THẤP NHẤT — chỉ match tin ngắn) ──
-    {
-      id: 'greeting',
-      keywords: ['hi', 'hello', 'xin chào', 'chào bạn', 'chào', 'alo', 'hey'],
-      weight: 2,
-      maxMsgLength: 25,  // Chỉ match tin ngắn như "chào", "hi", "alo"
-      handler: (msg, msgNorm, hotelName) => ({
-        reply: `Chào bạn! 👋 Cảm ơn bạn đã nhắn tin cho ${hotelName}.\nMình có thể giúp bạn:\n🏨 Xem phòng & giá (gõ "giá phòng")\n📸 Xem hình phòng (gõ "hình phòng")\n📍 Địa chỉ & tiện ích\n💰 Đặt phòng nhanh\n\nBạn cần tư vấn gì ạ?`,
-      }),
-    },
-
-    // ── Cảm ơn (PRIORITY THẤP) ──
-    {
-      id: 'thanks',
-      keywords: ['cảm ơn', 'thanks', 'thank', 'cám ơn', 'tks'],
-      weight: 2,
-      maxMsgLength: 30,
-      handler: (msg, msgNorm, hotelName) => ({
-        reply: `Không có gì ạ! 😊 Cảm ơn bạn đã quan tâm đến ${hotelName}.\nNếu cần thêm thông tin, cứ nhắn mình nhé! 🏨`,
-      }),
-    },
-  ];
+      }
+      return { id: h.id, name: h.name, address, phone };
+    });
+  } catch {
+    return [];
+  }
 }
 
 /* ═══════════════════════════════════════════
-   SCORING ENGINE — chọn intent tốt nhất
+   INTENT DETECTION — Phân loại ý định nhanh
    ═══════════════════════════════════════════ */
 
-function matchDynamicFaq(message: string, hotelId: number = 1): FaqResult | null {
-  const msg = message.toLowerCase().trim();
-  const msgNorm = removeDiacritics(msg);
+type Intent = 'greeting' | 'price' | 'rooms' | 'room_images' | 'booking' | 'checkin' |
+  'location' | 'amenities' | 'payment' | 'cancel' | 'promo' | 'hourly' | 'contact' |
+  'pet' | 'review' | 'thanks' | 'branch_select' | 'unknown';
 
-  if (msg.length <= 1) return null; // Sticker, emoji
+interface IntentRule {
+  intent: Intent;
+  keywords: string[];
+  excludeKeywords?: string[];
+  weight: number;
+  maxMsgLength?: number;
+}
 
-  const { hotel, rooms, hotelCache } = getHotelCache(hotelId);
-  const hotelName = hotel?.name || 'Khách sạn';
+const INTENT_RULES: IntentRule[] = [
+  { intent: 'room_images', keywords: ['hình', 'ảnh', 'photo', 'image', 'xem phòng', 'hình phòng', 'ảnh phòng', 'picture', 'gallery', 'cho xem', 'gửi hình', 'gửi ảnh'], weight: 15 },
+  { intent: 'checkin', keywords: ['check-in', 'checkin', 'check in', 'check-out', 'checkout', 'check out', 'nhận phòng', 'trả phòng', 'giờ nhận', 'giờ trả', 'sớm', 'muộn'], weight: 12 },
+  { intent: 'cancel', keywords: ['huỷ', 'hủy', 'cancel', 'hoàn tiền', 'refund'], weight: 12 },
+  { intent: 'booking', keywords: ['đặt phòng', 'book', 'booking', 'reserve', 'muốn ở', 'muốn thuê', 'đặt ngay'], weight: 10 },
+  { intent: 'price', keywords: ['giá', 'bao nhiêu', 'price', 'phí', 'tiền', 'cost', 'rate', 'vnđ', 'vnd'], excludeKeywords: ['hình', 'ảnh'], weight: 10 },
+  { intent: 'location', keywords: ['địa chỉ', 'ở đâu', 'location', 'chỗ nào', 'đường nào', 'quận', 'vị trí', 'map', 'bản đồ'], weight: 10 },
+  { intent: 'payment', keywords: ['thanh toán', 'payment', 'trả tiền', 'chuyển khoản', 'momo', 'vnpay', 'visa', 'thẻ'], weight: 10 },
+  { intent: 'hourly', keywords: ['thuê giờ', 'theo giờ', 'hourly', 'vài giờ', 'nghỉ trưa'], weight: 10 },
+  { intent: 'pet', keywords: ['thú cưng', 'pet', 'chó', 'mèo'], weight: 10 },
+  { intent: 'promo', keywords: ['khuyến mãi', 'giảm giá', 'deal', 'voucher', 'ưu đãi', 'rẻ'], weight: 8 },
+  { intent: 'amenities', keywords: ['tiện ích', 'amenities', 'wifi', 'hồ bơi', 'gym', 'spa', 'đỗ xe', 'parking', 'có gì', 'dịch vụ'], weight: 8 },
+  { intent: 'contact', keywords: ['hotline', 'liên hệ', 'contact', 'số điện thoại', 'phone', 'email', 'gọi'], weight: 8 },
+  { intent: 'review', keywords: ['review', 'đánh giá', 'feedback', 'rating'], weight: 8 },
+  { intent: 'rooms', keywords: ['phòng', 'room', 'loại phòng', 'các phòng', 'có phòng'], excludeKeywords: ['hình', 'ảnh', 'giá', 'đặt', 'check', 'huỷ', 'hủy'], weight: 6 },
+  { intent: 'thanks', keywords: ['cảm ơn', 'thanks', 'thank', 'cám ơn', 'tks', 'ok'], weight: 2, maxMsgLength: 30 },
+  { intent: 'greeting', keywords: ['hi', 'hello', 'xin chào', 'chào bạn', 'chào', 'alo', 'hey'], weight: 2, maxMsgLength: 30 },
+];
 
-  const intents = buildIntents();
-  let bestIntent: FaqIntent | null = null;
+function detectIntent(msg: string): { intent: Intent; score: number } {
+  const msgL = msg.toLowerCase().trim();
+  const msgNorm = removeDiacritics(msgL);
+
+  let bestIntent: Intent = 'unknown';
   let bestScore = 0;
 
-  for (const intent of intents) {
-    // Skip if message too long for this intent
-    if (intent.maxMsgLength && msg.length > intent.maxMsgLength) continue;
+  for (const rule of INTENT_RULES) {
+    if (rule.maxMsgLength && msgL.length > rule.maxMsgLength) continue;
 
-    // Count keyword matches
-    const matches = countMatches(msg, msgNorm, intent.keywords);
+    const matches = countMatches(msgL, msgNorm, rule.keywords);
     if (matches === 0) continue;
-    if (intent.minMatches && matches < intent.minMatches) continue;
 
-    // Check exclude keywords — nếu có từ loại trừ thì giảm score mạnh
-    let excludePenalty = 0;
-    if (intent.excludeKeywords) {
-      excludePenalty = countMatches(msg, msgNorm, intent.excludeKeywords) * 10;
+    let penalty = 0;
+    if (rule.excludeKeywords) {
+      penalty = countMatches(msgL, msgNorm, rule.excludeKeywords) * 10;
     }
 
-    const score = matches * intent.weight - excludePenalty;
-
+    const score = matches * rule.weight - penalty;
     if (score > bestScore) {
       bestScore = score;
-      bestIntent = intent;
+      bestIntent = rule.intent;
     }
   }
 
-  if (!bestIntent || bestScore <= 0) return null;
+  // Detect branch selection: "1", "2", "chi nhánh 1", "bạch đằng", etc.
+  if (bestIntent === 'unknown' && msgL.length < 50) {
+    const branches = getAllBranches();
+    for (let i = 0; i < branches.length; i++) {
+      const num = String(i + 1);
+      const nameL = branches[i].name.toLowerCase();
+      if (msgL === num || msgL.includes(nameL) || removeDiacritics(msgL).includes(removeDiacritics(nameL))) {
+        return { intent: 'branch_select', score: 20 };
+      }
+    }
+  }
 
-  return bestIntent.handler(msg, msgNorm, hotelName, rooms, hotelCache, hotelId);
+  return { intent: bestIntent, score: bestScore };
 }
 
 /* ═══════════════════════════════════════════
-   TẦNG 2: WIKI SEARCH — Knowledge Base
+   FAQ HANDLERS — Data-driven responses
+   ═══════════════════════════════════════════ */
+
+interface FaqResult {
+  reply: string;
+  intent: Intent;
+  images?: Array<{ title: string; subtitle: string; image_url: string }>;
+}
+
+function handleGreeting(hotelName: string, senderName?: string): FaqResult {
+  const branches = getAllBranches();
+  const greeting = senderName ? `Chào ${senderName}! 👋` : 'Chào bạn! 👋';
+
+  if (branches.length > 1) {
+    const branchList = branches.map((b, i) =>
+      `${i + 1}️⃣ *${b.name}*${b.address ? `\n   📍 ${b.address}` : ''}${b.phone ? ` | 📞 ${b.phone}` : ''}`
+    ).join('\n\n');
+
+    return {
+      reply: `${greeting} Cảm ơn bạn đã liên hệ!\n\nChúng mình hiện có ${branches.length} chi nhánh:\n\n${branchList}\n\n👉 Bạn muốn tìm hiểu chi nhánh nào? Gõ số (1, 2...) hoặc tên chi nhánh nhé!`,
+      intent: 'greeting',
+    };
+  }
+
+  return {
+    reply: `${greeting} Cảm ơn bạn đã nhắn tin cho ${hotelName}!\n\nMình có thể giúp bạn:\n💰 Xem giá phòng\n📸 Xem hình phòng\n📅 Đặt phòng nhanh\n📍 Địa chỉ & tiện ích\n⏰ Check-in / Check-out\n\nBạn cần tư vấn gì ạ?`,
+    intent: 'greeting',
+  };
+}
+
+function handleFaq(intent: Intent, msg: string, hotelId: number, senderName?: string): FaqResult | null {
+  const msgL = msg.toLowerCase().trim();
+  const msgNorm = removeDiacritics(msgL);
+  const { hotel, rooms, hotelCache } = getHotelCache(hotelId);
+  const hotelName = hotel?.name || 'Khách sạn';
+
+  switch (intent) {
+    case 'greeting':
+      return handleGreeting(hotelName, senderName);
+
+    case 'branch_select': {
+      const branches = getAllBranches();
+      for (let i = 0; i < branches.length; i++) {
+        const num = String(i + 1);
+        const nameL = branches[i].name.toLowerCase();
+        if (msgL === num || msgL.includes(nameL) || removeDiacritics(msgL).includes(removeDiacritics(nameL))) {
+          const b = branches[i];
+          const { rooms: bRooms } = getHotelCache(b.id);
+          let roomInfo = '';
+          if (bRooms.length > 0) {
+            roomInfo = '\n\n💰 Các loại phòng:\n' + bRooms.map((r: any) =>
+              `• ${r.name} — ${r.base_price?.toLocaleString('vi-VN')}₫/đêm (${r.max_guests} khách)`
+            ).join('\n');
+          }
+          return {
+            reply: `🏨 ${b.name}\n${b.address ? `📍 ${b.address}\n` : ''}${b.phone ? `📞 ${b.phone}\n` : ''}${roomInfo}\n\nBạn muốn:\n💰 Xem giá chi tiết → gõ "giá"\n📸 Xem hình phòng → gõ "hình"\n📅 Đặt phòng → gõ "đặt phòng"\n\nHoặc hỏi bất kỳ thông tin nào nhé!`,
+            intent: 'branch_select',
+          };
+        }
+      }
+      return null;
+    }
+
+    case 'room_images': {
+      const roomImgs = getRoomImages(hotelId);
+      if (roomImgs.length > 0) {
+        const grouped: Record<string, any[]> = {};
+        for (const img of roomImgs) {
+          if (!grouped[img.room_type_name]) grouped[img.room_type_name] = [];
+          grouped[img.room_type_name].push(img);
+        }
+        const images = roomImgs.map((img: any) => ({
+          title: img.room_type_name, subtitle: img.caption || hotelName, image_url: img.image_url,
+        }));
+        const roomList = Object.keys(grouped).map(name => `📸 ${name} (${grouped[name].length} ảnh)`).join('\n');
+        return { reply: `📸 Hình ảnh phòng tại ${hotelName}:\n\n${roomList}\n\nMời bạn xem 👇`, intent: 'room_images', images };
+      }
+      if (rooms.length > 0) {
+        const roomList = rooms.map((r: any) => `🏨 ${r.name}: ${r.base_price?.toLocaleString('vi-VN')}₫/đêm`).join('\n');
+        return { reply: `Các loại phòng tại ${hotelName}:\n\n${roomList}\n\n📲 Liên hệ mình để được gửi ảnh trực tiếp!`, intent: 'room_images' };
+      }
+      return { reply: `📸 Cho mình biết bạn quan tâm loại phòng nào, mình gửi ảnh cho nhé!`, intent: 'room_images' };
+    }
+
+    case 'price': {
+      if (rooms.length > 0) {
+        const roomList = rooms.map((r: any) => {
+          let line = `💰 ${r.name} — ${r.base_price?.toLocaleString('vi-VN')}₫/đêm`;
+          if (r.hourly_price) line += ` | Giờ: ${r.hourly_price.toLocaleString('vi-VN')}₫`;
+          if (r.max_guests) line += ` | ${r.max_guests} khách`;
+          const avail = r.available_count ?? r.room_count;
+          if (avail !== undefined && avail > 0) line += ` | Còn ${avail} phòng`;
+          return line;
+        }).join('\n');
+        return { reply: `💰 Bảng giá ${hotelName}:\n\n${roomList}\n\n✅ Giá tốt nhất khi đặt trực tiếp!\nBạn muốn đặt phòng nào ạ?`, intent: 'price' };
+      }
+      return { reply: `💰 Nhắn mình ngày check-in, mình báo giá phòng mới nhất nhé!`, intent: 'price' };
+    }
+
+    case 'rooms': {
+      if (rooms.length > 0) {
+        const roomList = rooms.map((r: any) => {
+          let line = `🏨 ${r.name} — ${r.base_price?.toLocaleString('vi-VN')}₫/đêm | ${r.max_guests} khách`;
+          if (r.bed_type) line += ` | ${r.bed_type}`;
+          return line;
+        }).join('\n');
+        return { reply: `🏨 Các loại phòng tại ${hotelName}:\n\n${roomList}\n\nGõ "giá" xem chi tiết hoặc "hình" xem ảnh phòng!`, intent: 'rooms' };
+      }
+      return { reply: `🏨 Nhắn mình ngày check-in để kiểm tra phòng trống nhé!`, intent: 'rooms' };
+    }
+
+    case 'checkin': {
+      const checkIn = hotelCache?.check_in_time || '14:00';
+      const checkOut = hotelCache?.check_out_time || '12:00';
+      if (msgContains(msgL, msgNorm, ['sớm', 'early', 'trước'])) {
+        return { reply: `⏰ Check-in tiêu chuẩn: ${checkIn}\n\nNhận sớm tùy phòng trống:\n• Trước 2h: +30%\n• Trước 4h: +50%\n\nBạn muốn check-in lúc mấy giờ?`, intent: 'checkin' };
+      }
+      if (msgContains(msgL, msgNorm, ['muộn', 'trễ', 'late'])) {
+        return { reply: `⏰ Check-out tiêu chuẩn: ${checkOut}\n\nTrả muộn:\n• +2h: +30%\n• +4h: +50%\n• Sau 18:00: +1 đêm\n\nBạn cần trả muộn đến mấy giờ?`, intent: 'checkin' };
+      }
+      return { reply: `🕐 ${hotelName}:\n⬆️ Check-in: ${checkIn}\n⬇️ Check-out: ${checkOut}\n\nCần nhận sớm/trả muộn? Nhắn mình nhé!`, intent: 'checkin' };
+    }
+
+    case 'location': {
+      if (hotelCache) {
+        const parts = [hotelCache.address, hotelCache.district, hotelCache.city].filter(Boolean);
+        return { reply: `📍 ${hotelName}:\n🏨 ${parts.join(', ') || 'Liên hệ mình nhé'}\n${hotelCache.phone ? `📞 ${hotelCache.phone}` : ''}\n\nBạn cần chỉ đường không ạ?`, intent: 'location' };
+      }
+      return { reply: `📍 Liên hệ mình để biết địa chỉ ${hotelName} nhé!`, intent: 'location' };
+    }
+
+    case 'amenities': {
+      if (hotelCache?.amenities) {
+        let amenities: string[] = [];
+        try {
+          const parsed = typeof hotelCache.amenities === 'string' ? JSON.parse(hotelCache.amenities) : hotelCache.amenities;
+          amenities = Array.isArray(parsed) ? parsed : Object.keys(parsed).filter(k => parsed[k]);
+        } catch {}
+        if (amenities.length > 0) {
+          const emojiMap: Record<string, string> = { 'wifi': '📶', 'pool': '🏊', 'gym': '💪', 'spa': '🧖', 'parking': '🅿️', 'restaurant': '🍽️', 'elevator': '🛗', 'ac': '❄️', 'reception': '👨‍💼' };
+          const formatted = amenities.slice(0, 10).map(a => {
+            const key = a.toLowerCase().replace(/\s+/g, '');
+            const emoji = Object.entries(emojiMap).find(([k]) => key.includes(k))?.[1] || '✅';
+            return `${emoji} ${a}`;
+          }).join('\n');
+          return { reply: `🏨 Tiện ích ${hotelName}:\n\n${formatted}`, intent: 'amenities' };
+        }
+      }
+      return { reply: `🏨 ${hotelName} có đầy đủ tiện nghi. Hỏi cụ thể mình nhé!`, intent: 'amenities' };
+    }
+
+    case 'booking':
+      return { reply: `📲 Đặt phòng ${hotelName}:\n\n1️⃣ Cho mình biết: ngày check-in, số đêm, số khách\n2️⃣ Mình báo giá & phòng trống\n3️⃣ Xác nhận 30 giây!\n\n✅ Thanh toán tại nơi • Huỷ miễn phí\n\nBạn muốn đặt ngày nào?`, intent: 'booking' };
+
+    case 'payment':
+      return { reply: `💳 Thanh toán ${hotelName}:\n\n✅ Tại nơi lưu trú\n💚 Chuyển khoản\n💳 Visa / Mastercard\n📱 VNPay, MoMo\n\nKhông phụ phí ẩn.`, intent: 'payment' };
+
+    case 'cancel':
+      return { reply: `🔄 Huỷ phòng ${hotelName}:\n\n✅ Huỷ miễn phí trước ngày check-in\n\nCần huỷ? Nhắn mã booking!`, intent: 'cancel' };
+
+    case 'promo':
+      return { reply: `🎉 ${hotelName}:\n\n🔥 Giá tốt nhất khi đặt trực tiếp!\n💎 Ưu đãi riêng cho khách quen\n\nInbox ngày check-in, mình check deal!`, intent: 'promo' };
+
+    case 'contact': {
+      const phone = hotelCache?.phone || '';
+      return { reply: `📞 ${hotelName}:\n${phone ? `📱 ${phone}\n` : ''}💬 Nhắn tại đây — hỗ trợ 24/7!`, intent: 'contact' };
+    }
+
+    case 'hourly': {
+      const hourlyRooms = rooms.filter((r: any) => r.hourly_price);
+      if (hourlyRooms.length > 0) {
+        const list = hourlyRooms.map((r: any) => `⏰ ${r.name}: ${r.hourly_price.toLocaleString('vi-VN')}₫/giờ`).join('\n');
+        return { reply: `⏰ Theo giờ tại ${hotelName}:\n\n${list}\n\nNhắn ngày + giờ cần nhé!`, intent: 'hourly' };
+      }
+      return { reply: `⏰ ${hotelName} hỗ trợ theo giờ! Nhắn ngày + giờ cần nhé!`, intent: 'hourly' };
+    }
+
+    case 'pet':
+      return { reply: `🐾 Thú cưng tại ${hotelName}: Liên hệ mình để hỏi chính sách cụ thể cho loại phòng bạn chọn ạ.`, intent: 'pet' };
+
+    case 'review':
+      return { reply: `⭐ ${hotelName}${hotelCache?.star_rating ? ` (${hotelCache.star_rating} sao)` : ''}: Xem đánh giá trên Google Maps hoặc Booking.com nhé!`, intent: 'review' };
+
+    case 'thanks':
+      return { reply: `Không có gì ạ! 😊 Cần thêm gì cứ nhắn mình nhé! 🏨`, intent: 'thanks' };
+
+    default:
+      return null;
+  }
+}
+
+/* ═══════════════════════════════════════════
+   TẦNG 2: WIKI SEARCH
    ═══════════════════════════════════════════ */
 
 function searchWikiDirect(message: string): string | null {
-  const keywords = message
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((w) => w.length > 2)
-    .slice(0, 5);
-
+  const keywords = message.toLowerCase().split(/\s+/).filter((w) => w.length > 2).slice(0, 5);
   if (keywords.length === 0) return null;
 
   const allWiki = db
@@ -403,42 +429,31 @@ function searchWikiDirect(message: string): string | null {
   for (const entry of allWiki) {
     const text = (entry.title + ' ' + entry.content).toLowerCase();
     let score = 0;
-    for (const kw of keywords) {
-      if (text.includes(kw)) score++;
-    }
-    if (score / keywords.length >= 0.4 && score > bestScore) {
+    for (const kw of keywords) { if (text.includes(kw)) score++; }
+    if (score / keywords.length >= 0.5 && score > bestScore) {  // Tăng threshold từ 0.4 → 0.5
       bestScore = score;
       bestEntry = entry;
     }
   }
 
   if (!bestEntry) return null;
-
   const content = bestEntry.content;
-  const firstKeyword = keywords.find((kw) => content.toLowerCase().includes(kw));
-  if (firstKeyword) {
-    const idx = content.toLowerCase().indexOf(firstKeyword);
-    const start = Math.max(0, idx - 100);
-    const end = Math.min(content.length, idx + 400);
-    let snippet = content.slice(start, end).trim();
-    if (start > 0) snippet = '...' + snippet;
-    if (end < content.length) snippet += '...';
-    return `📋 Thông tin từ ${bestEntry.title}:\n\n${snippet}\n\n💬 Bạn cần biết thêm gì không ạ?`;
-  }
-
-  return `📋 ${bestEntry.title}:\n\n${content.slice(0, 500)}${content.length > 500 ? '...' : ''}\n\n💬 Bạn cần biết thêm gì không ạ?`;
+  return `📋 ${bestEntry.title}:\n\n${content.slice(0, 400)}${content.length > 400 ? '...' : ''}\n\n💬 Bạn cần biết thêm gì?`;
 }
 
 /* ═══════════════════════════════════════════
-   TẦNG 3: AI GENERATE — Chỉ khi cần thiết
+   TẦNG 3: AI — Context-Aware (Lightweight + Full)
    ═══════════════════════════════════════════ */
 
-const REPLY_SYSTEM = `Bạn là nhân viên tư vấn khách sạn chuyên nghiệp.
-Trả lời tiếng Việt, ngắn gọn 2-4 câu, thân thiện, chuyên nghiệp.
-Dựa vào kiến thức doanh nghiệp bên dưới để trả lời CHÍNH XÁC.
-Khuyến khích khách inbox hoặc gọi hotline để đặt phòng.
-KHÔNG tự bịa giá, số liệu. Nếu không biết → "Để mình kiểm tra và báo lại bạn nhé!"
-Có thể dùng 1-2 emoji phù hợp.`;
+const REPLY_SYSTEM = `Bạn là nhân viên tư vấn khách sạn chuyên nghiệp tại Việt Nam.
+QUY TẮC:
+- Trả lời tiếng Việt, ngắn gọn 2-5 câu, thân thiện
+- Đọc LỊCH SỬ HỘI THOẠI để hiểu ngữ cảnh — KHÔNG hỏi lại thông tin khách đã nói
+- Dựa vào DỮ LIỆU KHÁCH SẠN bên dưới để trả lời CHÍNH XÁC
+- KHÔNG tự bịa giá, số liệu
+- Nếu không biết → "Để mình kiểm tra và báo lại bạn nhé!"
+- Dùng 1-2 emoji phù hợp
+- Cuối câu luôn gợi ý bước tiếp theo cho khách`;
 
 async function buildOtaContext(hotelId: number = 1): Promise<string> {
   if (!getOtaDbConfig()) return '';
@@ -446,44 +461,57 @@ async function buildOtaContext(hotelId: number = 1): Promise<string> {
     const mktHotel = db.prepare(`SELECT ota_hotel_id FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
     const otaId = mktHotel?.ota_hotel_id;
     if (!otaId) return '';
-
     const [roomTypes, stats] = await Promise.all([
       getOtaRoomTypes(otaId).catch(() => []),
       getOtaHotelStats(otaId).catch(() => null),
     ]);
-
     const parts: string[] = [];
     if (roomTypes.length > 0) {
-      parts.push('PHÒNG TRỐNG REAL-TIME:');
+      parts.push('PHÒNG:');
       for (const rt of roomTypes) {
-        parts.push(`- ${rt.name}: ${rt.base_price.toLocaleString('vi-VN')}₫/đêm | Tối đa ${rt.max_guests} khách | Còn ${rt.available_count}/${rt.room_count} phòng`);
+        parts.push(`- ${rt.name}: ${rt.base_price.toLocaleString('vi-VN')}₫/đêm | ${rt.max_guests} khách | Còn ${rt.available_count}/${rt.room_count}`);
       }
     }
     if (stats) {
-      parts.push(`\nTRẠNG THÁI HÔM NAY: ${stats.available_rooms}/${stats.total_rooms} phòng trống | ${stats.inhouse_guests} khách đang ở | Công suất ${stats.occupancy_rate}%`);
+      parts.push(`TRẠNG THÁI: ${stats.available_rooms}/${stats.total_rooms} trống | ${stats.occupancy_rate}% công suất`);
     }
     return parts.join('\n');
-  } catch {
-    return '';
-  }
+  } catch { return ''; }
 }
 
-async function aiReply(message: string, hotelId: number = 1): Promise<string> {
+function buildConversationContext(history: Array<{ role: string; message: string }>): string {
+  if (history.length === 0) return '';
+  const lines = history.map(h => `${h.role === 'user' ? 'Khách' : 'Bot'}: ${h.message}`);
+  return `--- LỊCH SỬ HỘI THOẠI ---\n${lines.join('\n')}\n--- HẾT ---`;
+}
+
+async function aiReplyWithContext(
+  message: string,
+  history: Array<{ role: string; message: string }>,
+  hotelId: number = 1,
+  lightweight: boolean = false
+): Promise<string> {
   const [wikiCtx, otaCtx] = await Promise.all([
     buildContext(message),
     buildOtaContext(hotelId),
   ]);
-  const task: TaskType = message.length > 100 || /[?？]/.test(message) ? 'reply_complex' : 'reply_simple';
 
-  const context = [
+  const convoCtx = buildConversationContext(history);
+
+  // Lightweight = dùng reply_simple (Gemma/Groq, ~500ms)
+  // Full = dùng reply_complex (Claude/Gemini, 3-15s)
+  const task: TaskType = lightweight ? 'reply_simple' : 'reply_complex';
+
+  const contextParts = [
+    convoCtx,
     wikiCtx ? `--- KIẾN THỨC ---\n${wikiCtx}\n--- HẾT ---` : '',
-    otaCtx ? `--- DỮ LIỆU OTA REAL-TIME ---\n${otaCtx}\n--- HẾT ---` : '',
+    otaCtx ? `--- DỮ LIỆU KHÁCH SẠN ---\n${otaCtx}\n--- HẾT ---` : '',
   ].filter(Boolean).join('\n\n');
 
   return generate({
     task,
     system: REPLY_SYSTEM,
-    user: `${context ? context + '\n\n' : ''}Khách viết: "${message}"\n\nTrả lời ngắn gọn:`,
+    user: `${contextParts}\n\nKhách viết: "${message}"\n\nTrả lời ngắn gọn, đúng ngữ cảnh:`,
   });
 }
 
@@ -496,62 +524,110 @@ export async function smartReplyWithSender(
   senderId?: string,
   senderName?: string,
   hasImage?: boolean,
-  hotelId?: number
+  hotelId?: number,
+  pageId?: number
 ): Promise<SmartReplyResult> {
   const t0 = Date.now();
   const msg = message.trim();
   const hid = hotelId || 1;
+  const pid = pageId || 0;
 
+  // Save user message to memory
+  if (senderId) {
+    saveMessage(senderId, pid, 'user', msg);
+  }
+
+  // Booking flow (highest priority)
   if (senderId) {
     if (hasImage) {
       const result = markTransferReceived(senderId);
       if (result) {
-        return { reply: result.reply, tier: 'rules', latency_ms: Date.now() - t0 };
+        saveMessage(senderId, pid, 'bot', result.reply, 'transfer');
+        return { reply: result.reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'transfer' };
       }
     }
     if (hasActiveBooking(senderId)) {
       const reply = processBookingStep(senderId, msg, senderName);
-      return { reply, tier: 'rules', latency_ms: Date.now() - t0 };
+      saveMessage(senderId, pid, 'bot', reply, 'booking');
+      return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'booking' };
     }
     if (isBookingIntent(msg)) {
       const reply = processBookingStep(senderId, msg, senderName);
-      return { reply, tier: 'rules', latency_ms: Date.now() - t0 };
+      saveMessage(senderId, pid, 'bot', reply, 'booking');
+      return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'booking' };
     }
   }
 
-  return smartReply(msg, hid);
+  return smartReply(msg, hid, senderId, senderName, pid);
 }
 
-export async function smartReply(message: string, hotelId: number = 1): Promise<SmartReplyResult> {
+export async function smartReply(
+  message: string,
+  hotelId: number = 1,
+  senderId?: string,
+  senderName?: string,
+  pageId?: number
+): Promise<SmartReplyResult> {
   const t0 = Date.now();
   const msg = message.trim();
 
   if (msg.length <= 1) {
-    return { reply: 'Chào bạn! Bạn cần tư vấn gì về đặt phòng khách sạn ạ? 😊', tier: 'rules', latency_ms: 0 };
+    const reply = 'Chào bạn! Bạn cần tư vấn gì ạ? 😊';
+    if (senderId) saveMessage(senderId, pageId || 0, 'bot', reply, 'greeting');
+    return { reply, tier: 'rules', latency_ms: 0, intent: 'greeting' };
   }
 
-  // ── Tầng 1: Dynamic FAQ (scoring) ──
-  const faqResult = matchDynamicFaq(msg, hotelId);
-  if (faqResult) {
-    return { reply: faqResult.reply, tier: 'rules', latency_ms: Date.now() - t0, images: faqResult.images };
+  // Get conversation history for context
+  const history = senderId ? getConversationHistory(senderId) : [];
+  const isFirst = senderId ? isFirstMessage(senderId) : true;
+
+  // ── Detect intent ──
+  const { intent, score } = detectIntent(msg);
+
+  // ── First message → always show greeting with branches ──
+  if (isFirst && (intent === 'greeting' || intent === 'unknown')) {
+    const hotelRow = db.prepare(`SELECT name FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
+    const hName = hotelRow?.name || 'Khách sạn';
+    const result = handleGreeting(hName, senderName);
+    if (senderId) saveMessage(senderId, pageId || 0, 'bot', result.reply, 'greeting');
+    return { reply: result.reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'greeting' };
   }
 
-  // ── Tầng 2: Wiki Search ──
+  // ── FAQ match (score > 0) → instant response ──
+  if (intent !== 'unknown' && score > 0) {
+    const faqResult = handleFaq(intent, msg, hotelId, senderName);
+    if (faqResult) {
+      if (senderId) saveMessage(senderId, pageId || 0, 'bot', faqResult.reply, faqResult.intent);
+      return {
+        reply: faqResult.reply,
+        tier: 'rules',
+        latency_ms: Date.now() - t0,
+        intent: faqResult.intent,
+        images: faqResult.images,
+      };
+    }
+  }
+
+  // ── Wiki search ──
   const wikiReply = searchWikiDirect(msg);
   if (wikiReply) {
-    return { reply: wikiReply, tier: 'wiki', latency_ms: Date.now() - t0 };
+    if (senderId) saveMessage(senderId, pageId || 0, 'bot', wikiReply, 'wiki');
+    return { reply: wikiReply, tier: 'wiki', latency_ms: Date.now() - t0, intent: 'wiki' };
   }
 
-  // ── Tầng 3: AI Generate ──
+  // ── AI with context ──
+  // Short/simple questions → Lightweight AI (Gemma/Groq, ~500ms)
+  // Long/complex questions → Full AI (Claude/Gemini, 3-15s)
   try {
-    const reply = await aiReply(msg, hotelId);
-    return { reply, tier: 'ai', latency_ms: Date.now() - t0 };
+    const isSimple = msg.length < 80 && !/[?？]/.test(msg);
+    const reply = await aiReplyWithContext(msg, history, hotelId, isSimple);
+    const tier = isSimple ? 'ai_light' : 'ai';
+    if (senderId) saveMessage(senderId, pageId || 0, 'bot', reply, 'ai');
+    return { reply, tier: tier as any, latency_ms: Date.now() - t0, intent: 'ai' };
   } catch (e: any) {
     console.error('[smartreply] AI fail:', e.message);
-    return {
-      reply: `Cảm ơn bạn đã nhắn tin! 😊 Hiện mình đang bận, để mình kiểm tra và phản hồi sớm nhất nhé.`,
-      tier: 'rules',
-      latency_ms: Date.now() - t0,
-    };
+    const fallback = `Cảm ơn bạn! 😊 Mình sẽ kiểm tra và phản hồi sớm nhất nhé.`;
+    if (senderId) saveMessage(senderId, pageId || 0, 'bot', fallback, 'error');
+    return { reply: fallback, tier: 'rules', latency_ms: Date.now() - t0, intent: 'error' };
   }
 }
