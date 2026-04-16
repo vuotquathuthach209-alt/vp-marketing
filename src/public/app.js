@@ -435,6 +435,68 @@ document.getElementById('btn-save-image-provider')?.addEventListener('click', as
   }
 });
 
+// ====== Autopilot ======
+async function loadAutopilotStatus() {
+  try {
+    const r = await api('/autopilot/status');
+    const badge = document.getElementById('autopilot-status-badge');
+    badge.innerHTML = r.enabled
+      ? '<span class="text-green-600">🟢 ĐANG CHẠY</span>'
+      : '<span class="text-slate-500">⚪ TẮT</span>';
+    const info = document.getElementById('autopilot-info');
+    info.innerHTML = `
+      <div>📋 Pillar hôm nay: <b>${r.currentPillar.emoji} ${r.currentPillar.name}</b> — ${r.currentPillar.description}</div>
+      <div>⏰ Giờ đăng: <b>${r.postTimes.join(', ')}</b></div>
+      <div>📝 Số bài/ngày: <b>${r.postsPerDay}</b></div>
+    `;
+  } catch {}
+}
+loadAutopilotStatus();
+
+document.getElementById('btn-autopilot-on')?.addEventListener('click', async () => {
+  await api('/autopilot/enable', { method: 'POST' });
+  loadAutopilotStatus();
+});
+document.getElementById('btn-autopilot-off')?.addEventListener('click', async () => {
+  await api('/autopilot/disable', { method: 'POST' });
+  loadAutopilotStatus();
+});
+document.getElementById('btn-autopilot-run')?.addEventListener('click', async () => {
+  const pre = document.getElementById('autopilot-report');
+  pre.classList.remove('hidden');
+  pre.textContent = '⏳ Đang chạy autopilot (nghiên cứu → viết caption → tạo ảnh)...';
+  try {
+    const pageId = state.pages?.[0]?.id;
+    if (!pageId) { pre.textContent = '❌ Chưa có Fanpage nào. Thêm Fanpage trước.'; return; }
+    const r = await api('/autopilot/run-now', { method: 'POST', body: JSON.stringify({ pageId }) });
+    pre.textContent = `✅ Đã tạo post #${r.postId}\n📝 Chủ đề: ${r.topic}\n🖼️ Ảnh: ${r.mediaId ? 'Có (ID ' + r.mediaId + ')' : 'Không'}\n⏰ Lên lịch: ${new Date(r.scheduledAt).toLocaleString('vi-VN')}\n\n${r.caption}`;
+  } catch (e) {
+    pre.textContent = '❌ Lỗi: ' + e.message;
+  }
+});
+document.getElementById('btn-autopilot-morning')?.addEventListener('click', async () => {
+  const pre = document.getElementById('autopilot-report');
+  pre.classList.remove('hidden');
+  pre.textContent = '⏳ Đang nghiên cứu chủ đề...';
+  try {
+    const r = await api('/autopilot/morning-report');
+    pre.textContent = r.report;
+  } catch (e) {
+    pre.textContent = '❌ ' + e.message;
+  }
+});
+document.getElementById('btn-autopilot-evening')?.addEventListener('click', async () => {
+  const pre = document.getElementById('autopilot-report');
+  pre.classList.remove('hidden');
+  pre.textContent = '⏳ Đang tổng hợp...';
+  try {
+    const r = await api('/autopilot/evening-report');
+    pre.textContent = r.report;
+  } catch (e) {
+    pre.textContent = '❌ ' + e.message;
+  }
+});
+
 // Nút 🗑️ xoá toàn bộ key của 1 provider
 document.querySelectorAll('.btn-wipe').forEach((btn) => {
   btn.addEventListener('click', async (e) => {

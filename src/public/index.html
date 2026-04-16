@@ -420,6 +420,27 @@
           </div>
         </div>
 
+        <!-- Autopilot -->
+        <div class="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl shadow p-6 max-w-2xl mb-6 border border-indigo-200">
+          <h3 class="font-bold mb-2 text-lg">🤖 Marketing Autopilot</h3>
+          <p class="text-xs text-slate-500 mb-4">Hệ thống tự động: nghiên cứu chủ đề → viết caption → tạo ảnh → đăng bài → báo cáo Telegram. Bạn chỉ cần ngồi xem kết quả.</p>
+
+          <div class="flex items-center gap-4 mb-4">
+            <div id="autopilot-status-badge" class="text-sm font-semibold"></div>
+            <button id="btn-autopilot-on" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">Bật Autopilot</button>
+            <button id="btn-autopilot-off" class="bg-slate-400 text-white px-4 py-2 rounded-lg text-sm font-semibold">Tắt</button>
+          </div>
+
+          <div id="autopilot-info" class="text-sm space-y-1 mb-4"></div>
+
+          <div class="flex gap-2 flex-wrap">
+            <button id="btn-autopilot-run" class="bg-green-600 text-white px-4 py-2 rounded-lg text-xs font-semibold">▶ Chạy thử 1 bài ngay</button>
+            <button id="btn-autopilot-morning" class="bg-amber-500 text-white px-4 py-2 rounded-lg text-xs font-semibold">🌅 Xem báo cáo sáng</button>
+            <button id="btn-autopilot-evening" class="bg-indigo-500 text-white px-4 py-2 rounded-lg text-xs font-semibold">🌙 Xem báo cáo tối</button>
+          </div>
+          <pre id="autopilot-report" class="mt-4 bg-white p-3 rounded text-xs whitespace-pre-wrap hidden border"></pre>
+        </div>
+
         <!-- Router status -->
         <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6">
           <h3 class="font-bold mb-2">🧭 Model Router — task nào đang dùng model nào?</h3>

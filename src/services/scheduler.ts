@@ -6,6 +6,8 @@ import { runAutoReply } from './autoreply';
 import { pullMetrics } from './analytics';
 import { decidePendingWinners } from './abtest';
 import { notifyAll } from './telegram';
+import { getSetting } from '../db';
+import { runAutopilotCycle, generateMorningReport, generateEveningReport, researchTopics } from './autopilot';
 
 interface PostRow {
   id: number;
@@ -104,5 +106,37 @@ export function startScheduler() {
       console.error('[scheduler] ab decide error:', e);
     }
   });
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 5p, metrics 2h, ab decide 1h');
+  // ── Autopilot: morning prep 6:30 AM VN ──
+  cron.schedule('30 6 * * *', async () => {
+    try {
+      if (getSetting('autopilot_enabled') !== '1') return;
+      console.log('[autopilot] Morning run — researching & scheduling posts');
+
+      // Get first page as default
+      const page = db.prepare('SELECT id FROM pages LIMIT 1').get() as { id: number } | undefined;
+      if (!page) { console.warn('[autopilot] No pages configured'); return; }
+
+      // Create 2 scheduled posts (10:00 & 19:00)
+      await runAutopilotCycle(page.id);
+      await runAutopilotCycle(page.id);
+
+      const report = await generateMorningReport();
+      await notifyAll(report);
+    } catch (e) {
+      console.error('[autopilot] morning error:', e);
+    }
+  });
+
+  // ── Autopilot: evening report 9:00 PM VN ──
+  cron.schedule('0 21 * * *', async () => {
+    try {
+      if (getSetting('autopilot_enabled') !== '1') return;
+      const report = await generateEveningReport();
+      await notifyAll(report);
+    } catch (e) {
+      console.error('[autopilot] evening error:', e);
+    }
+  });
+
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 5p, metrics 2h, ab decide 1h, autopilot 6:30/21:00');
 }
