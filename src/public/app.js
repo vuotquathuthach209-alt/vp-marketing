@@ -505,6 +505,12 @@ async function loadAutopilotStatus() {
     // Load GDrive settings
     const gd = await api('/autopilot/gdrive').catch(() => ({}));
     if (gd.folderId) document.getElementById('gdrive-folder-id').value = gd.folderId;
+    const gdKeyEl = document.getElementById('gdrive-api-key');
+    if (gd.apiKey) {
+      gdKeyEl.placeholder = `✅ Da co key (${gd.keySource || 'configured'})`;
+    } else {
+      gdKeyEl.placeholder = 'AIza... (hoac de trong neu da co Google API Key o Cai dat)';
+    }
   } catch {}
 }
 loadAutopilotStatus();

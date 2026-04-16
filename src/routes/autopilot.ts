@@ -94,9 +94,13 @@ router.post('/calendar', (req: AuthRequest, res) => {
 
 router.get('/gdrive', (req: AuthRequest, res) => {
   const hotelId = getHotelId(req);
+  const gdriveKey = getSetting('gdrive_api_key');
+  const googleKey = getSetting('google_api_key');
+  const hasKey = !!(gdriveKey || googleKey);
   res.json({
     folderId: getSetting('gdrive_folder_id', hotelId) || '',
-    apiKey: getSetting('gdrive_api_key') ? '***configured***' : '',
+    apiKey: hasKey ? '***configured***' : '',
+    keySource: gdriveKey ? 'gdrive_api_key' : googleKey ? 'google_api_key (Gemini)' : 'none',
   });
 });
 

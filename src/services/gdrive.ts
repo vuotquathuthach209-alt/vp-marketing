@@ -35,7 +35,7 @@ async function listPublicFolder(folderId: string): Promise<DriveFile[]> {
     const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=${fields}&pageSize=100&key=`;
 
     // Try with API key first
-    const apiKey = getSetting('gdrive_api_key');
+    const apiKey = getSetting('gdrive_api_key') || getSetting('google_api_key');
     if (apiKey) {
       const res = await axios.get(url + encodeURIComponent(apiKey), { timeout: 15000 });
       return res.data.files || [];
@@ -85,7 +85,7 @@ async function listPublicFolder(folderId: string): Promise<DriveFile[]> {
    ═══════════════════════════════════════════ */
 
 async function listViaApi(folderId: string): Promise<DriveFile[]> {
-  const apiKey = getSetting('gdrive_api_key');
+  const apiKey = getSetting('gdrive_api_key') || getSetting('google_api_key');
   if (!apiKey) throw new Error('Chua co Google API Key');
 
   const allFiles: DriveFile[] = [];
@@ -118,7 +118,7 @@ export async function listDriveImages(folderId: string): Promise<DriveFile[]> {
   let files: DriveFile[] = [];
 
   // Try API key mode first (more reliable)
-  const apiKey = getSetting('gdrive_api_key');
+  const apiKey = getSetting('gdrive_api_key') || getSetting('google_api_key');
   if (apiKey) {
     try {
       files = await listViaApi(folderId);
