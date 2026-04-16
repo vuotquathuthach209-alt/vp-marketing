@@ -1,7 +1,7 @@
 import axios from 'axios';
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config';
-import { pickKey, getAllKeys, countKeys } from './keyrotator';
+import { pickKey, getAllKeys, countKeys, markKeyCooldown } from './keyrotator';
 import { logUsage } from './costtrack';
 
 /**
@@ -162,6 +162,7 @@ async function callAnthropic(route: RouteConfig, system: string, user: string): 
       lastErr = e;
       const status = e?.status || e?.response?.status;
       if (![401, 403, 429, 529].includes(status)) throw e;
+      if (status === 429 || status === 529) markKeyCooldown(key);
       console.warn(`[router/anthropic] key ${key.slice(-6)} lỗi ${status}, thử key kế`);
     }
   }
@@ -203,6 +204,7 @@ async function callGemini(route: RouteConfig, system: string, user: string): Pro
       lastErr = e;
       const status = e?.response?.status;
       if (![401, 403, 404, 429, 500, 503].includes(status)) throw e;
+      if (status === 429) markKeyCooldown(key);
       console.warn(`[router/gemini] key ${key.slice(-6)} lỗi ${status} model=${route.model}, thử key kế`);
     }
   }
@@ -250,6 +252,7 @@ async function callGroq(route: RouteConfig, system: string, user: string): Promi
       lastErr = e;
       const status = e?.response?.status;
       if (![401, 403, 429, 500, 503].includes(status)) throw e;
+      if (status === 429) markKeyCooldown(key);
       console.warn(`[router/groq] key ${key.slice(-6)} lỗi ${status}, thử key kế`);
     }
   }
