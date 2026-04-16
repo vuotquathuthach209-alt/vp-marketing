@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authMiddleware, superadminOnly, AuthRequest } from '../middleware/auth';
-import { db } from '../db';
+import { db, getSetting, setSetting } from '../db';
 import { getOtaHotels } from '../services/ota-db';
 import { autoGenWikiFromOta } from '../services/ota-sync';
 import { getCachedHotels } from '../services/ota-sync';
@@ -259,6 +259,67 @@ router.post('/confirm-bank-transfer', (req: AuthRequest, res) => {
   }
 
   res.json({ ok: true, hotel_id: payment.hotel_id, plan: payment.plan });
+});
+
+// ============ System Config — quản lý từ UI, không cần Railway ============
+
+const SYSTEM_CONFIGS = [
+  // AI Keys
+  'anthropic_api_key', 'deepseek_api_key', 'openai_api_key',
+  'google_api_key', 'groq_api_key', 'mistral_api_key', 'fal_api_key',
+  // Facebook
+  'fb_app_id', 'fb_app_secret',
+  // OTA DB
+  'ota_db_host', 'ota_db_port', 'ota_db_name', 'ota_db_user', 'ota_db_password', 'ota_db_ssl',
+  // Telegram (global)
+  'telegram_bot_token', 'telegram_unlock_code',
+  // SMTP Email
+  'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from',
+  // VNPay
+  'vnp_tmn_code', 'vnp_hash_secret', 'vnp_return_url',
+  // MoMo
+  'momo_partner_code', 'momo_access_key', 'momo_secret_key', 'momo_return_url',
+];
+
+// GET /api/admin/system-config — lấy tất cả config (masked secrets)
+router.get('/system-config', (req: AuthRequest, res) => {
+  const SECRET_KEYS = ['password', 'secret', 'api_key', 'access_key', 'token', 'pass'];
+  const configs: Record<string, any> = {};
+
+  for (const key of SYSTEM_CONFIGS) {
+    const val = getSetting(key) || '';
+    const isSecret = SECRET_KEYS.some(s => key.includes(s));
+    configs[key] = {
+      value: isSecret && val ? '***' + val.slice(-6) : val,
+      has_value: !!val,
+      is_secret: isSecret,
+    };
+  }
+  res.json(configs);
+});
+
+// POST /api/admin/system-config — lưu config
+router.post('/system-config', (req: AuthRequest, res) => {
+  const updates = req.body;
+  let saved = 0;
+  for (const [key, value] of Object.entries(updates)) {
+    if (!SYSTEM_CONFIGS.includes(key)) continue;
+    const val = String(value || '').trim();
+    // Skip masked values (don't overwrite with ***)
+    if (val.startsWith('***')) continue;
+    if (val) {
+      setSetting(key, val);
+      saved++;
+    }
+  }
+  res.json({ ok: true, saved });
+});
+
+// GET /api/admin/system-config/raw/:key — lấy giá trị thật (admin only)
+router.get('/system-config/raw/:key', (req: AuthRequest, res) => {
+  const key = req.params.key as string;
+  if (!SYSTEM_CONFIGS.includes(key)) return res.status(400).json({ error: 'Invalid key' });
+  res.json({ key, value: getSetting(key) || '' });
 });
 
 export default router;

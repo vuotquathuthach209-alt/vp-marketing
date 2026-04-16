@@ -2044,12 +2044,62 @@ async function adminConfirmPayment(orderId) {
   adminLoadPayments();
 }
 
+// ====== SYSTEM CONFIG (Admin only) ======
+const SYS_KEYS = [
+  'fb_app_id', 'fb_app_secret',
+  'anthropic_api_key', 'deepseek_api_key', 'openai_api_key',
+  'google_api_key', 'groq_api_key', 'mistral_api_key', 'fal_api_key',
+  'ota_db_host', 'ota_db_port', 'ota_db_name', 'ota_db_user', 'ota_db_password', 'ota_db_ssl',
+  'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from',
+  'vnp_tmn_code', 'vnp_hash_secret', 'vnp_return_url',
+  'momo_partner_code', 'momo_access_key', 'momo_secret_key', 'momo_return_url',
+];
+
+async function loadSysConfig() {
+  try {
+    const r = await api('/api/admin/system-config');
+    const data = await r.json();
+    for (const key of SYS_KEYS) {
+      const el = document.getElementById('sys-' + key);
+      if (!el) continue;
+      const info = data[key];
+      if (info && info.has_value) {
+        el.value = info.value; // masked for secrets
+      }
+    }
+    document.getElementById('sys-config-status').textContent = '✅ Da tai cau hinh';
+  } catch(e) {
+    document.getElementById('sys-config-status').textContent = '❌ Loi tai config (chi admin moi xem duoc)';
+  }
+}
+
+async function saveSysConfig() {
+  const updates = {};
+  let count = 0;
+  for (const key of SYS_KEYS) {
+    const el = document.getElementById('sys-' + key);
+    if (!el) continue;
+    const val = el.value.trim();
+    if (val && !val.startsWith('***')) {
+      updates[key] = val;
+      count++;
+    }
+  }
+  if (count === 0) { alert('Khong co gi de luu'); return; }
+  const r = await api('/api/admin/system-config', 'POST', updates);
+  const d = await r.json();
+  document.getElementById('sys-config-status').textContent = d.ok
+    ? `✅ Da luu ${d.saved} cau hinh. Co hieu luc ngay, khong can restart!`
+    : '❌ Loi luu';
+}
+
 // ====== Tab hooks for new tabs ======
 document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     if (btn.dataset.tab === 'onboarding') setTimeout(loadOnboarding, 100);
     if (btn.dataset.tab === 'monitoring') setTimeout(() => loadMonitoring(7), 100);
     if (btn.dataset.tab === 'subscription') setTimeout(loadSubscription, 100);
+    if (btn.dataset.tab === 'sysconfig') setTimeout(loadSysConfig, 100);
   });
 });
 

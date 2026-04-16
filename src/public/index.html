@@ -66,6 +66,7 @@
         <button data-tab="onboarding" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">🚀 Onboarding</button>
         <button data-tab="monitoring" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">📈 Monitoring</button>
         <button data-tab="subscription" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">💳 Goi dich vu</button>
+        <button data-tab="sysconfig" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800 admin-only">🔧 He thong</button>
       </nav>
       <button id="logout-btn" class="mt-8 text-sm text-slate-400 hover:text-white">↩ Đăng xuất</button>
     </aside>
@@ -774,6 +775,89 @@
             <h3 class="font-bold mb-4">📜 Lich su thanh toan</h3>
             <div id="payment-history" class="text-sm space-y-2"></div>
           </div>
+        </div>
+      </section>
+
+      <!-- SYSTEM CONFIG TAB (admin only) -->
+      <section data-panel="sysconfig" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-6">🔧 Cau hinh He thong</h2>
+        <p class="text-sm text-slate-500 mb-6">Quan ly tat ca cau hinh tu day. Khach san khong can truy cap server/Railway.</p>
+
+        <div class="max-w-2xl space-y-6">
+          <!-- Facebook App -->
+          <div class="bg-white rounded-xl shadow p-6">
+            <h3 class="font-bold mb-3">📘 Facebook App</h3>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-semibold mb-1">App ID</label>
+                <input id="sys-fb_app_id" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="123456789" />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold mb-1">App Secret</label>
+                <input id="sys-fb_app_secret" type="password" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="abc123..." />
+              </div>
+            </div>
+            <p class="text-xs text-slate-400 mt-2">Lay tai: <a href="https://developers.facebook.com/apps" target="_blank" class="text-blue-500 underline">developers.facebook.com/apps</a> → Settings → Basic</p>
+          </div>
+
+          <!-- AI API Keys -->
+          <div class="bg-white rounded-xl shadow p-6">
+            <h3 class="font-bold mb-3">🤖 AI API Keys</h3>
+            <div class="space-y-2">
+              <div><label class="block text-xs font-semibold mb-1">Anthropic (Claude)</label><input id="sys-anthropic_api_key" type="password" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="sk-ant-..." /></div>
+              <div><label class="block text-xs font-semibold mb-1">DeepSeek</label><input id="sys-deepseek_api_key" type="password" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="sk-..." /></div>
+              <div><label class="block text-xs font-semibold mb-1">OpenAI (GPT-4o)</label><input id="sys-openai_api_key" type="password" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="sk-..." /></div>
+              <div><label class="block text-xs font-semibold mb-1">Google Gemini</label><input id="sys-google_api_key" type="password" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="AIza..." /></div>
+              <div><label class="block text-xs font-semibold mb-1">Groq</label><input id="sys-groq_api_key" type="password" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="gsk_..." /></div>
+              <div><label class="block text-xs font-semibold mb-1">Mistral</label><input id="sys-mistral_api_key" type="password" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="..." /></div>
+              <div><label class="block text-xs font-semibold mb-1">FAL.AI (anh/video)</label><input id="sys-fal_api_key" type="password" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="..." /></div>
+            </div>
+          </div>
+
+          <!-- OTA Database -->
+          <div class="bg-white rounded-xl shadow p-6">
+            <h3 class="font-bold mb-3">🗄️ OTA Database (Read-only)</h3>
+            <div class="grid grid-cols-2 gap-3">
+              <div><label class="block text-xs font-semibold mb-1">Host</label><input id="sys-ota_db_host" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="35.198.xxx.xxx" /></div>
+              <div><label class="block text-xs font-semibold mb-1">Port</label><input id="sys-ota_db_port" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="5432" /></div>
+              <div><label class="block text-xs font-semibold mb-1">Database</label><input id="sys-ota_db_name" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="sonder" /></div>
+              <div><label class="block text-xs font-semibold mb-1">User</label><input id="sys-ota_db_user" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="postgres" /></div>
+              <div><label class="block text-xs font-semibold mb-1">Password</label><input id="sys-ota_db_password" type="password" class="w-full border rounded px-3 py-2 text-sm font-mono" /></div>
+              <div><label class="block text-xs font-semibold mb-1">SSL</label><select id="sys-ota_db_ssl" class="w-full border rounded px-3 py-2 text-sm"><option value="false">Off</option><option value="true">On</option></select></div>
+            </div>
+          </div>
+
+          <!-- Email SMTP -->
+          <div class="bg-white rounded-xl shadow p-6">
+            <h3 class="font-bold mb-3">📧 Email SMTP</h3>
+            <div class="grid grid-cols-2 gap-3">
+              <div><label class="block text-xs font-semibold mb-1">SMTP Host</label><input id="sys-smtp_host" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="smtp.gmail.com" /></div>
+              <div><label class="block text-xs font-semibold mb-1">Port</label><input id="sys-smtp_port" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="587" /></div>
+              <div><label class="block text-xs font-semibold mb-1">User/Email</label><input id="sys-smtp_user" class="w-full border rounded px-3 py-2 text-sm font-mono" /></div>
+              <div><label class="block text-xs font-semibold mb-1">Password</label><input id="sys-smtp_pass" type="password" class="w-full border rounded px-3 py-2 text-sm font-mono" /></div>
+              <div class="col-span-2"><label class="block text-xs font-semibold mb-1">From</label><input id="sys-smtp_from" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="VP Marketing <noreply@sondervn.com>" /></div>
+            </div>
+          </div>
+
+          <!-- Payment -->
+          <div class="bg-white rounded-xl shadow p-6">
+            <h3 class="font-bold mb-3">💳 Thanh toan (VNPay / MoMo)</h3>
+            <div class="space-y-2">
+              <div><label class="block text-xs font-semibold mb-1">VNPay TMN Code</label><input id="sys-vnp_tmn_code" class="w-full border rounded px-3 py-2 text-sm font-mono" /></div>
+              <div><label class="block text-xs font-semibold mb-1">VNPay Hash Secret</label><input id="sys-vnp_hash_secret" type="password" class="w-full border rounded px-3 py-2 text-sm font-mono" /></div>
+              <div><label class="block text-xs font-semibold mb-1">VNPay Return URL</label><input id="sys-vnp_return_url" class="w-full border rounded px-3 py-2 text-sm font-mono" /></div>
+              <div><label class="block text-xs font-semibold mb-1">MoMo Partner Code</label><input id="sys-momo_partner_code" class="w-full border rounded px-3 py-2 text-sm font-mono" /></div>
+              <div><label class="block text-xs font-semibold mb-1">MoMo Access Key</label><input id="sys-momo_access_key" type="password" class="w-full border rounded px-3 py-2 text-sm font-mono" /></div>
+              <div><label class="block text-xs font-semibold mb-1">MoMo Secret Key</label><input id="sys-momo_secret_key" type="password" class="w-full border rounded px-3 py-2 text-sm font-mono" /></div>
+              <div><label class="block text-xs font-semibold mb-1">MoMo Return URL</label><input id="sys-momo_return_url" class="w-full border rounded px-3 py-2 text-sm font-mono" /></div>
+            </div>
+          </div>
+
+          <div class="flex gap-3">
+            <button onclick="saveSysConfig()" class="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold text-lg">💾 Luu tat ca</button>
+            <button onclick="loadSysConfig()" class="bg-slate-200 px-6 py-3 rounded-xl font-semibold">🔄 Tai lai</button>
+          </div>
+          <p id="sys-config-status" class="text-sm"></p>
         </div>
       </section>
     </main>
