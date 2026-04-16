@@ -2049,7 +2049,6 @@ const SYS_KEYS = [
   'fb_app_id', 'fb_app_secret',
   'anthropic_api_key', 'deepseek_api_key', 'openai_api_key',
   'google_api_key', 'groq_api_key', 'mistral_api_key', 'fal_api_key',
-  'ota_db_host', 'ota_db_port', 'ota_db_name', 'ota_db_user', 'ota_db_password', 'ota_db_ssl',
   'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from',
   'vnp_tmn_code', 'vnp_hash_secret', 'vnp_return_url',
   'momo_partner_code', 'momo_access_key', 'momo_secret_key', 'momo_return_url',
