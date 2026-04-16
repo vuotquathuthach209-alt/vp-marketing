@@ -13,6 +13,9 @@ import { logUsage } from './costtrack';
  * - anthropic  : Claude Sonnet/Haiku (chất lượng cao nhất, tiếng Việt xuất sắc)
  * - google     : Gemini 2.0 Flash (rẻ 40x Sonnet, tiếng Việt rất ổn)
  * - groq       : Gemma/Llama qua Groq (siêu nhanh, gần như miễn phí)
+ * - deepseek   : DeepSeek V3/R1 (rẻ, code tốt, tiếng Việt OK)
+ * - openai     : GPT-4o/4o-mini (chất lượng cao, đa năng)
+ * - mistral    : Mistral Large/Small (EU, nhanh, rẻ)
  *
  * Các task:
  * - caption         : viết caption chính (mặc định Claude Sonnet)
@@ -23,7 +26,7 @@ import { logUsage } from './costtrack';
  */
 
 export type TaskType = 'caption' | 'image_prompt' | 'classify' | 'reply_simple' | 'reply_complex';
-export type Provider = 'anthropic' | 'google' | 'groq';
+export type Provider = 'anthropic' | 'google' | 'groq' | 'deepseek' | 'openai' | 'mistral';
 
 interface RouteConfig {
   provider: Provider;
@@ -45,15 +48,21 @@ const DEFAULT_ROUTES: Record<TaskType, RouteConfig> = {
  * Đảm bảo app vẫn chạy dù user chưa cấu hình Gemini/Groq.
  */
 const FALLBACK: Record<Provider, Provider[]> = {
-  google:    ['google', 'anthropic', 'groq'],
-  groq:      ['groq', 'google', 'anthropic'],
-  anthropic: ['anthropic', 'google', 'groq'],
+  google:    ['google', 'deepseek', 'anthropic', 'openai', 'groq', 'mistral'],
+  groq:      ['groq', 'deepseek', 'google', 'anthropic', 'openai', 'mistral'],
+  anthropic: ['anthropic', 'deepseek', 'google', 'openai', 'groq', 'mistral'],
+  deepseek:  ['deepseek', 'google', 'groq', 'anthropic', 'openai', 'mistral'],
+  openai:    ['openai', 'anthropic', 'deepseek', 'google', 'groq', 'mistral'],
+  mistral:   ['mistral', 'deepseek', 'google', 'openai', 'anthropic', 'groq'],
 };
 
 function hasKey(provider: Provider): boolean {
   if (provider === 'anthropic') return countKeys('anthropic_api_key', config.anthropicApiKey) > 0;
   if (provider === 'google') return countKeys('google_api_key') > 0;
   if (provider === 'groq') return countKeys('groq_api_key') > 0;
+  if (provider === 'deepseek') return countKeys('deepseek_api_key') > 0;
+  if (provider === 'openai') return countKeys('openai_api_key') > 0;
+  if (provider === 'mistral') return countKeys('mistral_api_key') > 0;
   return false;
 }
 
@@ -80,8 +89,11 @@ function defaultModelFor(p: Provider, task: TaskType): string {
       ? 'claude-sonnet-4-6'
       : 'claude-haiku-4-5-20251001';
   }
-  if (p === 'google') return 'gemini-1.5-flash';
+  if (p === 'google') return 'gemini-2.0-flash';
   if (p === 'groq') return 'gemma2-9b-it';
+  if (p === 'deepseek') return task === 'caption' || task === 'reply_complex' ? 'deepseek-chat' : 'deepseek-chat';
+  if (p === 'openai') return task === 'caption' || task === 'reply_complex' ? 'gpt-4o' : 'gpt-4o-mini';
+  if (p === 'mistral') return task === 'caption' || task === 'reply_complex' ? 'mistral-large-latest' : 'mistral-small-latest';
   return '';
 }
 
@@ -109,6 +121,15 @@ export async function generate({ task, system, user }: GenInput): Promise<string
         break;
       case 'groq':
         result = await callGroq(route, system, user);
+        break;
+      case 'deepseek':
+        result = await callDeepSeek(route, system, user);
+        break;
+      case 'openai':
+        result = await callOpenAI(route, system, user);
+        break;
+      case 'mistral':
+        result = await callMistral(route, system, user);
         break;
     }
     logUsage({
@@ -259,6 +280,81 @@ async function callGroq(route: RouteConfig, system: string, user: string): Promi
   throw lastErr;
 }
 
+// ---------- DeepSeek (OpenAI-compatible) ----------
+async function callDeepSeek(route: RouteConfig, system: string, user: string): Promise<CallResult> {
+  return callOpenAICompatible({
+    settingKey: 'deepseek_api_key',
+    baseUrl: 'https://api.deepseek.com/v1/chat/completions',
+    route, system, user, providerName: 'deepseek',
+  });
+}
+
+// ---------- OpenAI ----------
+async function callOpenAI(route: RouteConfig, system: string, user: string): Promise<CallResult> {
+  return callOpenAICompatible({
+    settingKey: 'openai_api_key',
+    baseUrl: 'https://api.openai.com/v1/chat/completions',
+    route, system, user, providerName: 'openai',
+  });
+}
+
+// ---------- Mistral ----------
+async function callMistral(route: RouteConfig, system: string, user: string): Promise<CallResult> {
+  return callOpenAICompatible({
+    settingKey: 'mistral_api_key',
+    baseUrl: 'https://api.mistral.ai/v1/chat/completions',
+    route, system, user, providerName: 'mistral',
+  });
+}
+
+// ---------- Generic OpenAI-compatible caller ----------
+async function callOpenAICompatible(opts: {
+  settingKey: string; baseUrl: string; route: RouteConfig;
+  system: string; user: string; providerName: string;
+}): Promise<CallResult> {
+  const keys = getAllKeys(opts.settingKey);
+  const startKey = pickKey(opts.settingKey);
+  const startIdx = keys.indexOf(startKey);
+
+  let lastErr: any;
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[(startIdx + i) % keys.length];
+    try {
+      const resp = await axios.post(
+        opts.baseUrl,
+        {
+          model: opts.route.model,
+          max_tokens: opts.route.maxTokens,
+          temperature: 0.7,
+          messages: [
+            { role: 'system', content: opts.system },
+            { role: 'user', content: opts.user },
+          ],
+        },
+        {
+          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+          timeout: 90000,
+        }
+      );
+      const text = resp.data?.choices?.[0]?.message?.content;
+      if (!text) throw new Error(`${opts.providerName}: không có text trả về`);
+      const usage = resp.data?.usage || {};
+      return {
+        text: String(text).trim(),
+        inTok: usage.prompt_tokens || 0,
+        outTok: usage.completion_tokens || 0,
+      };
+    } catch (e: any) {
+      lastErr = e;
+      const status = e?.response?.status;
+      if (![401, 403, 429, 500, 503].includes(status)) throw e;
+      if (status === 429) markKeyCooldown(key);
+      console.warn(`[router/${opts.providerName}] key ${key.slice(-6)} lỗi ${status}, thử key kế`);
+    }
+  }
+  throw lastErr;
+}
+
 /**
  * Trả về tình trạng router: mỗi task đang route đến provider/model nào
  * (sau khi xử lý fallback dựa trên key nào đang có).
@@ -284,6 +380,9 @@ export function getRouterStatus() {
       anthropic: { configured: hasKey('anthropic'), count: countKeys('anthropic_api_key', config.anthropicApiKey) },
       google:    { configured: hasKey('google'),    count: countKeys('google_api_key') },
       groq:      { configured: hasKey('groq'),      count: countKeys('groq_api_key') },
+      deepseek:  { configured: hasKey('deepseek'),  count: countKeys('deepseek_api_key') },
+      openai:    { configured: hasKey('openai'),     count: countKeys('openai_api_key') },
+      mistral:   { configured: hasKey('mistral'),    count: countKeys('mistral_api_key') },
     },
   };
 }

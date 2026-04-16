@@ -24,7 +24,31 @@ router.get('/', (req: AuthRequest, res) => {
     fal: summarize('fal_api_key', config.falApiKey),
     google: summarize('google_api_key'),
     groq: summarize('groq_api_key'),
+    deepseek: summarize('deepseek_api_key'),
+    openai: summarize('openai_api_key'),
+    mistral: summarize('mistral_api_key'),
   });
+});
+
+// Generic get setting (for API keys loading)
+const ALLOWED_KEYS = ['anthropic_api_key', 'deepseek_api_key', 'openai_api_key', 'google_api_key', 'groq_api_key', 'mistral_api_key', 'fal_api_key'];
+router.get('/get', (req: AuthRequest, res) => {
+  const key = req.query.key as string;
+  if (!key || !ALLOWED_KEYS.includes(key)) return res.json({ value: '' });
+  const val = getSetting(key) || '';
+  // Mask keys for security — show only last 6 chars per line
+  const masked = val.split('\n').map(k => k.length > 6 ? '***' + k.slice(-6) : k).join('\n');
+  res.json({ value: masked });
+});
+
+// Generic set setting (for API keys saving)
+router.post('/set', (req: AuthRequest, res) => {
+  const { key, value } = req.body;
+  if (!key || !ALLOWED_KEYS.includes(key)) return res.status(400).json({ error: 'Key khong hop le' });
+  // Filter out masked values, keep only real keys
+  const cleaned = (value || '').split(/[\n,]+/).map((s: string) => s.trim()).filter((s: string) => s.length > 0 && !s.startsWith('***')).join('\n');
+  if (cleaned) setSetting(key, cleaned);
+  res.json({ ok: true });
 });
 
 router.get('/router', (req, res) => {
@@ -33,7 +57,7 @@ router.get('/router', (req, res) => {
 
 // Thêm API keys mới (APPEND)
 router.post('/keys', (req, res) => {
-  const { anthropic_api_key, fal_api_key, google_api_key, groq_api_key } = req.body;
+  const { anthropic_api_key, fal_api_key, google_api_key, groq_api_key, deepseek_api_key, openai_api_key, mistral_api_key } = req.body;
   const isMaskedLine = (v: string) => /^\*\*\*/.test(v.trim());
 
   const parseInput = (val: any): string[] => {
@@ -53,6 +77,9 @@ router.post('/keys', (req, res) => {
   appendKeys('fal_api_key', fal_api_key, config.falApiKey);
   appendKeys('google_api_key', google_api_key);
   appendKeys('groq_api_key', groq_api_key);
+  appendKeys('deepseek_api_key', deepseek_api_key);
+  appendKeys('openai_api_key', openai_api_key);
+  appendKeys('mistral_api_key', mistral_api_key);
 
   res.json({
     ok: true,

@@ -1455,6 +1455,46 @@ if (bkQrUpload) {
   });
 }
 
+// ====== API Keys — All Providers ======
+const API_KEY_MAP = {
+  'key-anthropic': 'anthropic_api_key',
+  'key-deepseek': 'deepseek_api_key',
+  'key-openai': 'openai_api_key',
+  'key-google': 'google_api_key',
+  'key-groq': 'groq_api_key',
+  'key-mistral': 'mistral_api_key',
+  'key-fal': 'fal_api_key',
+};
+
+async function loadAllApiKeys() {
+  try {
+    for (const [elemId, settingKey] of Object.entries(API_KEY_MAP)) {
+      const r = await api('/api/settings/get?key=' + settingKey);
+      const d = await r.json();
+      const el = document.getElementById(elemId);
+      if (el && d.value) el.value = d.value;
+    }
+    document.getElementById('api-keys-status').textContent = '✅ Da tai keys';
+  } catch(e) {
+    document.getElementById('api-keys-status').textContent = '❌ Loi tai keys';
+  }
+}
+
+async function saveAllApiKeys() {
+  let saved = 0;
+  for (const [elemId, settingKey] of Object.entries(API_KEY_MAP)) {
+    const el = document.getElementById(elemId);
+    const val = el ? el.value.trim() : '';
+    if (val) {
+      await api('/api/settings/set', 'POST', { key: settingKey, value: val });
+      saved++;
+    }
+  }
+  document.getElementById('api-keys-status').textContent = `✅ Da luu ${saved} keys! Router se tu dong su dung.`;
+  // Reload router status
+  setTimeout(loadRouterStatus, 500);
+}
+
 // ====== Sprint 9: OTA Database Config ======
 async function loadOtaConfig() {
   try {
@@ -1620,7 +1660,7 @@ if (typeof origShowTab === 'function') {
   document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       if (btn.dataset.tab === 'settings') {
-        setTimeout(() => { loadOtaConfig(); loadHotelTelegramList(); loadHotelTgPageSelect(); }, 100);
+        setTimeout(() => { loadOtaConfig(); loadHotelTelegramList(); loadHotelTgPageSelect(); loadAllApiKeys(); }, 100);
       }
     });
   });

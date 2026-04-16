@@ -619,10 +619,53 @@
           <pre id="autopilot-report" class="mt-4 bg-white p-3 rounded text-xs whitespace-pre-wrap hidden border"></pre>
         </div>
 
+        <!-- API Keys — All AI Providers -->
+        <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6 border-l-4 border-purple-500">
+          <h3 class="font-bold mb-2">🔑 API Keys — Tat ca AI Providers</h3>
+          <p class="text-xs text-slate-500 mb-4">Nhap API key cho cac provider. Co the nhap nhieu key (moi key 1 dong). Router tu dong chon provider re nhat co san.</p>
+
+          <div class="space-y-3" id="api-keys-form">
+            <div>
+              <label class="block text-xs font-semibold mb-1">🟣 Anthropic (Claude) — <a href="https://console.anthropic.com/settings/keys" target="_blank" class="text-blue-500 underline">Lay key</a></label>
+              <textarea id="key-anthropic" rows="2" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="sk-ant-..."></textarea>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">🔵 DeepSeek — <a href="https://platform.deepseek.com/api_keys" target="_blank" class="text-blue-500 underline">Lay key</a></label>
+              <textarea id="key-deepseek" rows="2" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="sk-..."></textarea>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">🟢 OpenAI (GPT-4o) — <a href="https://platform.openai.com/api-keys" target="_blank" class="text-blue-500 underline">Lay key</a></label>
+              <textarea id="key-openai" rows="2" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="sk-..."></textarea>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">🔴 Google Gemini — <a href="https://aistudio.google.com/apikey" target="_blank" class="text-blue-500 underline">Lay key</a></label>
+              <textarea id="key-google" rows="2" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="AIza..."></textarea>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">🟡 Groq — <a href="https://console.groq.com/keys" target="_blank" class="text-blue-500 underline">Lay key</a></label>
+              <textarea id="key-groq" rows="2" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="gsk_..."></textarea>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">🟠 Mistral — <a href="https://console.mistral.ai/api-keys" target="_blank" class="text-blue-500 underline">Lay key</a></label>
+              <textarea id="key-mistral" rows="2" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="..."></textarea>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">🖼️ FAL.AI (anh/video) — <a href="https://fal.ai/dashboard/keys" target="_blank" class="text-blue-500 underline">Lay key</a></label>
+              <textarea id="key-fal" rows="1" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="..."></textarea>
+            </div>
+          </div>
+
+          <div class="flex gap-2 mt-4">
+            <button onclick="saveAllApiKeys()" class="bg-purple-600 text-white px-6 py-2 rounded-lg text-sm font-semibold">💾 Luu tat ca</button>
+            <button onclick="loadAllApiKeys()" class="bg-slate-200 px-4 py-2 rounded-lg text-sm">🔄 Tai lai</button>
+          </div>
+          <p id="api-keys-status" class="text-sm mt-2"></p>
+        </div>
+
         <!-- Router status -->
         <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6">
-          <h3 class="font-bold mb-2">🧭 Model Router — task nào đang dùng model nào?</h3>
-          <p class="text-xs text-slate-500 mb-4">Router tự chọn provider rẻ nhất có sẵn. Thiếu Google/Groq → tự fallback về Claude (đắt hơn).</p>
+          <h3 class="font-bold mb-2">🧭 Model Router — task nao dang dung model nao?</h3>
+          <p class="text-xs text-slate-500 mb-4">Router tu chon provider re nhat co san. Thieu key → tu fallback sang provider khac.</p>
           <div id="router-status" class="space-y-2 text-sm"></div>
         </div>
 
