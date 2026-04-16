@@ -7,6 +7,7 @@ import {
   processBookingStep,
   markTransferReceived,
 } from './bookingflow';
+import { getOtaDbConfig, getOtaRoomTypes, getOtaHotelStats } from './ota-db';
 
 /**
  * Smart Reply Engine — 3 tầng:
@@ -299,14 +300,49 @@ Khuyến khích khách vào sondervn.com hoặc inbox để đặt phòng.
 KHÔNG tự bịa giá, số liệu. Nếu không biết → "Để mình kiểm tra và báo lại bạn nhé!"
 Có thể dùng 1-2 emoji phù hợp.`;
 
+/** Build OTA real-time context (rooms, availability, stats) */
+async function buildOtaContext(): Promise<string> {
+  if (!getOtaDbConfig()) return '';
+  try {
+    // Use hotel_id=1 as default (single-tenant for now)
+    // TODO: multi-tenant — resolve hotel_id from page
+    const [roomTypes, stats] = await Promise.all([
+      getOtaRoomTypes(1).catch(() => []),
+      getOtaHotelStats(1).catch(() => null),
+    ]);
+
+    const parts: string[] = [];
+    if (roomTypes.length > 0) {
+      parts.push('PHÒNG TRỐNG REAL-TIME:');
+      for (const rt of roomTypes) {
+        parts.push(`- ${rt.name}: ${rt.base_price.toLocaleString('vi-VN')}₫/đêm | Tối đa ${rt.max_guests} khách | Còn ${rt.available_count}/${rt.room_count} phòng`);
+      }
+    }
+    if (stats) {
+      parts.push(`\nTRẠNG THÁI HÔM NAY: ${stats.available_rooms}/${stats.total_rooms} phòng trống | ${stats.inhouse_guests} khách đang ở | Công suất ${stats.occupancy_rate}%`);
+    }
+    return parts.join('\n');
+  } catch {
+    return '';
+  }
+}
+
 async function aiReply(message: string): Promise<string> {
-  const wikiCtx = await buildContext(message);
+  const [wikiCtx, otaCtx] = await Promise.all([
+    buildContext(message),
+    buildOtaContext(),
+  ]);
   const task: TaskType = message.length > 100 || /[?？]/.test(message) ? 'reply_complex' : 'reply_simple';
+
+  const context = [
+    wikiCtx ? `--- KIẾN THỨC ---\n${wikiCtx}\n--- HẾT ---` : '',
+    otaCtx ? `--- DỮ LIỆU OTA REAL-TIME ---\n${otaCtx}\n--- HẾT ---` : '',
+  ].filter(Boolean).join('\n\n');
 
   return generate({
     task,
     system: REPLY_SYSTEM,
-    user: `${wikiCtx ? `--- KIẾN THỨC ---\n${wikiCtx}\n--- HẾT ---\n\n` : ''}Khách viết: "${message}"\n\nTrả lời ngắn gọn:`,
+    user: `${context ? context + '\n\n' : ''}Khách viết: "${message}"\n\nTrả lời ngắn gọn:`,
   });
 }
 

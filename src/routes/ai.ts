@@ -2,18 +2,29 @@ import { Router } from 'express';
 import { generateCaption, generateImagePrompt } from '../services/claude';
 import { generateVideo } from '../services/falai';
 import { generateImageSmart } from '../services/imagegen';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, AuthRequest, getHotelId } from '../middleware/auth';
+import { getCachedResponse, setCachedResponse, hashPrompt } from '../services/ai-cache';
 
 const router = Router();
 router.use(authMiddleware);
 
-// Tạo caption từ chủ đề
-router.post('/caption', async (req, res) => {
-  const { topic, context } = req.body;
+// Tạo caption từ chủ đề (with cache)
+router.post('/caption', async (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
+  const { topic, context, no_cache } = req.body;
   if (!topic) return res.status(400).json({ error: 'Thiếu topic' });
+
+  // Check cache (unless no_cache=true)
+  const cacheKey = hashPrompt(`caption:${hotelId}:${topic}:${context || ''}`);
+  if (!no_cache) {
+    const cached = getCachedResponse(cacheKey, 'content');
+    if (cached) return res.json({ caption: cached, cached: true });
+  }
+
   try {
     const caption = await generateCaption(topic, context);
-    res.json({ caption });
+    setCachedResponse(cacheKey, 'content', caption, hotelId);
+    res.json({ caption, cached: false });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

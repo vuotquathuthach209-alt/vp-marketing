@@ -70,13 +70,26 @@ function semanticScore(topicVec: Float32Array, topic: string, row: WikiRow): num
  * - Với product/faq/lesson: top-N theo relevance (semantic nếu có, keyword nếu không)
  * - Giới hạn tổng context ~1500 chars
  */
-export async function buildContext(topic: string, maxChars = 1500): Promise<string> {
-  const all = db
-    .prepare(
-      `SELECT id, namespace, slug, title, content, tags, always_inject, embedding
-       FROM knowledge_wiki WHERE active = 1`
-    )
-    .all() as WikiRow[];
+export async function buildContext(topic: string, maxCharsOrHotelId?: number, maxChars2?: number): Promise<string> {
+  // Overloaded: buildContext(topic, maxChars) OR buildContext(topic, hotelId, maxChars)
+  let hotelId: number | undefined;
+  let maxChars: number;
+  if (maxChars2 !== undefined) {
+    hotelId = maxCharsOrHotelId;
+    maxChars = maxChars2;
+  } else if (maxCharsOrHotelId !== undefined && maxCharsOrHotelId > 100) {
+    maxChars = maxCharsOrHotelId; // It's maxChars (>100 means it's char count, not hotel_id)
+  } else if (maxCharsOrHotelId !== undefined) {
+    hotelId = maxCharsOrHotelId;
+    maxChars = 1500;
+  } else {
+    maxChars = 1500;
+  }
+
+  const query = hotelId
+    ? `SELECT id, namespace, slug, title, content, tags, always_inject, embedding FROM knowledge_wiki WHERE active = 1 AND hotel_id = ?`
+    : `SELECT id, namespace, slug, title, content, tags, always_inject, embedding FROM knowledge_wiki WHERE active = 1`;
+  const all = (hotelId ? db.prepare(query).all(hotelId) : db.prepare(query).all()) as WikiRow[];
 
   if (all.length === 0) return '';
 

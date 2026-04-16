@@ -3,7 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { db } from '../db';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, AuthRequest, getHotelId } from '../middleware/auth';
 import { config } from '../config';
 import {
   getBookingConfig,
@@ -58,9 +58,10 @@ router.post('/bank-image', upload.single('file'), (req, res) => {
   res.json({ ok: true, mediaId, config: cfg });
 });
 
-// GET /api/booking/pending
-router.get('/pending', (_req, res) => {
-  res.json(getPendingBookings());
+// GET /api/booking/pending — per hotel
+router.get('/pending', (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
+  res.json(getPendingBookings(hotelId));
 });
 
 // POST /api/booking/:id/confirm

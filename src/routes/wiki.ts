@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db } from '../db';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, AuthRequest, getHotelId } from '../middleware/auth';
 import { buildContext, getWikiStats } from '../services/wiki';
 import { embed, encodeEmbedding, getEmbedderInfo, EMBED_MODEL } from '../services/embedder';
 
@@ -29,8 +29,9 @@ async function embedAndStore(id: number, title: string, content: string) {
   return true;
 }
 
-// List
-router.get('/', (req, res) => {
+// List — hotel_id isolated
+router.get('/', (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
   const ns = (req.query.namespace as string) || '';
   let rows;
   if (ns && VALID_NS.includes(ns)) {
@@ -38,17 +39,17 @@ router.get('/', (req, res) => {
       .prepare(
         `SELECT id, namespace, slug, title, content, tags, always_inject, active, updated_at,
                 (embedding IS NOT NULL) as has_embedding
-         FROM knowledge_wiki WHERE namespace = ? ORDER BY updated_at DESC`
+         FROM knowledge_wiki WHERE namespace = ? AND hotel_id = ? ORDER BY updated_at DESC`
       )
-      .all(ns);
+      .all(ns, hotelId);
   } else {
     rows = db
       .prepare(
         `SELECT id, namespace, slug, title, content, tags, always_inject, active, updated_at,
                 (embedding IS NOT NULL) as has_embedding
-         FROM knowledge_wiki ORDER BY namespace ASC, updated_at DESC`
+         FROM knowledge_wiki WHERE hotel_id = ? ORDER BY namespace ASC, updated_at DESC`
       )
-      .all();
+      .all(hotelId);
   }
   res.json(rows);
 });
@@ -88,8 +89,8 @@ router.post('/embed-all', async (req, res) => {
   res.json({ ok, fail, total: rows.length });
 });
 
-// Tạo mới
-router.post('/', async (req, res) => {
+// Tạo mới — inject hotel_id
+router.post('/', async (req: AuthRequest, res) => {
   const { namespace, slug, title, content, tags, always_inject } = req.body;
   if (!namespace || !VALID_NS.includes(namespace)) {
     return res.status(400).json({ error: `namespace phải là 1 trong: ${VALID_NS.join(', ')}` });
@@ -102,13 +103,14 @@ router.post('/', async (req, res) => {
   const now = Date.now();
 
   try {
+    const hotelId = getHotelId(req);
     const result = db
       .prepare(
         `INSERT INTO knowledge_wiki
-         (namespace, slug, title, content, tags, always_inject, active, updated_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`
+         (namespace, slug, title, content, tags, always_inject, active, hotel_id, updated_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
       )
-      .run(namespace, finalSlug, title, content, tagsJson, always_inject ? 1 : 0, now, now);
+      .run(namespace, finalSlug, title, content, tagsJson, always_inject ? 1 : 0, hotelId, now, now);
     const id = Number(result.lastInsertRowid);
     // Auto-embed (best effort — không block response nếu embed fail)
     embedAndStore(id, title, content).catch((e) => console.warn('[wiki] embed fail:', e?.message));
@@ -123,7 +125,7 @@ router.post('/', async (req, res) => {
 
 // Cập nhật
 router.put('/:id', async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(req.params.id as string, 10);
   const { title, content, tags, always_inject, active } = req.body;
   const row = db.prepare(`SELECT id, title, content FROM knowledge_wiki WHERE id = ?`).get(id) as
     | { id: number; title: string; content: string }
@@ -164,9 +166,10 @@ router.put('/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-router.delete('/:id', (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  db.prepare(`DELETE FROM knowledge_wiki WHERE id = ?`).run(id);
+router.delete('/:id', (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
+  const id = parseInt(req.params.id as string, 10);
+  db.prepare(`DELETE FROM knowledge_wiki WHERE id = ? AND hotel_id = ?`).run(id, hotelId);
   res.json({ ok: true });
 });
 

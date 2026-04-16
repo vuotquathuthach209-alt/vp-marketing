@@ -19,10 +19,16 @@ async function api(path, opts = {}) {
 }
 
 // ====== Auth ======
+let currentUser = { hotelId: 1, role: 'superadmin', email: '', admin: false };
+
 async function checkAuth() {
   const r = await api('/auth/me');
-  if (r.authenticated) showApp();
-  else showLogin();
+  if (r.authenticated) {
+    currentUser = { hotelId: r.hotelId || 1, role: r.role || 'superadmin', email: r.email || '', admin: r.admin || false };
+    showApp();
+  } else {
+    showLogin();
+  }
 }
 
 function showLogin() {
@@ -35,16 +41,48 @@ function showApp() {
   document.getElementById('app-view').classList.remove('hidden');
   loadPages();
   switchTab('compose');
+
+  // Show/hide admin-only elements
+  const isAdmin = currentUser.role === 'superadmin';
+  document.querySelectorAll('.admin-only').forEach(el => {
+    el.classList.toggle('hidden', !isAdmin);
+  });
 }
+
+// Login tab switcher
+window.switchLoginTab = function(mode) {
+  document.getElementById('login-mode').value = mode;
+  document.getElementById('login-admin-fields').classList.toggle('hidden', mode !== 'admin');
+  document.getElementById('login-hotel-fields').classList.toggle('hidden', mode !== 'hotel');
+  document.getElementById('login-tab-admin').classList.toggle('border-blue-600', mode === 'admin');
+  document.getElementById('login-tab-admin').classList.toggle('text-blue-600', mode === 'admin');
+  document.getElementById('login-tab-admin').classList.toggle('text-slate-400', mode !== 'admin');
+  document.getElementById('login-tab-hotel').classList.toggle('border-blue-600', mode === 'hotel');
+  document.getElementById('login-tab-hotel').classList.toggle('text-blue-600', mode === 'hotel');
+  document.getElementById('login-tab-hotel').classList.toggle('text-slate-400', mode !== 'hotel');
+};
 
 document.getElementById('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const password = document.getElementById('login-password').value;
+  const mode = document.getElementById('login-mode').value;
+  const errEl = document.getElementById('login-error');
+  errEl.classList.add('hidden');
+
   try {
-    await api('/auth/login', { method: 'POST', body: JSON.stringify({ password }) });
-    showApp();
+    let body;
+    if (mode === 'admin') {
+      body = { password: document.getElementById('login-password').value };
+    } else {
+      body = {
+        email: document.getElementById('login-email').value,
+        password: document.getElementById('login-hotel-password').value,
+      };
+    }
+    const r = await api('/auth/login', { method: 'POST', body: JSON.stringify(body) });
+    if (r.ok) {
+      await checkAuth();
+    }
   } catch (err) {
-    const errEl = document.getElementById('login-error');
     errEl.textContent = err.message;
     errEl.classList.remove('hidden');
   }
@@ -1416,6 +1454,529 @@ if (bkQrUpload) {
     }
   });
 }
+
+// ====== Sprint 9: OTA Database Config ======
+async function loadOtaConfig() {
+  try {
+    const cfg = await api('/ota/config');
+    if (cfg.configured) {
+      document.getElementById('ota-host').value = cfg.host || '';
+      document.getElementById('ota-port').value = cfg.port || 5432;
+      document.getElementById('ota-database').value = cfg.database || '';
+      document.getElementById('ota-user').value = cfg.user || '';
+      document.getElementById('ota-password').placeholder = '(đã lưu)';
+      document.getElementById('ota-ssl').checked = cfg.ssl !== false;
+      document.getElementById('ota-status').innerHTML = '🟢 Đã cấu hình';
+    }
+  } catch (e) { console.warn('loadOtaConfig:', e); }
+}
+
+document.getElementById('btn-ota-save')?.addEventListener('click', async () => {
+  const st = document.getElementById('ota-status');
+  const pw = document.getElementById('ota-password').value;
+  if (!pw && !document.getElementById('ota-password').placeholder.includes('đã lưu')) {
+    st.textContent = '❌ Cần nhập password'; return;
+  }
+  st.textContent = '⏳ Đang lưu...';
+  try {
+    const body = {
+      host: document.getElementById('ota-host').value,
+      port: document.getElementById('ota-port').value,
+      database: document.getElementById('ota-database').value,
+      user: document.getElementById('ota-user').value,
+      password: pw || undefined,
+      ssl: document.getElementById('ota-ssl').checked,
+    };
+    // Only send password if user typed one
+    if (!pw) delete body.password;
+    await api('/ota/config', { method: 'POST', body: JSON.stringify(body) });
+    st.innerHTML = '✅ Đã lưu!';
+  } catch (e) { st.textContent = '❌ ' + e.message; }
+});
+
+document.getElementById('btn-ota-test')?.addEventListener('click', async () => {
+  const st = document.getElementById('ota-status');
+  st.textContent = '⏳ Đang test kết nối...';
+  try {
+    const r = await api('/ota/test', { method: 'POST' });
+    st.innerHTML = r.ok ? `✅ ${r.message}` : `❌ ${r.message}`;
+  } catch (e) { st.textContent = '❌ ' + e.message; }
+});
+
+document.getElementById('btn-ota-hotels')?.addEventListener('click', async () => {
+  const container = document.getElementById('ota-hotels-list');
+  container.textContent = '⏳ Đang tải...';
+  try {
+    const hotels = await api('/ota/hotels');
+    if (!hotels.length) { container.textContent = 'Không có hotel nào.'; return; }
+    container.innerHTML = `<table class="w-full text-xs border-collapse mt-2">
+      <tr class="bg-slate-100"><th class="p-2 text-left">ID</th><th class="p-2 text-left">Tên</th><th class="p-2 text-left">Thành phố</th><th class="p-2 text-left">⭐</th><th class="p-2 text-left">SĐT</th><th class="p-2">Trạng thái</th></tr>
+      ${hotels.map(h => `<tr class="border-t">
+        <td class="p-2 font-mono">${h.id}</td>
+        <td class="p-2 font-semibold">${h.name}</td>
+        <td class="p-2">${h.city || '-'}</td>
+        <td class="p-2">${h.star_rating || '-'}</td>
+        <td class="p-2">${h.phone || '-'}</td>
+        <td class="p-2 text-center"><span class="px-2 py-0.5 rounded text-xs ${h.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-slate-100'}">${h.status}</span></td>
+      </tr>`).join('')}
+    </table>`;
+  } catch (e) { container.textContent = '❌ ' + e.message; }
+});
+
+// ====== Sprint 9: Hotel Telegram Config ======
+async function loadHotelTelegramList() {
+  try {
+    const configs = await api('/hotel-telegram');
+    const container = document.getElementById('hotel-tg-list');
+    if (!container) return;
+    if (!configs.length) {
+      container.innerHTML = '<p class="text-xs text-slate-400">Chưa có khách sạn nào setup Telegram riêng.</p>';
+      return;
+    }
+    container.innerHTML = configs.map(c => `
+      <div class="flex items-center justify-between bg-slate-50 rounded-lg p-3 border">
+        <div>
+          <span class="font-semibold text-sm">${c.page_name}</span>
+          <span class="text-xs ml-2 ${c.enabled ? 'text-green-600' : 'text-red-500'}">${c.enabled ? '🟢 ON' : '🔴 OFF'}</span>
+          ${c.bot_username ? `<span class="text-xs text-blue-600 ml-2">@${c.bot_username}</span>` : ''}
+          ${c.telegram_group_id ? `<span class="text-xs text-slate-400 ml-2">Group: ${c.telegram_group_id}</span>` : ''}
+        </div>
+        <div class="flex gap-1">
+          <button onclick="testHotelTg(${c.page_id})" class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">🧪 Test</button>
+          <button onclick="toggleHotelTg(${c.page_id}, ${c.enabled ? 0 : 1})" class="text-xs ${c.enabled ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'} px-2 py-1 rounded">${c.enabled ? 'Tắt' : 'Bật'}</button>
+          <button onclick="deleteHotelTg(${c.page_id})" class="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">🗑️</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) { console.warn('loadHotelTelegramList:', e); }
+}
+
+async function loadHotelTgPageSelect() {
+  const sel = document.getElementById('htg-page-select');
+  if (!sel || !state.pages.length) return;
+  sel.innerHTML = state.pages.map(p => `<option value="${p.id}">${p.name} (ID: ${p.id})</option>`).join('');
+}
+
+document.getElementById('btn-htg-save')?.addEventListener('click', async () => {
+  const st = document.getElementById('htg-status');
+  const pageId = document.getElementById('htg-page-select')?.value;
+  const token = document.getElementById('htg-token')?.value?.trim();
+  const groupId = document.getElementById('htg-group-id')?.value?.trim();
+  if (!pageId || !token) { st.textContent = '❌ Cần chọn page và nhập token'; return; }
+  st.textContent = '⏳ Đang kết nối...';
+  try {
+    const r = await api(`/hotel-telegram/${pageId}`, {
+      method: 'POST',
+      body: JSON.stringify({ telegram_bot_token: token, telegram_group_id: groupId }),
+    });
+    st.innerHTML = `✅ Kết nối @${r.bot_username}` + (r.warning ? ` ⚠️ ${r.warning}` : '');
+    document.getElementById('htg-token').value = '';
+    document.getElementById('htg-group-id').value = '';
+    loadHotelTelegramList();
+  } catch (e) { st.textContent = '❌ ' + e.message; }
+});
+
+document.getElementById('btn-htg-test')?.addEventListener('click', async () => {
+  const pageId = document.getElementById('htg-page-select')?.value;
+  if (!pageId) return;
+  const st = document.getElementById('htg-status');
+  try {
+    const r = await api(`/hotel-telegram/${pageId}/test`, { method: 'POST' });
+    st.textContent = r.ok ? '✅ Đã gửi test!' : '❌ ' + r.message;
+  } catch (e) { st.textContent = '❌ ' + e.message; }
+});
+
+async function testHotelTg(pageId) {
+  try {
+    const r = await api(`/hotel-telegram/${pageId}/test`, { method: 'POST' });
+    alert(r.ok ? 'Đã gửi test!' : r.message);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function toggleHotelTg(pageId, enabled) {
+  try {
+    await api(`/hotel-telegram/${pageId}/toggle`, { method: 'POST', body: JSON.stringify({ enabled }) });
+    loadHotelTelegramList();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function deleteHotelTg(pageId) {
+  if (!confirm('Xoá cấu hình Telegram cho page này?')) return;
+  try {
+    await api(`/hotel-telegram/${pageId}`, { method: 'DELETE' });
+    loadHotelTelegramList();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+// Load hotel telegram when settings tab opens
+const origShowTab = window.showTab;
+if (typeof origShowTab === 'function') {
+  window.showTab = function(tab) {
+    origShowTab(tab);
+    if (tab === 'settings') { loadHotelTelegramList(); loadHotelTgPageSelect(); }
+  };
+} else {
+  // Hook into tab switching via nav buttons
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.tab === 'settings') {
+        setTimeout(() => { loadOtaConfig(); loadHotelTelegramList(); loadHotelTgPageSelect(); }, 100);
+      }
+    });
+  });
+}
+
+// ====== ONBOARDING ======
+async function loadOnboarding() {
+  try {
+    const res = await api('/api/onboarding/status');
+    const data = await res.json();
+    document.getElementById('ob-progress-text').textContent = data.progress + '%';
+    document.getElementById('ob-progress-bar').style.width = data.progress + '%';
+
+    const stepLabels = {
+      hotel_info: '🏨 Thong tin khach san',
+      fb_page: '📘 Ket noi Facebook Page',
+      telegram: '📱 Thiet lap Telegram',
+      chatbot: '🤖 Cau hinh Chatbot',
+      autopilot: '🚀 Bat Autopilot',
+      wiki: '📚 Tao kien thuc AI',
+    };
+
+    const stepsHtml = Object.entries(data.steps).map(([key, done]) => `
+      <div class="bg-white rounded-xl shadow p-4 flex items-center justify-between cursor-pointer hover:bg-slate-50"
+           onclick="showObStep('${key}', ${done})">
+        <span>${stepLabels[key] || key}</span>
+        <span class="${done ? 'text-green-600' : 'text-slate-400'}">${done ? '✅' : '⬜'}</span>
+      </div>
+    `).join('');
+    document.getElementById('ob-steps').innerHTML = stepsHtml;
+
+    if (data.progress === 100) {
+      document.getElementById('ob-steps').innerHTML += `
+        <button onclick="completeOnboarding()" class="w-full bg-green-600 text-white py-3 rounded-xl font-bold text-lg mt-4">
+          ✅ Kich hoat khach san
+        </button>`;
+    }
+  } catch(e) {
+    document.getElementById('ob-steps').innerHTML = '<p class="text-red-500">Loi tai onboarding</p>';
+  }
+}
+
+function showObStep(step, done) {
+  const container = document.getElementById('ob-actions');
+  const title = document.getElementById('ob-action-title');
+  const form = document.getElementById('ob-action-form');
+  container.classList.remove('hidden');
+
+  const forms = {
+    fb_page: `
+      <input id="ob-fb-page-id" placeholder="Page ID" class="w-full border rounded px-3 py-2 mb-2 text-sm" />
+      <input id="ob-fb-token" type="password" placeholder="Access Token" class="w-full border rounded px-3 py-2 mb-2 text-sm" />
+      <input id="ob-fb-name" placeholder="Ten Page (tuy chon)" class="w-full border rounded px-3 py-2 mb-2 text-sm" />
+      <button onclick="obConnectFB()" class="bg-blue-600 text-white px-4 py-2 rounded text-sm">Ket noi</button>
+      <span id="ob-fb-status" class="text-sm ml-2"></span>`,
+    telegram: `
+      <input id="ob-tg-token" placeholder="Bot Token (tu @BotFather)" class="w-full border rounded px-3 py-2 mb-2 text-sm" />
+      <input id="ob-tg-group" placeholder="Group ID (tuy chon)" class="w-full border rounded px-3 py-2 mb-2 text-sm" />
+      <button onclick="obConnectTG()" class="bg-blue-600 text-white px-4 py-2 rounded text-sm">Ket noi</button>
+      <span id="ob-tg-status" class="text-sm ml-2"></span>`,
+    chatbot: `
+      <label class="flex items-center gap-2">
+        <input type="checkbox" id="ob-chatbot-on" ${done ? 'checked' : ''} />
+        <span>Bat tu dong tra loi tin nhan</span>
+      </label>
+      <button onclick="obSetChatbot()" class="mt-3 bg-blue-600 text-white px-4 py-2 rounded text-sm">Luu</button>`,
+    autopilot: `
+      <label class="flex items-center gap-2 mb-2">
+        <input type="checkbox" id="ob-autopilot-on" ${done ? 'checked' : ''} />
+        <span>Bat autopilot dang bai tu dong</span>
+      </label>
+      <input id="ob-ap-times" placeholder="Gio dang (VD: 08:00,12:00,18:00)" class="w-full border rounded px-3 py-2 mb-2 text-sm" />
+      <button onclick="obSetAutopilot()" class="bg-blue-600 text-white px-4 py-2 rounded text-sm">Luu</button>`,
+    wiki: `
+      <p class="text-sm mb-3">Tu dong tao kien thuc AI tu du lieu OTA (phong, gia, tien ich...)</p>
+      <button onclick="obInitWiki()" class="bg-blue-600 text-white px-4 py-2 rounded text-sm">Tao kien thuc</button>
+      <span id="ob-wiki-status" class="text-sm ml-2"></span>`,
+    hotel_info: `<p class="text-green-600">Thong tin khach san da duoc tu dong lay tu OTA.</p>`,
+  };
+
+  title.textContent = step;
+  form.innerHTML = forms[step] || '<p>Khong co form cho buoc nay</p>';
+}
+
+async function obConnectFB() {
+  const r = await api('/api/onboarding/step/fb-page', 'POST', {
+    fb_page_id: document.getElementById('ob-fb-page-id').value,
+    access_token: document.getElementById('ob-fb-token').value,
+    name: document.getElementById('ob-fb-name').value,
+  });
+  const d = await r.json();
+  document.getElementById('ob-fb-status').textContent = d.ok ? '✅ ' + d.pageName : '❌ ' + d.error;
+  if (d.ok) loadOnboarding();
+}
+
+async function obConnectTG() {
+  const r = await api('/api/onboarding/step/telegram', 'POST', {
+    telegram_bot_token: document.getElementById('ob-tg-token').value,
+    telegram_group_id: document.getElementById('ob-tg-group').value,
+  });
+  const d = await r.json();
+  document.getElementById('ob-tg-status').textContent = d.ok ? '✅ @' + d.bot_username : '❌ ' + d.error;
+  if (d.ok) loadOnboarding();
+}
+
+async function obSetChatbot() {
+  await api('/api/onboarding/step/chatbot', 'POST', { enabled: document.getElementById('ob-chatbot-on').checked });
+  loadOnboarding();
+}
+
+async function obSetAutopilot() {
+  const times = document.getElementById('ob-ap-times').value.split(',').map(t => t.trim()).filter(Boolean);
+  await api('/api/onboarding/step/autopilot', 'POST', {
+    enabled: document.getElementById('ob-autopilot-on').checked,
+    post_times: times,
+  });
+  loadOnboarding();
+}
+
+async function obInitWiki() {
+  document.getElementById('ob-wiki-status').textContent = 'Dang tao...';
+  const r = await api('/api/onboarding/step/wiki-init', 'POST');
+  const d = await r.json();
+  document.getElementById('ob-wiki-status').textContent = d.ok ? `✅ Tao ${d.wiki_entries} muc` : '❌ ' + d.error;
+  if (d.ok) loadOnboarding();
+}
+
+async function completeOnboarding() {
+  await api('/api/onboarding/complete', 'POST');
+  alert('Khach san da duoc kich hoat!');
+  loadOnboarding();
+}
+
+// ====== MONITORING ======
+async function loadMonitoring(days = 7) {
+  try {
+    const [overviewRes, dailyRes, errorsRes] = await Promise.all([
+      api('/api/monitoring/overview?days=' + days),
+      api('/api/monitoring/ai-daily?days=' + days),
+      api('/api/monitoring/errors?limit=20'),
+    ]);
+    const overview = await overviewRes.json();
+    const daily = await dailyRes.json();
+    const errors = await errorsRes.json();
+
+    document.getElementById('monitoring-cards').innerHTML = `
+      <div class="bg-white rounded-xl shadow p-5">
+        <div class="text-sm text-slate-500">AI Calls</div>
+        <div class="text-2xl font-bold">${overview.ai.total_calls}</div>
+        <div class="text-xs text-slate-400">${overview.ai.total_tokens.toLocaleString()} tokens | $${overview.ai.estimated_cost_usd}</div>
+      </div>
+      <div class="bg-white rounded-xl shadow p-5">
+        <div class="text-sm text-slate-500">Bai dang</div>
+        <div class="text-2xl font-bold">${overview.posts.published} / ${overview.posts.total}</div>
+        <div class="text-xs text-slate-400">Thanh cong ${overview.posts.success_rate}%</div>
+      </div>
+      <div class="bg-white rounded-xl shadow p-5">
+        <div class="text-sm text-slate-500">Auto Reply</div>
+        <div class="text-2xl font-bold">${overview.replies.total}</div>
+        <div class="text-xs text-slate-400">Tin nhan: ${overview.replies.messages} | Comment: ${overview.replies.comments}</div>
+      </div>
+    `;
+
+    document.getElementById('ai-daily-chart').innerHTML = daily.length === 0
+      ? '<p class="text-slate-400">Chua co du lieu</p>'
+      : daily.map(d => `
+        <div class="flex items-center gap-2">
+          <span class="w-24">${d.day}</span>
+          <div class="flex-1 bg-slate-100 rounded h-4">
+            <div class="bg-blue-500 h-4 rounded" style="width:${Math.min(100, (d.calls / Math.max(...daily.map(x=>x.calls))) * 100)}%"></div>
+          </div>
+          <span class="w-20 text-right">${d.calls} calls</span>
+        </div>`).join('');
+
+    document.getElementById('errors-list').innerHTML = errors.length === 0
+      ? '<p class="text-green-600">Khong co loi!</p>'
+      : errors.map(e => `
+        <div class="bg-red-50 border border-red-200 rounded p-2">
+          <span class="text-xs text-slate-400">${new Date(e.created_at).toLocaleString()}</span>
+          ${e.hotel_name ? ' | ' + e.hotel_name : ''}
+          <div class="text-red-700">${e.error || 'Unknown error'}</div>
+        </div>`).join('');
+  } catch(e) {
+    document.getElementById('monitoring-cards').innerHTML = '<p class="text-red-500">Loi tai monitoring</p>';
+  }
+}
+
+// ====== SUBSCRIPTION ======
+async function loadSubscription() {
+  try {
+    const [plansRes, currentRes] = await Promise.all([
+      api('/api/subscription/plans'),
+      api('/api/subscription/current'),
+    ]);
+    const plans = await plansRes.json();
+    const current = await currentRes.json();
+
+    document.getElementById('current-plan-card').innerHTML = `
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="font-bold text-lg">${current.hotel_name}</h3>
+          <p class="text-sm text-slate-500">Plan hien tai: <span class="font-bold text-blue-600 uppercase">${current.plan}</span></p>
+        </div>
+        <div class="text-right text-sm">
+          <div>Bai dang hom nay: ${current.usage.posts_today} / ${current.limits.max_posts_per_day}</div>
+          <div>AI calls: ${current.usage.ai_calls_today} / ${current.limits.ai_calls_per_day}</div>
+          <div>Pages: ${current.usage.pages} / ${current.limits.max_pages}</div>
+        </div>
+      </div>
+    `;
+
+    // Payment history
+    try {
+      const histRes = await api('/api/payment/history');
+      const history = await histRes.json();
+      document.getElementById('payment-history').innerHTML = history.length === 0
+        ? '<p class="text-slate-400">Chua co giao dich</p>'
+        : history.map(h => `
+          <div class="flex justify-between items-center border-b pb-1">
+            <span>${h.plan.toUpperCase()} - ${h.method}</span>
+            <span>${h.amount.toLocaleString()}d</span>
+            <span class="${h.status === 'success' ? 'text-green-600' : h.status === 'failed' ? 'text-red-500' : 'text-yellow-600'}">${h.status}</span>
+            <span class="text-xs text-slate-400">${new Date(h.created_at).toLocaleDateString()}</span>
+          </div>`).join('');
+    } catch(e) {}
+
+    document.getElementById('plans-grid').innerHTML = plans.plans.map(p => `
+      <div class="bg-white rounded-xl shadow p-6 ${p.id === current.plan ? 'ring-2 ring-blue-600' : ''}">
+        <h3 class="font-bold text-lg">${p.name}</h3>
+        <div class="text-2xl font-bold my-2">${p.price_vnd === 0 ? 'Mien phi' : p.price_vnd.toLocaleString() + 'đ/thang'}</div>
+        <ul class="text-sm space-y-1 mb-4">
+          <li>📝 ${p.max_posts_per_day} bai/ngay</li>
+          <li>📘 ${p.max_pages} FB Page</li>
+          <li>${p.autopilot ? '✅' : '❌'} Autopilot</li>
+          <li>🔁 ${p.campaigns} campaigns</li>
+          <li>📚 ${p.wiki} wiki entries</li>
+          <li>🤖 ${p.ai_calls_per_day} AI calls/ngay</li>
+        </ul>
+        ${p.id === current.plan
+          ? '<span class="text-green-600 font-semibold">Dang su dung</span>'
+          : `<button onclick="requestUpgrade('${p.id}')" class="w-full bg-blue-600 text-white py-2 rounded font-semibold">Nang cap</button>`
+        }
+      </div>
+    `).join('');
+  } catch(e) {
+    document.getElementById('current-plan-card').innerHTML = '<p class="text-red-500">Loi tai subscription</p>';
+  }
+}
+
+async function requestUpgrade(plan) {
+  if (!confirm('Ban muon nang cap len plan ' + plan.toUpperCase() + '?')) return;
+
+  if (plan === 'free') {
+    const r = await api('/api/subscription/upgrade', 'POST', { plan });
+    const d = await r.json();
+    if (d.ok) { alert('Da chuyen plan thanh cong!'); loadSubscription(); }
+    else alert(d.error);
+    return;
+  }
+
+  // Cho chon phuong thuc thanh toan
+  const method = prompt('Chon phuong thuc thanh toan:\n1 = VNPay\n2 = MoMo\n3 = Chuyen khoan ngan hang');
+  if (!method) return;
+
+  let endpoint = '';
+  if (method === '1') endpoint = '/api/payment/create-vnpay';
+  else if (method === '2') endpoint = '/api/payment/create-momo';
+  else if (method === '3') endpoint = '/api/payment/bank-transfer';
+  else { alert('Lua chon khong hop le'); return; }
+
+  const r = await api(endpoint, 'POST', { plan });
+  const d = await r.json();
+
+  if (d.paymentUrl) {
+    window.open(d.paymentUrl, '_blank');
+  } else if (d.payUrl) {
+    window.open(d.payUrl, '_blank');
+  } else if (d.bank_info) {
+    alert(`Chuyen khoan:\nNgan hang: ${d.bank_info.bank}\nSTK: ${d.bank_info.account}\nTen: ${d.bank_info.name}\nSo tien: ${d.bank_info.amount.toLocaleString()}d\nNoi dung: ${d.bank_info.content}`);
+  } else if (d.error) {
+    alert(d.error);
+  }
+  loadSubscription();
+}
+
+// ====== ADMIN: Email & Payments ======
+async function adminInviteAll() {
+  if (!confirm('Gui email moi toi TAT CA khach san chua duoc moi?')) return;
+  const r = await api('/api/admin/invite-all', 'POST');
+  const d = await r.json();
+  alert(`Da gui: ${d.sent}, That bai: ${d.failed}`);
+  adminLoadEmails();
+}
+
+async function adminInviteSingle() {
+  const hotel_id = document.getElementById('invite-hotel-id').value;
+  const email = document.getElementById('invite-email').value;
+  if (!hotel_id || !email) return alert('Nhap Hotel ID va Email');
+  const r = await api('/api/admin/invite-hotel', 'POST', { hotel_id: parseInt(hotel_id), email });
+  const d = await r.json();
+  alert(d.ok ? 'Da gui!' : 'Loi: ' + (d.error || 'unknown'));
+  adminLoadEmails();
+}
+
+async function adminTestAlert() {
+  await api('/api/admin/test-alert', 'POST');
+  alert('Da gui test alert');
+}
+
+async function adminLoadEmails() {
+  const r = await api('/api/admin/email-log');
+  const data = await r.json();
+  document.getElementById('email-log-list').innerHTML = data.length === 0
+    ? '<p class="text-slate-400">Chua co email</p>'
+    : data.slice(0, 50).map(e => `
+      <div class="flex justify-between border-b pb-1">
+        <span class="truncate flex-1">${e.to_email}</span>
+        <span class="truncate flex-1 mx-2">${e.subject}</span>
+        <span class="${e.status === 'sent' ? 'text-green-600' : 'text-red-500'}">${e.status}</span>
+        <span class="text-xs text-slate-400 ml-2">${new Date(e.created_at).toLocaleDateString()}</span>
+      </div>`).join('');
+}
+
+async function adminLoadPayments() {
+  const r = await api('/api/admin/payments');
+  const data = await r.json();
+  document.getElementById('admin-payments-list').innerHTML = data.length === 0
+    ? '<p class="text-slate-400">Chua co giao dich</p>'
+    : data.map(p => `
+      <div class="flex justify-between items-center border-b pb-2">
+        <div>
+          <span class="font-semibold">${p.hotel_name || 'Hotel #' + p.hotel_id}</span>
+          <span class="text-xs ml-2">${p.plan.toUpperCase()} - ${p.method}</span>
+        </div>
+        <span>${p.amount.toLocaleString()}d</span>
+        <span class="${p.status === 'success' ? 'text-green-600' : p.status === 'pending_verify' ? 'text-yellow-600' : p.status === 'failed' ? 'text-red-500' : 'text-slate-500'}">${p.status}</span>
+        ${p.status === 'pending_verify' ? `<button onclick="adminConfirmPayment('${p.order_id}')" class="bg-green-600 text-white px-2 py-1 rounded text-xs">Xac nhan</button>` : ''}
+      </div>`).join('');
+}
+
+async function adminConfirmPayment(orderId) {
+  if (!confirm('Xac nhan thanh toan cho order: ' + orderId + '?')) return;
+  const r = await api('/api/admin/confirm-bank-transfer', 'POST', { order_id: orderId });
+  const d = await r.json();
+  alert(d.ok ? 'Da xac nhan! Plan: ' + d.plan : 'Loi: ' + d.error);
+  adminLoadPayments();
+}
+
+// ====== Tab hooks for new tabs ======
+document.querySelectorAll('.nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (btn.dataset.tab === 'onboarding') setTimeout(loadOnboarding, 100);
+    if (btn.dataset.tab === 'monitoring') setTimeout(() => loadMonitoring(7), 100);
+    if (btn.dataset.tab === 'subscription') setTimeout(loadSubscription, 100);
+  });
+});
 
 // ====== Init ======
 checkAuth();

@@ -1,0 +1,264 @@
+import { Router } from 'express';
+import { authMiddleware, superadminOnly, AuthRequest } from '../middleware/auth';
+import { db } from '../db';
+import { getOtaHotels } from '../services/ota-db';
+import { autoGenWikiFromOta } from '../services/ota-sync';
+import { getCachedHotels } from '../services/ota-sync';
+import { sendEmail, inviteHotelEmail, sendBulkInvites, sendAlertToAdmin } from '../services/email';
+
+const router = Router();
+router.use(authMiddleware);
+router.use(superadminOnly);
+
+/**
+ * Sprint 9 Phase 1 — Admin Panel API
+ *
+ * Super admin only — quản lý hotels, mở quyền, chọn plan.
+ */
+
+// GET /api/admin/hotels — list tất cả MKT hotels + trạng thái
+router.get('/hotels', (_req, res) => {
+  const hotels = db.prepare(`
+    SELECT h.*,
+      (SELECT COUNT(*) FROM mkt_users WHERE hotel_id = h.id AND status = 'active') as user_count,
+      (SELECT COUNT(*) FROM pages WHERE hotel_id = h.id) as page_count,
+      c.name as ota_name, c.city as ota_city, c.star_rating as ota_star, c.owner_email
+    FROM mkt_hotels h
+    LEFT JOIN mkt_hotels_cache c ON c.ota_hotel_id = h.ota_hotel_id
+    ORDER BY h.id
+  `).all();
+  res.json(hotels);
+});
+
+// GET /api/admin/ota-hotels — list hotels từ OTA (chưa link)
+router.get('/ota-hotels', async (_req, res) => {
+  try {
+    // Try cached first
+    const cached = getCachedHotels();
+    if (cached.length > 0) {
+      // Mark which ones are already linked
+      const linked = db.prepare(`SELECT ota_hotel_id FROM mkt_hotels WHERE ota_hotel_id IS NOT NULL`).all() as { ota_hotel_id: number }[];
+      const linkedSet = new Set(linked.map(l => l.ota_hotel_id));
+      const result = (cached as any[]).map(h => ({ ...h, already_linked: linkedSet.has(h.ota_hotel_id) }));
+      return res.json(result);
+    }
+    // Fallback to live query
+    const hotels = await getOtaHotels();
+    const linked = db.prepare(`SELECT ota_hotel_id FROM mkt_hotels WHERE ota_hotel_id IS NOT NULL`).all() as { ota_hotel_id: number }[];
+    const linkedSet = new Set(linked.map(l => l.ota_hotel_id));
+    const result = hotels.map(h => ({ ...h, already_linked: linkedSet.has(h.id) }));
+    res.json(result);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/admin/hotels — tạo/link MKT hotel từ OTA hotel
+router.post('/hotels', async (req: AuthRequest, res) => {
+  try {
+    const { ota_hotel_id, name, plan, features } = req.body;
+    if (!name) return res.status(400).json({ error: 'Cần name' });
+
+    const now = Date.now();
+    const r = db.prepare(`
+      INSERT INTO mkt_hotels (ota_hotel_id, name, slug, plan, status, config, features, max_posts_per_day, max_pages, activated_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'active', '{}', ?, ?, ?, ?, ?, ?)
+    `).run(
+      ota_hotel_id || null,
+      name,
+      name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''),
+      plan || 'free',
+      JSON.stringify(features || { chatbot: true, autopilot: false, booking: true, analytics: true }),
+      plan === 'pro' ? 5 : plan === 'starter' ? 3 : 1,
+      plan === 'pro' ? 5 : plan === 'starter' ? 2 : 1,
+      now, now, now
+    );
+
+    const hotelId = Number(r.lastInsertRowid);
+
+    // Auto-provision: generate wiki from OTA data
+    if (ota_hotel_id) {
+      autoGenWikiFromOta(hotelId, ota_hotel_id).catch(e =>
+        console.error('[admin] auto-provision wiki failed:', e.message)
+      );
+    }
+
+    // Create default permissions
+    const defaultFeatures = ['chatbot', 'autopilot', 'booking', 'analytics', 'ab_test'];
+    for (const f of defaultFeatures) {
+      db.prepare(`
+        INSERT OR IGNORE INTO mkt_permissions (hotel_id, feature, enabled, updated_at)
+        VALUES (?, ?, ?, ?)
+      `).run(hotelId, f, plan === 'free' && f === 'autopilot' ? 0 : 1, now);
+    }
+
+    res.json({ ok: true, hotelId });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// PUT /api/admin/hotels/:id — update hotel plan/status
+router.put('/hotels/:id', (req: AuthRequest, res) => {
+  const id = parseInt(req.params.id as string);
+  const { plan, status, features, max_posts_per_day, max_pages } = req.body;
+  const now = Date.now();
+
+  const sets: string[] = ['updated_at = ?'];
+  const vals: any[] = [now];
+
+  if (plan) { sets.push('plan = ?'); vals.push(plan); }
+  if (status) { sets.push('status = ?'); vals.push(status); }
+  if (features) { sets.push('features = ?'); vals.push(JSON.stringify(features)); }
+  if (max_posts_per_day !== undefined) { sets.push('max_posts_per_day = ?'); vals.push(max_posts_per_day); }
+  if (max_pages !== undefined) { sets.push('max_pages = ?'); vals.push(max_pages); }
+
+  vals.push(id);
+  db.prepare(`UPDATE mkt_hotels SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+  res.json({ ok: true });
+});
+
+// DELETE /api/admin/hotels/:id — soft delete (set status=cancelled)
+router.delete('/hotels/:id', (req, res) => {
+  const id = parseInt(req.params.id);
+  if (id === 1) return res.status(400).json({ error: 'Không thể xoá hotel mặc định' });
+  db.prepare(`UPDATE mkt_hotels SET status = 'cancelled', updated_at = ? WHERE id = ?`).run(Date.now(), id);
+  res.json({ ok: true });
+});
+
+// GET /api/admin/hotels/:id/users — list users of a hotel
+router.get('/hotels/:id/users', (req, res) => {
+  const id = parseInt(req.params.id);
+  const users = db.prepare(`SELECT * FROM mkt_users WHERE hotel_id = ? ORDER BY id`).all(id);
+  res.json(users);
+});
+
+// POST /api/admin/hotels/:id/users — add user to hotel
+router.post('/hotels/:id/users', (req, res) => {
+  const hotelId = parseInt(req.params.id);
+  const { email, role, display_name, ota_owner_id } = req.body;
+  if (!email) return res.status(400).json({ error: 'Cần email' });
+
+  const now = Date.now();
+  try {
+    const r = db.prepare(`
+      INSERT INTO mkt_users (email, hotel_id, ota_owner_id, role, display_name, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+    `).run(email, hotelId, ota_owner_id || null, role || 'owner', display_name || email, now, now);
+    res.json({ ok: true, userId: Number(r.lastInsertRowid) });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// GET /api/admin/stats — overview stats
+router.get('/stats', (_req, res) => {
+  const hotels = db.prepare(`SELECT
+    COUNT(*) as total,
+    COUNT(*) FILTER (WHERE status = 'active') as active,
+    COUNT(*) FILTER (WHERE plan = 'free') as free_plan,
+    COUNT(*) FILTER (WHERE plan = 'starter') as starter_plan,
+    COUNT(*) FILTER (WHERE plan = 'pro') as pro_plan
+  FROM mkt_hotels`).get() as any;
+
+  const users = db.prepare(`SELECT COUNT(*) as total FROM mkt_users WHERE status = 'active'`).get() as any;
+  const pages = db.prepare(`SELECT COUNT(*) as total FROM pages`).get() as any;
+  const posts7d = db.prepare(`SELECT COUNT(*) as total FROM posts WHERE created_at > ?`).get(Date.now() - 7 * 86400000) as any;
+
+  res.json({
+    hotels: hotels || {},
+    total_users: users?.total || 0,
+    total_pages: pages?.total || 0,
+    posts_last_7d: posts7d?.total || 0,
+  });
+});
+
+// GET /api/admin/permissions/:hotelId
+router.get('/permissions/:hotelId', (req, res) => {
+  const hotelId = parseInt(req.params.hotelId);
+  const perms = db.prepare(`SELECT * FROM mkt_permissions WHERE hotel_id = ?`).all(hotelId);
+  res.json(perms);
+});
+
+// POST /api/admin/permissions/:hotelId — update permissions
+router.post('/permissions/:hotelId', (req, res) => {
+  const hotelId = parseInt(req.params.hotelId);
+  const { feature, enabled } = req.body;
+  if (!feature) return res.status(400).json({ error: 'Cần feature' });
+
+  db.prepare(`
+    INSERT INTO mkt_permissions (hotel_id, feature, enabled, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(hotel_id, feature) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at
+  `).run(hotelId, feature, enabled ? 1 : 0, Date.now());
+
+  res.json({ ok: true });
+});
+
+// POST /api/admin/invite-hotel — gửi email mời 1 hotel
+router.post('/invite-hotel', async (req: AuthRequest, res) => {
+  const { hotel_id, email } = req.body;
+  if (!hotel_id || !email) return res.status(400).json({ error: 'Thieu hotel_id hoac email' });
+
+  const hotel = db.prepare(`SELECT name FROM mkt_hotels WHERE id = ?`).get(hotel_id) as any;
+  if (!hotel) return res.status(404).json({ error: 'Hotel not found' });
+
+  const cache = db.prepare(`SELECT owner_name FROM mkt_hotels_cache WHERE ota_hotel_id = (SELECT ota_hotel_id FROM mkt_hotels WHERE id = ?)`).get(hotel_id) as any;
+  const loginUrl = `${req.protocol}://${req.get('host')}`;
+  const template = inviteHotelEmail(hotel.name, cache?.owner_name || 'Anh/Chi', loginUrl);
+  const ok = await sendEmail({ ...template, to: email });
+  res.json({ ok, email });
+});
+
+// POST /api/admin/invite-all — gửi bulk invite tới tất cả hotels
+router.post('/invite-all', async (req: AuthRequest, res) => {
+  const loginUrl = `${req.protocol}://${req.get('host')}`;
+  const result = await sendBulkInvites(loginUrl);
+  res.json(result);
+});
+
+// GET /api/admin/email-log — lịch sử gửi email
+router.get('/email-log', (req: AuthRequest, res) => {
+  const rows = db.prepare(`SELECT * FROM email_log ORDER BY id DESC LIMIT 200`).all();
+  res.json(rows);
+});
+
+// POST /api/admin/test-alert — test alert system
+router.post('/test-alert', async (req: AuthRequest, res) => {
+  await sendAlertToAdmin('Test Alert', 'Day la email test tu VP Marketing admin panel.');
+  res.json({ ok: true });
+});
+
+// GET /api/admin/payments — all payments (admin view)
+router.get('/payments', (req: AuthRequest, res) => {
+  const rows = db.prepare(`
+    SELECT p.*, h.name as hotel_name
+    FROM payments p LEFT JOIN mkt_hotels h ON h.id = p.hotel_id
+    ORDER BY p.created_at DESC LIMIT 200
+  `).all();
+  res.json(rows);
+});
+
+// POST /api/admin/confirm-bank-transfer — xác nhận chuyển khoản manual
+router.post('/confirm-bank-transfer', (req: AuthRequest, res) => {
+  const { order_id } = req.body;
+  if (!order_id) return res.status(400).json({ error: 'Thieu order_id' });
+
+  const payment = db.prepare(`SELECT * FROM payments WHERE order_id = ? AND status = 'pending_verify'`).get(order_id) as any;
+  if (!payment) return res.status(404).json({ error: 'Payment not found or already processed' });
+
+  // Apply payment
+  const PLAN_LIMITS: Record<string, number> = { free: 1, starter: 3, pro: 5 };
+  db.prepare(`UPDATE payments SET status = 'success', updated_at = ? WHERE order_id = ?`).run(Date.now(), order_id);
+  db.prepare(`UPDATE mkt_hotels SET plan = ?, max_posts_per_day = ?, updated_at = ? WHERE id = ?`)
+    .run(payment.plan, PLAN_LIMITS[payment.plan] || 1, Date.now(), payment.hotel_id);
+
+  if (payment.plan !== 'free') {
+    db.prepare(`INSERT OR REPLACE INTO mkt_permissions (hotel_id, feature, enabled, updated_at) VALUES (?, 'autopilot', 1, ?)`)
+      .run(payment.hotel_id, Date.now());
+  }
+
+  res.json({ ok: true, hotel_id: payment.hotel_id, plan: payment.plan });
+});
+
+export default router;

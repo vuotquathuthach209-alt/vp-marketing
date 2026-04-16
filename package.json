@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
+    "@types/nodemailer": "^8.0.0",
+    "@types/pg": "^8.20.0",
     "axios": "^1.7.7",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.5.0",
@@ -20,7 +22,9 @@
     "form-data": "^4.0.1",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
-    "node-cron": "^3.0.3"
+    "node-cron": "^3.0.3",
+    "nodemailer": "^8.0.5",
+    "pg": "^8.20.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

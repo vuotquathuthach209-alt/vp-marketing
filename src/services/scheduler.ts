@@ -7,7 +7,10 @@ import { pullMetrics } from './analytics';
 import { decidePendingWinners } from './abtest';
 import { notifyAll } from './telegram';
 import { getSetting } from '../db';
-import { runAutopilotCycle, generateMorningReport, generateEveningReport, researchTopics } from './autopilot';
+import { runAutopilotCycle, generateMorningReport, generateEveningReport, researchTopics, runAutopilotAllHotels } from './autopilot';
+import { runFullSync, runBookingSync } from './ota-sync';
+import { cleanupAiCache } from './ai-cache';
+import { checkAndAlert } from './email';
 
 interface PostRow {
   id: number;
@@ -106,37 +109,80 @@ export function startScheduler() {
       console.error('[scheduler] ab decide error:', e);
     }
   });
-  // ── Autopilot: morning prep 6:30 AM VN ──
+  // ── Autopilot: morning prep 6:30 AM VN — runs for ALL active hotels ──
   cron.schedule('30 6 * * *', async () => {
     try {
-      if (getSetting('autopilot_enabled') !== '1') return;
-      console.log('[autopilot] Morning run — researching & scheduling posts');
+      console.log('[autopilot] Morning run — all hotels');
+      await runAutopilotAllHotels();
 
-      // Get first page as default
-      const page = db.prepare('SELECT id FROM pages LIMIT 1').get() as { id: number } | undefined;
-      if (!page) { console.warn('[autopilot] No pages configured'); return; }
+      // Generate and send morning reports per hotel
+      const hotels = db.prepare(
+        `SELECT h.id FROM mkt_hotels h WHERE h.status = 'active'
+         AND EXISTS (SELECT 1 FROM settings s WHERE s.key = 'autopilot_enabled' AND s.value = '1' AND s.hotel_id = h.id)`
+      ).all() as { id: number }[];
 
-      // Create 2 scheduled posts (10:00 & 19:00)
-      await runAutopilotCycle(page.id);
-      await runAutopilotCycle(page.id);
-
-      const report = await generateMorningReport();
-      await notifyAll(report);
+      for (const h of hotels) {
+        try {
+          const report = await generateMorningReport(h.id);
+          // Try hotel-specific telegram first
+          const { notifyHotelOrGlobal } = await import('./hotel-telegram');
+          const page = db.prepare(`SELECT id FROM pages WHERE hotel_id = ? LIMIT 1`).get(h.id) as any;
+          if (page) await notifyHotelOrGlobal(page.id, report);
+          else await notifyAll(report);
+        } catch (e) { console.error(`[autopilot] morning report hotel ${h.id}:`, e); }
+      }
     } catch (e) {
       console.error('[autopilot] morning error:', e);
     }
   });
 
-  // ── Autopilot: evening report 9:00 PM VN ──
+  // ── Autopilot: evening report 9:00 PM VN — all hotels ──
   cron.schedule('0 21 * * *', async () => {
     try {
-      if (getSetting('autopilot_enabled') !== '1') return;
-      const report = await generateEveningReport();
-      await notifyAll(report);
+      const hotels = db.prepare(
+        `SELECT h.id FROM mkt_hotels h WHERE h.status = 'active'
+         AND EXISTS (SELECT 1 FROM settings s WHERE s.key = 'autopilot_enabled' AND s.value = '1' AND s.hotel_id = h.id)`
+      ).all() as { id: number }[];
+
+      for (const h of hotels) {
+        try {
+          const report = await generateEveningReport(h.id);
+          const { notifyHotelOrGlobal } = await import('./hotel-telegram');
+          const page = db.prepare(`SELECT id FROM pages WHERE hotel_id = ? LIMIT 1`).get(h.id) as any;
+          if (page) await notifyHotelOrGlobal(page.id, report);
+          else await notifyAll(report);
+        } catch (e) { console.error(`[autopilot] evening report hotel ${h.id}:`, e); }
+      }
     } catch (e) {
       console.error('[autopilot] evening error:', e);
     }
   });
 
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00');
+  // ── OTA Sync: hotels+rooms mỗi 6h ──
+  cron.schedule('0 */6 * * *', () => {
+    runFullSync().catch(e => console.error('[scheduler] ota-sync full error:', e));
+  });
+
+  // ── OTA Sync: bookings mỗi 1h ──
+  cron.schedule('30 * * * *', () => {
+    runBookingSync().catch(e => console.error('[scheduler] ota-sync bookings error:', e));
+  });
+
+  // Run initial OTA sync on startup (non-blocking)
+  setTimeout(() => {
+    runFullSync().catch(e => console.error('[scheduler] initial ota-sync error:', e));
+  }, 10000);
+
+  // ── Alerting: check mỗi giờ ──
+  cron.schedule('0 * * * *', () => {
+    checkAndAlert().catch(e => console.error('[scheduler] alert check error:', e));
+  });
+
+  // ���─ AI Cache cleanup: 3h sáng mỗi ngày ──
+  cron.schedule('0 3 * * *', () => {
+    const cleaned = cleanupAiCache();
+    if (cleaned > 0) console.log(`[scheduler] ai-cache cleanup: removed ${cleaned} expired entries`);
+  });
+
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h');
 }

@@ -114,7 +114,12 @@ function updateBooking(id: number, fields: Record<string, unknown>) {
   db.prepare(`UPDATE pending_bookings SET ${sets}, updated_at = ? WHERE id = ?`).run(...vals, Date.now(), id);
 }
 
-export function getPendingBookings(): PendingBooking[] {
+export function getPendingBookings(hotelId?: number): PendingBooking[] {
+  if (hotelId) {
+    return db.prepare(
+      `SELECT * FROM pending_bookings WHERE status NOT IN ('confirmed','rejected','cancelled') AND hotel_id = ? ORDER BY id DESC`
+    ).all(hotelId) as PendingBooking[];
+  }
   return db.prepare(
     `SELECT * FROM pending_bookings WHERE status NOT IN ('confirmed','rejected','cancelled') ORDER BY id DESC`
   ).all() as PendingBooking[];

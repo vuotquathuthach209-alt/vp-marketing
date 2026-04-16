@@ -4,66 +4,116 @@ import { buildContext } from './wiki';
 import { generateCaption, generateImagePrompt } from './claude';
 import { generateImageSmart } from './imagegen';
 import { config } from '../config';
+import { getCachedRoomTypes } from './ota-sync';
+
+/**
+ * Sprint 9 Phase 2 — Autopilot per hotel
+ *
+ * Each hotel has its own:
+ * - Content pillars (customizable)
+ * - Post schedule (configurable times)
+ * - Topic research (using hotel-specific wiki + OTA data)
+ * - Rate limiting based on plan (free=1, starter=3, pro=5 posts/day)
+ */
 
 /* ── Content Pillars (Mon-Sun) ── */
-const PILLARS = [
-  { day: 'Chủ Nhật', emoji: '❤️', name: 'Community', description: 'Cộng đồng, câu chuyện khách hàng, UGC, review' },
-  { day: 'Thứ Hai',  emoji: '🏨', name: 'Product',   description: 'Giới thiệu phòng, dịch vụ, tiện ích khách sạn' },
-  { day: 'Thứ Ba',   emoji: '🎯', name: 'Tips',      description: 'Mẹo du lịch, travel tips, hướng dẫn' },
-  { day: 'Thứ Tư',   emoji: '📸', name: 'Visual',    description: 'Behind the scenes, ảnh đẹp, reels' },
-  { day: 'Thứ Năm',  emoji: '💰', name: 'Promo',     description: 'Khuyến mãi, deal, flash sale, voucher' },
-  { day: 'Thứ Sáu',  emoji: '🌟', name: 'Story',     description: 'Câu chuyện thương hiệu, giá trị, sứ mệnh' },
-  { day: 'Thứ Bảy',  emoji: '🎉', name: 'Lifestyle', description: 'Lifestyle, ẩm thực, trải nghiệm địa phương' },
+const DEFAULT_PILLARS = [
+  { day: 'Chu Nhat', emoji: '❤️', name: 'Community', description: 'Cong dong, cau chuyen khach hang, UGC, review' },
+  { day: 'Thu Hai',  emoji: '🏨', name: 'Product',   description: 'Gioi thieu phong, dich vu, tien ich khach san' },
+  { day: 'Thu Ba',   emoji: '🎯', name: 'Tips',      description: 'Meo du lich, travel tips, huong dan' },
+  { day: 'Thu Tu',   emoji: '📸', name: 'Visual',    description: 'Behind the scenes, anh dep, reels' },
+  { day: 'Thu Nam',  emoji: '💰', name: 'Promo',     description: 'Khuyen mai, deal, flash sale, voucher' },
+  { day: 'Thu Sau',  emoji: '🌟', name: 'Story',     description: 'Cau chuyen thuong hieu, gia tri, su menh' },
+  { day: 'Thu Bay',  emoji: '🎉', name: 'Lifestyle', description: 'Lifestyle, am thuc, trai nghiem dia phuong' },
 ];
 
 function getVNDate(): Date {
   return new Date(new Date().toLocaleString('en-US', { timeZone: config.tz }));
 }
 
-export function getTodayPillar() {
-  const dow = getVNDate().getDay(); // 0=Sun
-  return PILLARS[dow];
+function getPillars(hotelId: number) {
+  const custom = getSetting('autopilot_pillars', hotelId);
+  if (custom) {
+    try { return JSON.parse(custom); } catch { /* fall through */ }
+  }
+  return DEFAULT_PILLARS;
 }
 
-/* ── Research Topics ── */
-export async function researchTopics(): Promise<{ pillar: string; topics: string[]; reasoning: string }> {
-  const pillar = getTodayPillar();
+export function getTodayPillar(hotelId: number = 1) {
+  const dow = getVNDate().getDay();
+  const pillars = getPillars(hotelId);
+  return pillars[dow] || DEFAULT_PILLARS[dow];
+}
+
+/** Get hotel info for content context */
+function getHotelContext(hotelId: number): string {
+  const hotel = db.prepare(`SELECT * FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
+  if (!hotel) return '';
+
+  const parts: string[] = [];
+  parts.push(`Khach san: ${hotel.name}`);
+
+  // Get OTA cached data if linked
+  if (hotel.ota_hotel_id) {
+    const cache = db.prepare(`SELECT * FROM mkt_hotels_cache WHERE ota_hotel_id = ?`).get(hotel.ota_hotel_id) as any;
+    if (cache) {
+      if (cache.address) parts.push(`Dia chi: ${cache.address}`);
+      if (cache.city) parts.push(`Thanh pho: ${cache.city}`);
+      if (cache.star_rating) parts.push(`Hang sao: ${cache.star_rating}`);
+    }
+
+    const rooms = getCachedRoomTypes(hotel.ota_hotel_id) as any[];
+    if (rooms.length > 0) {
+      parts.push(`Loai phong:`);
+      for (const r of rooms) {
+        parts.push(`  - ${r.name}: ${Number(r.base_price).toLocaleString('vi-VN')}d/dem (con ${r.available_count}/${r.room_count})`);
+      }
+    }
+  }
+
+  return parts.join('\n');
+}
+
+/* ── Research Topics (per hotel) ── */
+export async function researchTopics(hotelId: number = 1): Promise<{ pillar: string; topics: string[]; reasoning: string }> {
+  const pillar = getTodayPillar(hotelId);
   const vnDate = getVNDate();
   const dateStr = vnDate.toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
-  // Gather wiki knowledge
-  const brandCtx = await buildContext('brand voice sonder vietnam');
-  const pillarCtx = await buildContext('content pillars');
-  const seasonCtx = await buildContext('seasonal calendar lịch mùa');
-  const audienceCtx = await buildContext('target audience khách hàng mục tiêu');
+  const brandCtx = await buildContext('brand voice', hotelId);
+  const pillarCtx = await buildContext('content pillars', hotelId);
+  const seasonCtx = await buildContext('seasonal calendar', hotelId);
+  const hotelCtx = getHotelContext(hotelId);
 
-  const wikiBlock = [brandCtx, pillarCtx, seasonCtx, audienceCtx].filter(Boolean).join('\n\n---\n\n');
+  const wikiBlock = [brandCtx, pillarCtx, seasonCtx, hotelCtx].filter(Boolean).join('\n\n---\n\n');
 
-  const system = `Bạn là Marketing Strategy Director cho Sonder Vietnam — chuyên gia content marketing ngành lưu trú & du lịch.
-Nhiệm vụ: đề xuất 2-3 chủ đề bài đăng Facebook CỤ THỂ, hấp dẫn cho hôm nay.
+  const hotel = db.prepare(`SELECT name FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
+  const hotelName = hotel?.name || 'Khach san';
 
-Yêu cầu:
-- Mỗi chủ đề phải đủ cụ thể để viết caption ngay (không chung chung)
-- Phù hợp với content pillar hôm nay
-- Tận dụng ngữ cảnh mùa vụ, sự kiện nếu có
-- Tránh lặp lại chủ đề gần đây
-- Trả lời theo đúng format JSON bên dưới, KHÔNG markdown
+  const system = `Ban la Marketing Strategy Director cho ${hotelName} — chuyen gia content marketing nganh luu tru & du lich.
+Nhiem vu: de xuat 2-3 chu de bai dang Facebook CU THE, hap dan cho hom nay.
 
-Format trả về (JSON thuần):
-{"topics":["chủ đề 1","chủ đề 2","chủ đề 3"],"reasoning":"lý do chọn ngắn gọn"}`;
+Yeu cau:
+- Moi chu de phai du cu the de viet caption ngay (khong chung chung)
+- Phu hop voi content pillar hom nay
+- Tan dung ngu canh mua vu, su kien neu co
+- Tranh lap lai chu de gan day
+- Tra loi theo dung format JSON ben duoi, KHONG markdown
 
-  const user = `📅 Hôm nay: ${dateStr}
-📋 Content Pillar hôm nay: ${pillar.emoji} ${pillar.name} — ${pillar.description}
+Format tra ve (JSON thuan):
+{"topics":["chu de 1","chu de 2","chu de 3"],"reasoning":"ly do chon ngan gon"}`;
 
---- KIẾN THỨC DOANH NGHIỆP ---
-${wikiBlock || '(Chưa có dữ liệu wiki)'}
---- HẾT ---
+  const user = `📅 Hom nay: ${dateStr}
+📋 Content Pillar hom nay: ${pillar.emoji} ${pillar.name} — ${pillar.description}
 
-Hãy đề xuất 2-3 chủ đề cụ thể cho bài đăng hôm nay.`;
+--- KIEN THUC DOANH NGHIEP ---
+${wikiBlock || '(Chua co du lieu wiki)'}
+--- HET ---
+
+Hay de xuat 2-3 chu de cu the cho bai dang hom nay.`;
 
   const raw = await generate({ task: 'caption', system, user });
 
-  // Parse JSON from response
   let topics: string[] = [];
   let reasoning = '';
   try {
@@ -74,72 +124,90 @@ Hãy đề xuất 2-3 chủ đề cụ thể cho bài đăng hôm nay.`;
       reasoning = parsed.reasoning || '';
     }
   } catch {
-    // Fallback: extract lines that look like topics
     topics = raw.split('\n').filter(l => l.trim().length > 10).slice(0, 3).map(l => l.replace(/^[\d.\-*]+\s*/, '').trim());
     reasoning = 'Parsed from free-text response';
   }
 
   if (topics.length === 0) {
-    topics = [`${pillar.name}: Giới thiệu trải nghiệm tại Sonder Vietnam`];
-    reasoning = 'Fallback — AI không trả về đúng format';
+    topics = [`${pillar.name}: Gioi thieu trai nghiem tai ${hotelName}`];
+    reasoning = 'Fallback';
   }
 
   return { pillar: `${pillar.emoji} ${pillar.name}`, topics, reasoning };
 }
 
-/* ── Run one autopilot cycle ── */
-export async function runAutopilotCycle(pageId: number): Promise<{
+/* ── Rate limiting ── */
+function checkRateLimit(hotelId: number): boolean {
+  const hotel = db.prepare(`SELECT max_posts_per_day FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
+  const maxPosts = hotel?.max_posts_per_day || 1;
+
+  const startOfDay = new Date(getVNDate());
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const todayPosts = db.prepare(
+    `SELECT COUNT(*) as n FROM posts WHERE hotel_id = ? AND created_at >= ?`
+  ).get(hotelId, startOfDay.getTime()) as { n: number };
+
+  return todayPosts.n < maxPosts;
+}
+
+/* ── Run one autopilot cycle (per hotel) ── */
+export async function runAutopilotCycle(pageId: number, hotelId: number = 1): Promise<{
   postId: number;
   topic: string;
   caption: string;
   mediaId: number | null;
   scheduledAt: number;
-}> {
-  const research = await researchTopics();
+} | null> {
+  // Rate limit check
+  if (!checkRateLimit(hotelId)) {
+    console.log(`[autopilot] Hotel ${hotelId} reached daily post limit, skip`);
+    return null;
+  }
+
+  const research = await researchTopics(hotelId);
   const topic = research.topics[0];
 
-  // Generate caption
   const caption = await generateCaption(topic);
 
-  // Generate image
   let mediaId: number | null = null;
   try {
     const imgPrompt = await generateImagePrompt(caption);
     const imgResult = await generateImageSmart(imgPrompt);
     mediaId = imgResult.mediaId;
+    // Tag media with hotel_id
+    if (mediaId) {
+      db.prepare(`UPDATE media SET hotel_id = ? WHERE id = ?`).run(hotelId, mediaId);
+    }
   } catch (e: any) {
     console.warn(`[autopilot] Image gen failed, posting text-only: ${e.message}`);
   }
 
-  // Determine next post time
-  const scheduledAt = getNextPostTime();
+  const scheduledAt = getNextPostTime(hotelId);
 
-  // Insert scheduled post
   const result = db.prepare(
-    `INSERT INTO posts (page_id, caption, media_id, media_type, status, scheduled_at, created_at)
-     VALUES (?, ?, ?, ?, 'scheduled', ?, ?)`
-  ).run(pageId, caption, mediaId, mediaId ? 'image' : 'none', scheduledAt, Date.now());
+    `INSERT INTO posts (page_id, caption, media_id, media_type, status, scheduled_at, hotel_id, created_at)
+     VALUES (?, ?, ?, ?, 'scheduled', ?, ?, ?)`
+  ).run(pageId, caption, mediaId, mediaId ? 'image' : 'none', scheduledAt, hotelId, Date.now());
 
   const postId = Number(result.lastInsertRowid);
-  console.log(`[autopilot] Created post #${postId} topic="${topic}" scheduled=${new Date(scheduledAt).toISOString()}`);
+  console.log(`[autopilot] Hotel ${hotelId}: Created post #${postId} topic="${topic}"`);
 
   return { postId, topic, caption, mediaId, scheduledAt };
 }
 
-function getNextPostTime(): number {
-  const postTimes = getPostTimes();
+function getNextPostTime(hotelId: number = 1): number {
+  const postTimes = getPostTimes(hotelId);
   const now = getVNDate();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
   for (const t of postTimes) {
     const target = new Date(`${todayStr}T${t}:00`);
-    // Convert VN time to UTC epoch
     const vnOffset = getVNOffset();
     const epoch = target.getTime() - vnOffset;
     if (epoch > Date.now()) return epoch;
   }
 
-  // All times passed today → schedule first slot tomorrow
   const tomorrow = new Date(now);
   tomorrow.setDate(tomorrow.getDate() + 1);
   const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
@@ -148,91 +216,116 @@ function getNextPostTime(): number {
 }
 
 function getVNOffset(): number {
-  // Asia/Ho_Chi_Minh = UTC+7 = 7*60*60*1000
-  // We need the offset between local parse and actual VN time
-  // Since we parse as local, we adjust:
   const now = new Date();
   const utc = now.getTime() + now.getTimezoneOffset() * 60000;
   const vnTime = utc + 7 * 3600000;
   return vnTime - now.getTime() + now.getTimezoneOffset() * 60000;
 }
 
-function getPostTimes(): string[] {
-  const setting = getSetting('autopilot_post_times');
+function getPostTimes(hotelId: number = 1): string[] {
+  const setting = getSetting('autopilot_post_times', hotelId);
   if (setting) {
     try { return JSON.parse(setting); } catch { /* fall through */ }
   }
   return ['10:00', '19:00'];
 }
 
-/* ── Morning Report ── */
-export async function generateMorningReport(): Promise<string> {
-  const pillar = getTodayPillar();
+/* ── Reports (per hotel) ── */
+export async function generateMorningReport(hotelId: number = 1): Promise<string> {
+  const pillar = getTodayPillar(hotelId);
   const vnDate = getVNDate();
   const dateStr = vnDate.toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-  const postTimes = getPostTimes();
+  const postTimes = getPostTimes(hotelId);
 
-  const research = await researchTopics();
+  const hotel = db.prepare(`SELECT name FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
+  const hotelName = hotel?.name || 'Hotel';
 
+  const research = await researchTopics(hotelId);
   const topicList = research.topics.map((t, i) => `${i + 1}. ${t}`).join('\n');
 
-  return `🌅 BÁO CÁO SÁNG — ${dateStr}
-📋 Pillar hôm nay: ${pillar.emoji} ${pillar.name} — ${pillar.description}
-📝 Chủ đề dự kiến:
+  return `🌅 BAO CAO SANG — ${hotelName}
+📅 ${dateStr}
+📋 Pillar: ${pillar.emoji} ${pillar.name} — ${pillar.description}
+📝 Chu de du kien:
 ${topicList}
-💡 Lý do: ${research.reasoning}
-⏰ Đăng lúc: ${postTimes.join(' & ')}`;
+💡 Ly do: ${research.reasoning}
+⏰ Dang luc: ${postTimes.join(' & ')}`;
 }
 
-/* ── Evening Report ── */
-export async function generateEveningReport(): Promise<string> {
+export async function generateEveningReport(hotelId: number = 1): Promise<string> {
   const vnDate = getVNDate();
   const dateStr = vnDate.toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
-  // Get today's start/end in epoch ms
+  const hotel = db.prepare(`SELECT name FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
+  const hotelName = hotel?.name || 'Hotel';
+
   const startOfDay = new Date(vnDate);
   startOfDay.setHours(0, 0, 0, 0);
   const endOfDay = new Date(vnDate);
   endOfDay.setHours(23, 59, 59, 999);
 
-  // Approximate: query posts created today
   const posts = db.prepare(
     `SELECT id, caption, status, fb_post_id, published_at, error_message
-     FROM posts
-     WHERE created_at >= ? AND created_at <= ?
+     FROM posts WHERE hotel_id = ? AND created_at >= ? AND created_at <= ?
      ORDER BY created_at ASC`
-  ).all(startOfDay.getTime(), endOfDay.getTime()) as Array<{
-    id: number; caption: string; status: string; fb_post_id: string | null;
-    published_at: number | null; error_message: string | null;
-  }>;
+  ).all(hotelId, startOfDay.getTime(), endOfDay.getTime()) as any[];
 
   if (posts.length === 0) {
-    return `🌙 BÁO CÁO TỐI — ${dateStr}\n\n📭 Không có bài đăng nào hôm nay.`;
+    return `🌙 BAO CAO TOI — ${hotelName}\n📅 ${dateStr}\n\n📭 Khong co bai dang nao hom nay.`;
   }
 
   const published = posts.filter(p => p.status === 'published');
   const failed = posts.filter(p => p.status === 'failed');
   const scheduled = posts.filter(p => p.status === 'scheduled');
 
-  let report = `🌙 BÁO CÁO TỐI — ${dateStr}\n\n`;
-  report += `📊 Tổng kết: ${published.length} đăng thành công, ${failed.length} thất bại, ${scheduled.length} đang chờ\n\n`;
+  let report = `🌙 BAO CAO TOI — ${hotelName}\n📅 ${dateStr}\n\n`;
+  report += `📊 Tong ket: ${published.length} dang thanh cong, ${failed.length} that bai, ${scheduled.length} dang cho\n\n`;
 
   for (const p of published) {
     report += `✅ Post #${p.id}: ${p.caption.slice(0, 80)}...\n`;
   }
   for (const p of failed) {
-    report += `❌ Post #${p.id}: ${p.error_message || 'Không rõ lỗi'}\n`;
+    report += `❌ Post #${p.id}: ${p.error_message || 'Khong ro loi'}\n`;
   }
 
   return report.trim();
 }
 
-/* ── Status ── */
-export function getAutopilotStatus() {
-  const enabled = getSetting('autopilot_enabled') === '1';
-  const postsPerDay = parseInt(getSetting('autopilot_posts_per_day') || '2', 10);
-  const postTimes = getPostTimes();
-  const currentPillar = getTodayPillar();
+/* ── Status (per hotel) ── */
+export function getAutopilotStatus(hotelId: number = 1) {
+  const enabled = getSetting('autopilot_enabled', hotelId) === '1';
+  const postsPerDay = parseInt(getSetting('autopilot_posts_per_day', hotelId) || '2', 10);
+  const postTimes = getPostTimes(hotelId);
+  const currentPillar = getTodayPillar(hotelId);
+  const hotel = db.prepare(`SELECT name, max_posts_per_day FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
 
-  return { enabled, postsPerDay, postTimes, currentPillar };
+  return {
+    enabled,
+    postsPerDay,
+    postTimes,
+    currentPillar,
+    hotelName: hotel?.name || 'N/A',
+    maxPostsPerDay: hotel?.max_posts_per_day || 1,
+    rateLimitOk: checkRateLimit(hotelId),
+  };
+}
+
+/* ── Run autopilot for ALL active hotels ── */
+export async function runAutopilotAllHotels() {
+  const hotels = db.prepare(
+    `SELECT h.id as hotel_id, p.id as page_id
+     FROM mkt_hotels h
+     JOIN pages p ON p.hotel_id = h.id
+     WHERE h.status = 'active'
+     AND EXISTS (SELECT 1 FROM settings s WHERE s.key = 'autopilot_enabled' AND s.value = '1' AND s.hotel_id = h.id)
+     GROUP BY h.id`
+  ).all() as { hotel_id: number; page_id: number }[];
+
+  for (const h of hotels) {
+    try {
+      await runAutopilotCycle(h.page_id, h.hotel_id);
+    } catch (e: any) {
+      console.error(`[autopilot] Hotel ${h.hotel_id} error:`, e.message);
+    }
+  }
 }

@@ -3,6 +3,7 @@ import { db } from '../db';
 import { smartReply, smartReplyWithSender } from './smartreply';
 import { markTransferReceived, hasActiveBooking } from './bookingflow';
 import { notifyAll } from './telegram';
+import { notifyHotelOrGlobal } from './hotel-telegram';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
@@ -118,7 +119,7 @@ async function replyToMessages(page: any) {
               `Tổng: ${b.total_price.toLocaleString('vi-VN')}₫ | Cọc: ${b.deposit_amount.toLocaleString('vi-VN')}₫\n\n` +
               `Lễ tân xác nhận: /confirm ${b.id} [số phòng]\n` +
               `Từ chối: /reject ${b.id} [lý do]`;
-            notifyAll(tgMsg).catch(() => {});
+            notifyHotelOrGlobal(page.id, tgMsg).catch(() => {});
 
             console.log(`[auto-reply] ✅ Transfer image received, booking #${b.id}`);
             continue;

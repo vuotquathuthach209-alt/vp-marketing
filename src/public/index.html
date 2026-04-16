@@ -12,16 +12,39 @@
 <!-- LOGIN -->
 <div id="login-view" class="hidden min-h-screen flex items-center justify-center p-4">
   <div class="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full">
-    <h1 class="text-2xl font-bold mb-2">🏨 Marketing Auto</h1>
+    <h1 class="text-2xl font-bold mb-2">🏨 VP Marketing</h1>
     <p class="text-slate-500 mb-6">Đăng nhập vào Dashboard</p>
+
+    <!-- Tab: Admin / Hotel -->
+    <div class="flex border-b mb-4">
+      <button id="login-tab-admin" class="flex-1 py-2 text-center text-sm font-semibold border-b-2 border-blue-600 text-blue-600" onclick="switchLoginTab('admin')">Admin</button>
+      <button id="login-tab-hotel" class="flex-1 py-2 text-center text-sm font-semibold text-slate-400 hover:text-slate-600" onclick="switchLoginTab('hotel')">Khach san</button>
+    </div>
+
     <form id="login-form">
-      <input id="login-password" type="password" placeholder="Mật khẩu admin"
-        class="w-full px-4 py-3 border rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      <!-- Admin mode -->
+      <div id="login-admin-fields">
+        <input id="login-password" type="password" placeholder="Mat khau admin"
+          class="w-full px-4 py-3 border rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      </div>
+
+      <!-- Hotel mode -->
+      <div id="login-hotel-fields" class="hidden">
+        <input id="login-email" type="email" placeholder="Email (tai khoan OTA)"
+          class="w-full px-4 py-3 border rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+        <input id="login-hotel-password" type="password" placeholder="Mat khau"
+          class="w-full px-4 py-3 border rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      </div>
+
+      <input type="hidden" id="login-mode" value="admin" />
+
       <button type="submit" class="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700">
-        Đăng nhập
+        Dang nhap
       </button>
       <p id="login-error" class="text-red-500 text-sm mt-3 hidden"></p>
     </form>
+
+    <p class="text-xs text-slate-400 mt-4 text-center">Khach san: dang nhap bang email OTA (sondervn.com)</p>
   </div>
 </div>
 
@@ -40,6 +63,9 @@
         <button data-tab="wiki" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">📚 Kiến thức AI</button>
         <button data-tab="analytics" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">📊 Phân tích</button>
         <button data-tab="settings" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">⚙️ Cấu hình</button>
+        <button data-tab="onboarding" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">🚀 Onboarding</button>
+        <button data-tab="monitoring" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">📈 Monitoring</button>
+        <button data-tab="subscription" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800">💳 Goi dich vu</button>
       </nav>
       <button id="logout-btn" class="mt-8 text-sm text-slate-400 hover:text-white">↩ Đăng xuất</button>
     </aside>
@@ -322,6 +348,53 @@
       <section data-panel="settings" class="panel hidden">
         <h2 class="text-2xl font-bold mb-6">Cấu hình</h2>
 
+        <!-- Sprint 9: OTA Database Connection -->
+        <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6 border-l-4 border-emerald-500">
+          <h3 class="font-bold mb-2">🗄️ OTA Database (Google Cloud SQL)</h3>
+          <p class="text-xs text-slate-500 mb-4">Kết nối READ-ONLY đến database OTA để lấy dữ liệu phòng, giá, booking real-time. Hệ thống MKT chỉ đọc, không ghi dữ liệu OTA.</p>
+
+          <div class="grid grid-cols-2 gap-3 mb-3">
+            <div>
+              <label class="block text-xs font-semibold mb-1">Host</label>
+              <input id="ota-host" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="35.198.xxx.xxx" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">Port</label>
+              <input id="ota-port" type="number" class="w-full border rounded-lg px-3 py-2 text-sm" value="5432" />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-3 gap-3 mb-3">
+            <div>
+              <label class="block text-xs font-semibold mb-1">Database</label>
+              <input id="ota-database" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="sonder" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">User</label>
+              <input id="ota-user" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="postgres" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">Password</label>
+              <input id="ota-password" type="password" class="w-full border rounded-lg px-3 py-2 text-sm" />
+            </div>
+          </div>
+
+          <div class="flex items-center gap-3 mb-4">
+            <label class="flex items-center gap-1 text-sm">
+              <input id="ota-ssl" type="checkbox" checked /> SSL
+            </label>
+          </div>
+
+          <div class="flex gap-2 mb-3">
+            <button id="btn-ota-save" class="bg-emerald-600 text-white px-5 py-2 rounded-lg text-sm font-semibold">💾 Lưu kết nối</button>
+            <button id="btn-ota-test" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">🧪 Test kết nối</button>
+            <button id="btn-ota-hotels" class="bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">🏨 Xem hotels</button>
+            <span id="ota-status" class="text-sm self-center"></span>
+          </div>
+
+          <div id="ota-hotels-list" class="text-sm"></div>
+        </div>
+
         <!-- Telegram Bot -->
         <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6">
           <h3 class="font-bold mb-2">💬 Telegram Bot</h3>
@@ -419,6 +492,36 @@
           <div class="mt-6 border-t pt-4">
             <h4 class="font-semibold text-sm mb-2">📋 Booking đang chờ</h4>
             <div id="bk-pending-list" class="space-y-2 text-sm"></div>
+          </div>
+        </div>
+
+        <!-- Sprint 9: Per-hotel Telegram Bot -->
+        <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6 border-l-4 border-blue-500">
+          <h3 class="font-bold mb-2">📱 Telegram riêng cho khách sạn</h3>
+          <p class="text-xs text-slate-500 mb-4">Mỗi khách sạn (Fanpage) có bot Telegram riêng để nhận thông báo booking, chuyển khoản. Lễ tân dùng bot này thay vì bot chung.</p>
+
+          <div id="hotel-tg-list" class="space-y-3 mb-4"></div>
+
+          <div class="border rounded-lg p-4 bg-slate-50">
+            <h4 class="text-sm font-semibold mb-2">➕ Thêm / Cập nhật Telegram cho Fanpage</h4>
+            <div class="mb-2">
+              <label class="block text-xs font-semibold mb-1">Chọn Fanpage</label>
+              <select id="htg-page-select" class="w-full border rounded-lg px-3 py-2 text-sm"></select>
+            </div>
+            <div class="mb-2">
+              <label class="block text-xs font-semibold mb-1">Bot Token (tạo tại @BotFather)</label>
+              <input id="htg-token" type="text" placeholder="123456:ABC-DEF..." class="w-full border rounded-lg px-3 py-2 font-mono text-xs" />
+            </div>
+            <div class="mb-2">
+              <label class="block text-xs font-semibold mb-1">Group ID (thêm bot vào nhóm lễ tân, lấy ID)</label>
+              <input id="htg-group-id" type="text" placeholder="-1001234567890" class="w-full border rounded-lg px-3 py-2 font-mono text-xs" />
+              <p class="text-xs text-slate-400 mt-1">💡 Tạo nhóm Telegram → Thêm bot vào → Gửi /start → Lấy group ID từ <a href="https://api.telegram.org/bot{TOKEN}/getUpdates" target="_blank" class="text-blue-600 underline">getUpdates</a></p>
+            </div>
+            <div class="flex gap-2">
+              <button id="btn-htg-save" class="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-semibold">💾 Lưu & Kết nối</button>
+              <button id="btn-htg-test" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">🧪 Test</button>
+              <span id="htg-status" class="text-sm self-center"></span>
+            </div>
           </div>
         </div>
 
@@ -545,6 +648,84 @@
             </ol>
             <p class="mt-2">Xem HUONG-DAN.md trên VPS để biết chi tiết đổi token sang long-lived (2 tháng).</p>
           </details>
+        </div>
+
+        <!-- Admin: Email & Payments (admin-only) -->
+        <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6 admin-only">
+          <h3 class="font-bold mb-4">📧 Email & Invite</h3>
+          <div class="flex gap-2 mb-4">
+            <button onclick="adminInviteAll()" class="bg-blue-600 text-white px-4 py-2 rounded text-sm">Gui invite tat ca KS</button>
+            <button onclick="adminTestAlert()" class="bg-yellow-500 text-white px-4 py-2 rounded text-sm">Test Alert</button>
+            <button onclick="adminLoadEmails()" class="bg-slate-200 px-4 py-2 rounded text-sm">Xem log</button>
+          </div>
+          <div id="admin-invite-single" class="flex gap-2 mb-4">
+            <input id="invite-hotel-id" placeholder="Hotel ID" class="border rounded px-3 py-2 text-sm w-24" />
+            <input id="invite-email" placeholder="Email" class="border rounded px-3 py-2 text-sm flex-1" />
+            <button onclick="adminInviteSingle()" class="bg-green-600 text-white px-3 py-2 rounded text-sm">Gui</button>
+          </div>
+          <div id="email-log-list" class="text-sm space-y-1 max-h-60 overflow-auto"></div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6 admin-only">
+          <h3 class="font-bold mb-4">💰 Payments (Admin)</h3>
+          <button onclick="adminLoadPayments()" class="bg-slate-200 px-4 py-2 rounded text-sm mb-3">Tai lai</button>
+          <div id="admin-payments-list" class="text-sm space-y-2 max-h-80 overflow-auto"></div>
+        </div>
+      </section>
+
+      <!-- ONBOARDING TAB -->
+      <section data-panel="onboarding" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-6">🚀 Onboarding - Thiet lap Khach san</h2>
+        <div id="onboarding-container" class="max-w-2xl space-y-4">
+          <div id="onboarding-progress" class="bg-white rounded-xl shadow p-6">
+            <div class="flex justify-between mb-2">
+              <span class="font-semibold">Tien do</span>
+              <span id="ob-progress-text" class="text-sm text-slate-500">0%</span>
+            </div>
+            <div class="w-full bg-slate-200 rounded-full h-3">
+              <div id="ob-progress-bar" class="bg-blue-600 h-3 rounded-full transition-all" style="width:0%"></div>
+            </div>
+          </div>
+
+          <div id="ob-steps" class="space-y-3"></div>
+
+          <div id="ob-actions" class="bg-white rounded-xl shadow p-6 hidden">
+            <h3 class="font-bold mb-4" id="ob-action-title"></h3>
+            <div id="ob-action-form"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- MONITORING TAB -->
+      <section data-panel="monitoring" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-6">📈 Monitoring Dashboard</h2>
+        <div class="max-w-4xl space-y-6">
+          <div class="flex gap-2 mb-4">
+            <button onclick="loadMonitoring(7)" class="px-3 py-1 bg-blue-600 text-white rounded text-sm">7 ngay</button>
+            <button onclick="loadMonitoring(30)" class="px-3 py-1 bg-slate-200 rounded text-sm">30 ngay</button>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="monitoring-cards"></div>
+          <div class="bg-white rounded-xl shadow p-6">
+            <h3 class="font-bold mb-4">AI Usage theo ngay</h3>
+            <div id="ai-daily-chart" class="space-y-1 text-sm"></div>
+          </div>
+          <div class="bg-white rounded-xl shadow p-6">
+            <h3 class="font-bold mb-4">Loi gan day</h3>
+            <div id="errors-list" class="space-y-2 text-sm"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SUBSCRIPTION TAB -->
+      <section data-panel="subscription" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-6">💳 Goi dich vu</h2>
+        <div class="max-w-4xl space-y-6">
+          <div id="current-plan-card" class="bg-white rounded-xl shadow p-6"></div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="plans-grid"></div>
+          <div class="bg-white rounded-xl shadow p-6">
+            <h3 class="font-bold mb-4">📜 Lich su thanh toan</h3>
+            <div id="payment-history" class="text-sm space-y-2"></div>
+          </div>
         </div>
       </section>
     </main>

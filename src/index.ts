@@ -16,6 +16,13 @@ import wikiRoutes from './routes/wiki';
 import analyticsRoutes from './routes/analytics';
 import autopilotRouter from './routes/autopilot';
 import bookingRouter from './routes/booking';
+import hotelTelegramRouter from './routes/hotel-telegram';
+import otaRouter from './routes/ota';
+import adminRouter from './routes/admin';
+import onboardingRouter from './routes/onboarding';
+import monitoringRouter from './routes/monitoring';
+import subscriptionRouter from './routes/subscription';
+import paymentRouter from './routes/payment';
 
 const app = express();
 
@@ -38,6 +45,13 @@ app.use('/api/wiki', wikiRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/autopilot', autopilotRouter);
 app.use('/api/booking', bookingRouter);
+app.use('/api/hotel-telegram', hotelTelegramRouter);
+app.use('/api/ota', otaRouter);
+app.use('/api/admin', adminRouter);
+app.use('/api/onboarding', onboardingRouter);
+app.use('/api/monitoring', monitoringRouter);
+app.use('/api/subscription', subscriptionRouter);
+app.use('/api/payment', paymentRouter);
 
 app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 

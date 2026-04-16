@@ -5,7 +5,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { config } from '../config';
 import { db } from '../db';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, AuthRequest, getHotelId } from '../middleware/auth';
 
 const router = Router();
 router.use(authMiddleware);
@@ -31,22 +31,24 @@ const upload = multer({
 });
 
 // Upload file thủ công
-router.post('/upload', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'Không có file' });
+router.post('/upload', upload.single('file'), (req: AuthRequest, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Khong co file' });
+  const hotelId = getHotelId(req);
   const result = db
     .prepare(
-      `INSERT INTO media (filename, mime_type, size, source, created_at)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO media (filename, mime_type, size, source, hotel_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(req.file.filename, req.file.mimetype, req.file.size, 'upload', Date.now());
+    .run(req.file.filename, req.file.mimetype, req.file.size, 'upload', hotelId, Date.now());
   res.json({ id: result.lastInsertRowid, filename: req.file.filename });
 });
 
-// Danh sách media
-router.get('/', (req, res) => {
+// Danh sach media — per hotel
+router.get('/', (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
   const items = db
-    .prepare(`SELECT id, filename, mime_type, size, source, prompt, created_at FROM media ORDER BY id DESC LIMIT 200`)
-    .all();
+    .prepare(`SELECT id, filename, mime_type, size, source, prompt, created_at FROM media WHERE hotel_id = ? ORDER BY id DESC LIMIT 200`)
+    .all(hotelId);
   res.json(items);
 });
 
@@ -59,14 +61,15 @@ router.get('/file/:filename', (req, res) => {
 });
 
 // Xóa media
-router.delete('/:id', (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  const row = db.prepare(`SELECT filename FROM media WHERE id = ?`).get(id) as { filename: string } | undefined;
+router.delete('/:id', (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
+  const id = parseInt(req.params.id as string, 10);
+  const row = db.prepare(`SELECT filename FROM media WHERE id = ? AND hotel_id = ?`).get(id, hotelId) as { filename: string } | undefined;
   if (row) {
     const filepath = path.join(config.mediaDir, row.filename);
     if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
   }
-  db.prepare(`DELETE FROM media WHERE id = ?`).run(id);
+  db.prepare(`DELETE FROM media WHERE id = ? AND hotel_id = ?`).run(id, hotelId);
   res.json({ ok: true });
 });
 
