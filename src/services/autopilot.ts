@@ -441,7 +441,7 @@ function getNextPostTime(hotelId: number = 1): number {
    MAIN CYCLE — Run one autopilot post
    ═══════════════════════════════════════════ */
 
-export async function runAutopilotCycle(pageId: number, hotelId: number = 1): Promise<{
+export async function runAutopilotCycle(pageId: number, hotelId: number = 1, skipRateLimit: boolean = false): Promise<{
   postId: number;
   topic: string;
   caption: string;
@@ -451,7 +451,7 @@ export async function runAutopilotCycle(pageId: number, hotelId: number = 1): Pr
   imageSource: string;
   hookStyle: string;
 } | null> {
-  if (!checkRateLimit(hotelId)) {
+  if (!skipRateLimit && !checkRateLimit(hotelId)) {
     console.log(`[autopilot] Hotel ${hotelId} reached daily post limit, skip`);
     return null;
   }

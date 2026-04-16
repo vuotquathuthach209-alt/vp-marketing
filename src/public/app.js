@@ -594,7 +594,8 @@ document.getElementById('btn-autopilot-run')?.addEventListener('click', async ()
     const pageId = state.pages?.[0]?.id;
     if (!pageId) { pre.textContent = '❌ Chua co Fanpage nao. Them Fanpage truoc.'; return; }
     const r = await api('/autopilot/run-now', { method: 'POST', body: JSON.stringify({ pageId }) });
-    pre.textContent = `✅ Da tao post #${r.postId}\n📝 Chu de: ${r.topic}\n🖼️ Anh: ${r.mediaId ? 'Co (ID ' + r.mediaId + ')' : 'Khong'} [${r.imageSource}]\n🎯 Hook: ${r.hookStyle} | Content: ${r.contentType}\n⏰ Len lich: ${new Date(r.scheduledAt).toLocaleString('vi-VN')}\n\n${r.caption}`;
+    if (!r.ok) { pre.textContent = '❌ ' + (r.error || 'Khong tao duoc bai'); return; }
+    pre.textContent = `✅ Da tao post #${r.postId}\n📝 Chu de: ${r.topic}\n🖼️ Anh: ${r.mediaId ? 'Co (ID ' + r.mediaId + ')' : 'Khong'} [${r.imageSource || 'ai'}]\n🎯 Hook: ${r.hookStyle || '?'} | Content: ${r.contentType || '?'}\n⏰ Len lich: ${new Date(r.scheduledAt).toLocaleString('vi-VN')}\n\n${r.caption}`;
   } catch (e) {
     pre.textContent = '❌ Loi: ' + e.message;
   }

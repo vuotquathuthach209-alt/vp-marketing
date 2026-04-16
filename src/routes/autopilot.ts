@@ -40,8 +40,8 @@ router.post('/run-now', async (req: AuthRequest, res) => {
     const hotelId = getHotelId(req);
     const pageId = parseInt(req.body.pageId || req.query.pageId as string, 10);
     if (!pageId) return res.status(400).json({ error: 'pageId required' });
-    const result = await runAutopilotCycle(pageId, hotelId);
-    if (!result) return res.json({ ok: false, error: 'Dat gioi han so bai/ngay theo plan' });
+    const result = await runAutopilotCycle(pageId, hotelId, true); // manual run bypasses rate limit
+    if (!result) return res.json({ ok: false, error: 'Khong tao duoc bai — kiem tra API keys va Fanpage' });
     res.json({ ok: true, ...result });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
