@@ -11,6 +11,7 @@ import { runAutopilotCycle, generateMorningReport, generateEveningReport, resear
 import { runFullSync, runBookingSync } from './ota-sync';
 import { cleanupAiCache } from './ai-cache';
 import { checkAndAlert } from './email';
+import { runBackup } from './backup';
 
 interface PostRow {
   id: number;
@@ -196,5 +197,10 @@ export function startScheduler() {
     if (cleaned > 0) console.log(`[scheduler] ai-cache cleanup: removed ${cleaned} expired entries`);
   });
 
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h');
+  // ── Database backup: 4h sáng mỗi ngày, giữ 7 bản ──
+  cron.schedule('0 4 * * *', () => {
+    runBackup();
+  });
+
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h');
 }

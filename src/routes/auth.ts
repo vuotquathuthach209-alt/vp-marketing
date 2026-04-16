@@ -8,6 +8,22 @@ import { Pool } from 'pg';
 
 const router = Router();
 
+// Rate limiting: max 5 login attempts per IP per 15 minutes
+const loginAttempts: Map<string, { count: number; resetAt: number }> = new Map();
+const MAX_ATTEMPTS = 5;
+const WINDOW_MS = 15 * 60 * 1000;
+
+function checkLoginRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const entry = loginAttempts.get(ip);
+  if (!entry || now > entry.resetAt) {
+    loginAttempts.set(ip, { count: 1, resetAt: now + WINDOW_MS });
+    return true;
+  }
+  entry.count++;
+  return entry.count <= MAX_ATTEMPTS;
+}
+
 /**
  * Sprint 9 Phase 1 — Multi-tenant Auth
  *
@@ -76,6 +92,11 @@ async function verifyOtaCredentials(email: string, password: string): Promise<{
 }
 
 router.post('/login', async (req, res) => {
+  const ip = (req.headers['x-forwarded-for'] as string || req.socket.remoteAddress || '').split(',')[0].trim();
+  if (!checkLoginRateLimit(ip)) {
+    return res.status(429).json({ error: 'Qua nhieu lan dang nhap. Vui long doi 15 phut.' });
+  }
+
   const { password, email } = req.body;
 
   // Mode 1: Admin password (backward compat / superadmin)

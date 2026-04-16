@@ -55,6 +55,12 @@ app.use('/api/payment', paymentRouter);
 
 app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 
+// Global error handler — prevent stack trace leaks
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error(`[error] ${req.method} ${req.path}:`, err.message);
+  res.status(err.status || 500).json({ error: config.nodeEnv === 'production' ? 'Internal server error' : err.message });
+});
+
 // SPA fallback
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'src', 'public', 'index.html'));

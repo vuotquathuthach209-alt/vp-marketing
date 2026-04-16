@@ -10,6 +10,7 @@ if (!fs.existsSync(config.uploadsDir)) fs.mkdirSync(config.uploadsDir, { recursi
 
 export const db = new Database(config.dbPath);
 db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 
 // Schema
 db.exec(`

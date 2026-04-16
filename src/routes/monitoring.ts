@@ -25,9 +25,9 @@ router.get('/overview', (req: AuthRequest, res) => {
   const aiStats = db.prepare(`
     SELECT
       COUNT(*) as total_calls,
-      SUM(CASE WHEN tokens_used > 0 THEN tokens_used ELSE 0 END) as total_tokens,
-      ROUND(AVG(CASE WHEN tokens_used > 0 THEN tokens_used ELSE NULL END), 0) as avg_tokens,
-      SUM(CASE WHEN cost > 0 THEN cost ELSE 0 END) as total_cost
+      SUM(CASE WHEN input_tokens > 0 THEN input_tokens + output_tokens ELSE 0 END) as total_tokens,
+      ROUND(AVG(CASE WHEN input_tokens > 0 THEN input_tokens + output_tokens ELSE NULL END), 0) as avg_tokens,
+      SUM(CASE WHEN cost_usd > 0 THEN cost_usd ELSE 0 END) as total_cost
     FROM ai_usage_log
     WHERE created_at > ? ${whereHotel}
   `).get(...params) as any;
@@ -97,8 +97,8 @@ router.get('/ai-daily', (req: AuthRequest, res) => {
     SELECT
       DATE(created_at / 1000, 'unixepoch') as day,
       COUNT(*) as calls,
-      SUM(COALESCE(tokens_used, 0)) as tokens,
-      SUM(COALESCE(cost, 0)) as cost
+      SUM(COALESCE(input_tokens + output_tokens, 0)) as tokens,
+      SUM(COALESCE(cost_usd, 0)) as cost
     FROM ai_usage_log
     WHERE created_at > ? ${whereHotel}
     GROUP BY day ORDER BY day DESC
@@ -118,8 +118,8 @@ router.get('/per-hotel', superadminOnly, (req: AuthRequest, res) => {
       h.name as hotel_name,
       h.plan,
       COUNT(DISTINCT a.id) as ai_calls,
-      SUM(COALESCE(a.tokens_used, 0)) as total_tokens,
-      SUM(COALESCE(a.cost, 0)) as total_cost,
+      SUM(COALESCE(a.input_tokens + a.output_tokens, 0)) as total_tokens,
+      SUM(COALESCE(a.cost_usd, 0)) as total_cost,
       (SELECT COUNT(*) FROM posts WHERE hotel_id = h.id AND created_at > ?) as posts_count,
       (SELECT COUNT(*) FROM auto_reply_log WHERE hotel_id = h.id AND created_at > ?) as replies_count
     FROM mkt_hotels h
