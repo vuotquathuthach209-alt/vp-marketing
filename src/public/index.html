@@ -159,22 +159,20 @@
           <div class="bg-white rounded-xl shadow p-6 border-l-4 border-green-500">
             <h3 class="font-bold text-lg mb-2">📁 Google Drive — Anh Khach San</h3>
             <p class="text-xs text-slate-500 mb-4">Ket noi folder Google Drive chua anh khach san. Autopilot se tu dong chon anh dang bai vao nhung ngay "Hotel Photo".</p>
-            <div class="flex gap-2 items-end mb-3">
-              <div class="flex-1">
-                <label class="block text-xs font-semibold mb-1">Google Drive Folder ID</label>
-                <input id="gdrive-folder-id" type="text" placeholder="1abc...xyz (lay tu URL folder)" class="w-full border rounded-lg px-3 py-2 text-sm" />
-              </div>
-              <div class="w-64">
-                <label class="block text-xs font-semibold mb-1">Google API Key</label>
-                <input id="gdrive-api-key" type="password" placeholder="AIza..." class="w-full border rounded-lg px-3 py-2 text-sm" />
-              </div>
+            <div class="mb-3">
+              <label class="block text-xs font-semibold mb-1">Google Drive Folder ID</label>
+              <input id="gdrive-folder-id" type="text" placeholder="1abc...xyz (lay tu URL folder)" class="w-full border rounded-lg px-3 py-2 text-sm" />
             </div>
+            <div id="gdrive-key-status" class="text-xs mb-3"></div>
             <div class="flex gap-2 items-center">
               <button id="btn-gdrive-save" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-700">💾 Luu</button>
               <button id="btn-gdrive-sync" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700">🔄 Sync Anh</button>
               <span id="gdrive-status" class="text-sm"></span>
             </div>
-            <p class="text-xs text-slate-500 mt-2">💡 Tao folder tren Google Drive, upload anh khach san vao, share folder la "Anyone with the link". Lay Folder ID tu URL: drive.google.com/drive/folders/<b>FOLDER_ID</b></p>
+            <p class="text-xs text-slate-500 mt-2">💡 <b>Buoc 1:</b> Tao folder tren Google Drive, upload anh vao.<br>
+            <b>Buoc 2:</b> Share folder → "Anyone with the link" → Viewer.<br>
+            <b>Buoc 3:</b> Bat <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" class="text-blue-500 underline">Google Drive API</a> tren Cloud Console (cung project voi Gemini key).<br>
+            <b>Buoc 4:</b> Lay Folder ID tu URL: drive.google.com/drive/folders/<b>FOLDER_ID</b></p>
           </div>
 
         </div>

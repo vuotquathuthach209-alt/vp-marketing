@@ -505,11 +505,13 @@ async function loadAutopilotStatus() {
     // Load GDrive settings
     const gd = await api('/autopilot/gdrive').catch(() => ({}));
     if (gd.folderId) document.getElementById('gdrive-folder-id').value = gd.folderId;
-    const gdKeyEl = document.getElementById('gdrive-api-key');
-    if (gd.apiKey) {
-      gdKeyEl.placeholder = `✅ Da co key (${gd.keySource || 'configured'})`;
-    } else {
-      gdKeyEl.placeholder = 'AIza... (hoac de trong neu da co Google API Key o Cai dat)';
+    const keyStatus = document.getElementById('gdrive-key-status');
+    if (keyStatus) {
+      if (gd.apiKey) {
+        keyStatus.innerHTML = `✅ <b>API Key:</b> Dang dung <span class="text-blue-600">${gd.keySource || 'configured'}</span> — Drive API can duoc bat tren Cloud Console.`;
+      } else {
+        keyStatus.innerHTML = `⚠️ Chua co Google API Key. Vao <b>Cai dat → API Keys → Google</b> de nhap key.`;
+      }
     }
   } catch {}
 }
@@ -631,10 +633,11 @@ document.getElementById('btn-gdrive-save')?.addEventListener('click', async () =
   try {
     await api('/autopilot/gdrive', { method: 'POST', body: JSON.stringify({
       folderId: document.getElementById('gdrive-folder-id').value,
-      apiKey: document.getElementById('gdrive-api-key').value,
+      clearKey: true, // Clear any bad gdrive_api_key, use google_api_key instead
     })});
     st.textContent = '✅ Da luu';
     st.className = 'text-sm text-green-600';
+    loadAutopilotStatus();
   } catch (e) { st.textContent = '❌ ' + e.message; st.className = 'text-sm text-red-600'; }
 });
 document.getElementById('btn-gdrive-sync')?.addEventListener('click', async () => {

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authMiddleware, AuthRequest, getHotelId } from '../middleware/auth';
-import { setSetting, getSetting } from '../db';
+import { db, setSetting, getSetting } from '../db';
 import {
   getAutopilotStatus,
   runAutopilotCycle,
@@ -106,9 +106,14 @@ router.get('/gdrive', (req: AuthRequest, res) => {
 
 router.post('/gdrive', (req: AuthRequest, res) => {
   const hotelId = getHotelId(req);
-  const { folderId, apiKey } = req.body;
+  const { folderId, apiKey, clearKey } = req.body;
   if (folderId !== undefined) setSetting('gdrive_folder_id', folderId, hotelId);
-  if (apiKey && !apiKey.startsWith('***')) setSetting('gdrive_api_key', apiKey);
+  // Only save if it looks like a real API key (starts with AIza)
+  if (apiKey && apiKey.startsWith('AIza')) setSetting('gdrive_api_key', apiKey);
+  // Allow clearing bad key
+  if (clearKey) {
+    try { db.prepare(`DELETE FROM settings WHERE key = 'gdrive_api_key'`).run(); } catch {}
+  }
   res.json({ ok: true });
 });
 
