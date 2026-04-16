@@ -1455,6 +1455,41 @@ if (bkQrUpload) {
   });
 }
 
+// ====== FB Token Status ======
+async function checkTokenStatus() {
+  const el = document.getElementById('token-status-list');
+  el.innerHTML = '<p class="text-slate-400">Dang kiem tra...</p>';
+  try {
+    const r = await api('/api/settings/pages/token-status');
+    const data = await r.json();
+    el.innerHTML = data.length === 0 ? '<p class="text-slate-400">Chua co page nao</p>' :
+      data.map(p => `
+        <div class="flex justify-between items-center bg-slate-50 rounded p-2">
+          <span class="font-semibold">${p.name}</span>
+          <span>${p.status}</span>
+          <span class="text-xs text-slate-400">${p.days_left >= 0 ? p.days_left + ' ngay' : 'N/A'}</span>
+          ${p.is_valid ? `<button onclick="refreshPageToken(${p.page_id})" class="text-xs bg-blue-500 text-white px-2 py-1 rounded">Gia han</button>` : ''}
+        </div>`).join('');
+  } catch(e) {
+    el.innerHTML = '<p class="text-red-500">Loi kiem tra. Kiem tra FB_APP_ID va FB_APP_SECRET.</p>';
+  }
+}
+
+async function refreshPageToken(pageId) {
+  const r = await api('/api/settings/pages/' + pageId + '/refresh-token', 'POST');
+  const d = await r.json();
+  alert(d.ok ? d.message : 'Loi: ' + d.error);
+  checkTokenStatus();
+}
+
+async function refreshAllTokens() {
+  const r = await api('/api/settings/pages/refresh-all', 'POST');
+  const d = await r.json();
+  alert(`Gia han: ${d.refreshed} ok, ${d.failed} loi`);
+  if (d.errors?.length) alert('Loi:\n' + d.errors.join('\n'));
+  checkTokenStatus();
+}
+
 // ====== API Keys — All Providers ======
 const API_KEY_MAP = {
   'key-anthropic': 'anthropic_api_key',

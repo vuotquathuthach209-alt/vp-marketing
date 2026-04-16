@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db, getSetting, setSetting } from '../db';
-import { verifyPageToken } from '../services/facebook';
+import { verifyPageToken, debugToken, exchangeLongLivedToken, autoRefreshPageTokens } from '../services/facebook';
 import { authMiddleware, AuthRequest, getHotelId } from '../middleware/auth';
 import { countKeys, getAllKeys } from '../services/keyrotator';
 import { getRouterStatus } from '../services/router';
@@ -197,6 +197,56 @@ router.post('/telegram/authorize/:chat_id', (req, res) => {
 router.post('/telegram/revoke/:chat_id', (req, res) => {
   db.prepare(`UPDATE telegram_chats SET authorized = 0 WHERE chat_id = ?`).run(req.params.chat_id);
   res.json({ ok: true });
+});
+
+// Kiểm tra token status tất cả pages
+router.get('/pages/token-status', async (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
+  const pages = db.prepare(`SELECT id, name, fb_page_id, access_token FROM pages WHERE hotel_id = ?`).all(hotelId) as any[];
+
+  const results = [];
+  for (const page of pages) {
+    const info = await debugToken(page.access_token);
+    const now = Math.floor(Date.now() / 1000);
+    const daysLeft = info.expires_at > 0 ? Math.round((info.expires_at - now) / 86400) : -1;
+    results.push({
+      page_id: page.id,
+      name: page.name,
+      fb_page_id: page.fb_page_id,
+      is_valid: info.is_valid,
+      expires_at: info.expires_at > 0 ? new Date(info.expires_at * 1000).toISOString() : null,
+      days_left: daysLeft,
+      status: !info.is_valid ? '❌ Het han' : daysLeft < 7 ? '⚠️ Sap het' : '✅ OK',
+      scopes: info.scopes,
+    });
+  }
+  res.json(results);
+});
+
+// Refresh token thủ công cho 1 page
+router.post('/pages/:id/refresh-token', async (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
+  const pageId = parseInt(req.params.id as string, 10);
+  const page = db.prepare(`SELECT * FROM pages WHERE id = ? AND hotel_id = ?`).get(pageId, hotelId) as any;
+  if (!page) return res.status(404).json({ error: 'Page not found' });
+
+  try {
+    const result = await exchangeLongLivedToken(page.access_token);
+    db.prepare(`UPDATE pages SET access_token = ? WHERE id = ?`).run(result.access_token, pageId);
+    res.json({
+      ok: true,
+      expires_in_days: Math.round(result.expires_in / 86400),
+      message: `Token da duoc gia han ${Math.round(result.expires_in / 86400)} ngay`,
+    });
+  } catch (e: any) {
+    res.status(400).json({ error: e?.response?.data?.error?.message || e.message });
+  }
+});
+
+// Refresh tất cả tokens (admin)
+router.post('/pages/refresh-all', async (req: AuthRequest, res) => {
+  const result = await autoRefreshPageTokens();
+  res.json(result);
 });
 
 export default router;

@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import { db } from '../db';
-import { publishText, publishImage, publishVideo, mediaFullPath } from './facebook';
+import { publishText, publishImage, publishVideo, mediaFullPath, autoRefreshPageTokens } from './facebook';
 import { runCampaigns } from './campaigns';
 import { runAutoReply } from './autoreply';
 import { pullMetrics } from './analytics';
@@ -172,6 +172,18 @@ export function startScheduler() {
   setTimeout(() => {
     runFullSync().catch(e => console.error('[scheduler] initial ota-sync error:', e));
   }, 10000);
+
+  // ── FB Token auto-refresh: 2h sáng mỗi ngày ──
+  cron.schedule('0 2 * * *', () => {
+    autoRefreshPageTokens()
+      .then(r => {
+        if (r.refreshed > 0 || r.failed > 0) {
+          console.log(`[scheduler] fb-token refresh: ${r.refreshed} ok, ${r.failed} failed`);
+          if (r.errors.length) console.warn('[scheduler] fb-token errors:', r.errors);
+        }
+      })
+      .catch(e => console.error('[scheduler] fb-token refresh error:', e));
+  });
 
   // ── Alerting: check mỗi giờ ──
   cron.schedule('0 * * * *', () => {
