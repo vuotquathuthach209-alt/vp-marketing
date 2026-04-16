@@ -477,22 +477,105 @@ document.getElementById('btn-save-image-provider')?.addEventListener('click', as
 });
 
 // ====== Autopilot ======
+const DAY_NAMES = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+const DAY_FULL = ['Chu Nhat', 'Thu Hai', 'Thu Ba', 'Thu Tu', 'Thu Nam', 'Thu Sau', 'Thu Bay'];
+const SOURCE_ICONS = { gdrive: '📁', ai: '🤖', web: '🌐', unsplash: '📷' };
+const HOOK_LABELS = { question: '❓ Cau hoi', fomo: '🔥 FOMO', story: '📖 Ke chuyen', stats: '📊 So lieu', tips: '💡 Meo', controversial: '⚡ Tranh cai' };
+
 async function loadAutopilotStatus() {
   try {
     const r = await api('/autopilot/status');
     const badge = document.getElementById('autopilot-status-badge');
     badge.innerHTML = r.enabled
-      ? '<span class="text-green-600">🟢 ĐANG CHẠY</span>'
-      : '<span class="text-slate-500">⚪ TẮT</span>';
+      ? '<span class="text-green-600">🟢 DANG CHAY</span>'
+      : '<span class="text-slate-500">⚪ TAT</span>';
     const info = document.getElementById('autopilot-info');
+    const p = r.currentPillar;
     info.innerHTML = `
-      <div>📋 Pillar hôm nay: <b>${r.currentPillar.emoji} ${r.currentPillar.name}</b> — ${r.currentPillar.description}</div>
-      <div>⏰ Giờ đăng: <b>${r.postTimes.join(', ')}</b></div>
-      <div>📝 Số bài/ngày: <b>${r.postsPerDay}</b></div>
+      <div>📋 Hom nay: <b>${p.emoji} ${p.name}</b> — ${p.description}</div>
+      <div>📝 Noi dung: <b>${p.content_type}</b> | Anh: <b>${SOURCE_ICONS[p.image_source] || '🤖'} ${p.image_source}</b> | Hook: <b>${HOOK_LABELS[p.hook_style] || p.hook_style}</b></div>
+      <div>⏰ Gio dang: <b>${r.postTimes.join(', ')}</b> | Bai/ngay: <b>${r.postsPerDay}</b></div>
+      ${r.gdriveFolder ? `<div>📁 GDrive: <b>${r.gdriveImageCount} anh</b> da sync</div>` : '<div class="text-amber-600">⚠️ Chua ket noi Google Drive — anh khach san se dung AI gen</div>'}
     `;
+
+    // Render calendar
+    renderCalendar(r.calendar || []);
+
+    // Load GDrive settings
+    const gd = await api('/autopilot/gdrive').catch(() => ({}));
+    if (gd.folderId) document.getElementById('gdrive-folder-id').value = gd.folderId;
   } catch {}
 }
 loadAutopilotStatus();
+
+function renderCalendar(calendar) {
+  const grid = document.getElementById('calendar-grid');
+  if (!grid) return;
+  const today = new Date().getDay();
+  grid.innerHTML = calendar.map((day, i) => {
+    const isToday = day.day_of_week === today;
+    const src = SOURCE_ICONS[day.image_source] || '🤖';
+    return `
+      <div class="p-3 rounded-lg border ${isToday ? 'border-indigo-500 bg-indigo-50 ring-2 ring-indigo-300' : 'border-slate-200 bg-slate-50'} cursor-pointer hover:shadow-md transition" onclick="editCalendarDay(${day.day_of_week})">
+        <div class="font-bold ${isToday ? 'text-indigo-700' : 'text-slate-700'}">${DAY_NAMES[day.day_of_week]}</div>
+        <div class="text-lg my-1">${day.pillar_emoji}</div>
+        <div class="font-semibold text-[11px]">${day.pillar_name}</div>
+        <div class="text-[10px] text-slate-500 mt-1">${src} ${day.image_source}</div>
+        <div class="text-[10px] text-slate-400">${day.hook_style}</div>
+      </div>`;
+  }).join('');
+}
+
+window.editCalendarDay = function(dow) {
+  const types = ['product','news_brand','tips','behind_scenes','lifestyle','community'];
+  const sources = ['gdrive','ai','web','unsplash'];
+  const hooks = ['question','fomo','story','stats','tips','controversial'];
+  const html = `
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" id="cal-modal">
+      <div class="bg-white rounded-xl p-6 w-96 shadow-2xl">
+        <h3 class="font-bold text-lg mb-4">📅 ${DAY_FULL[dow]}</h3>
+        <label class="block text-xs font-semibold mb-1">Loai noi dung</label>
+        <select id="cal-type" class="w-full border rounded px-3 py-2 text-sm mb-3">
+          ${types.map(t => `<option value="${t}">${t}</option>`).join('')}
+        </select>
+        <label class="block text-xs font-semibold mb-1">Nguon anh</label>
+        <select id="cal-source" class="w-full border rounded px-3 py-2 text-sm mb-3">
+          ${sources.map(s => `<option value="${s}">${SOURCE_ICONS[s]||''} ${s}</option>`).join('')}
+        </select>
+        <label class="block text-xs font-semibold mb-1">Hook style</label>
+        <select id="cal-hook" class="w-full border rounded px-3 py-2 text-sm mb-3">
+          ${hooks.map(h => `<option value="${h}">${HOOK_LABELS[h]||h}</option>`).join('')}
+        </select>
+        <label class="block text-xs font-semibold mb-1">Ten pillar</label>
+        <input id="cal-name" class="w-full border rounded px-3 py-2 text-sm mb-3" placeholder="VD: Product" />
+        <label class="block text-xs font-semibold mb-1">Emoji</label>
+        <input id="cal-emoji" class="w-full border rounded px-3 py-2 text-sm mb-3" placeholder="🏨" maxlength="4" />
+        <label class="block text-xs font-semibold mb-1">Mo ta</label>
+        <input id="cal-desc" class="w-full border rounded px-3 py-2 text-sm mb-4" placeholder="Gioi thieu phong..." />
+        <div class="flex gap-2">
+          <button onclick="saveCalendarDay(${dow})" class="flex-1 bg-indigo-600 text-white py-2 rounded-lg text-sm font-semibold">Luu</button>
+          <button onclick="document.getElementById('cal-modal').remove()" class="flex-1 bg-slate-200 py-2 rounded-lg text-sm">Huy</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+};
+
+window.saveCalendarDay = async function(dow) {
+  try {
+    await api('/autopilot/calendar', { method: 'POST', body: JSON.stringify({
+      day_of_week: dow,
+      content_type: document.getElementById('cal-type').value,
+      image_source: document.getElementById('cal-source').value,
+      hook_style: document.getElementById('cal-hook').value,
+      pillar_name: document.getElementById('cal-name').value || 'Custom',
+      pillar_emoji: document.getElementById('cal-emoji').value || '📝',
+      pillar_desc: document.getElementById('cal-desc').value || '',
+    })});
+    document.getElementById('cal-modal')?.remove();
+    loadAutopilotStatus();
+  } catch (e) { alert('Loi: ' + e.message); }
+};
 
 document.getElementById('btn-autopilot-on')?.addEventListener('click', async () => {
   await api('/autopilot/enable', { method: 'POST' });
@@ -505,37 +588,57 @@ document.getElementById('btn-autopilot-off')?.addEventListener('click', async ()
 document.getElementById('btn-autopilot-run')?.addEventListener('click', async () => {
   const pre = document.getElementById('autopilot-report');
   pre.classList.remove('hidden');
-  pre.textContent = '⏳ Đang chạy autopilot (nghiên cứu → viết caption → tạo ảnh)...';
+  pre.textContent = '⏳ Dang chay autopilot (nghien cuu → viet caption → tao anh)...';
   try {
     const pageId = state.pages?.[0]?.id;
-    if (!pageId) { pre.textContent = '❌ Chưa có Fanpage nào. Thêm Fanpage trước.'; return; }
+    if (!pageId) { pre.textContent = '❌ Chua co Fanpage nao. Them Fanpage truoc.'; return; }
     const r = await api('/autopilot/run-now', { method: 'POST', body: JSON.stringify({ pageId }) });
-    pre.textContent = `✅ Đã tạo post #${r.postId}\n📝 Chủ đề: ${r.topic}\n🖼️ Ảnh: ${r.mediaId ? 'Có (ID ' + r.mediaId + ')' : 'Không'}\n⏰ Lên lịch: ${new Date(r.scheduledAt).toLocaleString('vi-VN')}\n\n${r.caption}`;
+    pre.textContent = `✅ Da tao post #${r.postId}\n📝 Chu de: ${r.topic}\n🖼️ Anh: ${r.mediaId ? 'Co (ID ' + r.mediaId + ')' : 'Khong'} [${r.imageSource}]\n🎯 Hook: ${r.hookStyle} | Content: ${r.contentType}\n⏰ Len lich: ${new Date(r.scheduledAt).toLocaleString('vi-VN')}\n\n${r.caption}`;
   } catch (e) {
-    pre.textContent = '❌ Lỗi: ' + e.message;
+    pre.textContent = '❌ Loi: ' + e.message;
   }
 });
 document.getElementById('btn-autopilot-morning')?.addEventListener('click', async () => {
   const pre = document.getElementById('autopilot-report');
   pre.classList.remove('hidden');
-  pre.textContent = '⏳ Đang nghiên cứu chủ đề...';
+  pre.textContent = '⏳ Dang nghien cuu chu de...';
   try {
     const r = await api('/autopilot/morning-report');
     pre.textContent = r.report;
-  } catch (e) {
-    pre.textContent = '❌ ' + e.message;
-  }
+  } catch (e) { pre.textContent = '❌ ' + e.message; }
 });
 document.getElementById('btn-autopilot-evening')?.addEventListener('click', async () => {
   const pre = document.getElementById('autopilot-report');
   pre.classList.remove('hidden');
-  pre.textContent = '⏳ Đang tổng hợp...';
+  pre.textContent = '⏳ Dang tong hop...';
   try {
     const r = await api('/autopilot/evening-report');
     pre.textContent = r.report;
-  } catch (e) {
-    pre.textContent = '❌ ' + e.message;
-  }
+  } catch (e) { pre.textContent = '❌ ' + e.message; }
+});
+
+// Google Drive
+document.getElementById('btn-gdrive-save')?.addEventListener('click', async () => {
+  const st = document.getElementById('gdrive-status');
+  try {
+    await api('/autopilot/gdrive', { method: 'POST', body: JSON.stringify({
+      folderId: document.getElementById('gdrive-folder-id').value,
+      apiKey: document.getElementById('gdrive-api-key').value,
+    })});
+    st.textContent = '✅ Da luu';
+    st.className = 'text-sm text-green-600';
+  } catch (e) { st.textContent = '❌ ' + e.message; st.className = 'text-sm text-red-600'; }
+});
+document.getElementById('btn-gdrive-sync')?.addEventListener('click', async () => {
+  const st = document.getElementById('gdrive-status');
+  st.textContent = '⏳ Dang sync...';
+  st.className = 'text-sm text-blue-600';
+  try {
+    const r = await api('/autopilot/gdrive/sync', { method: 'POST' });
+    st.textContent = `✅ Sync xong: ${r.count} anh`;
+    st.className = 'text-sm text-green-600';
+    loadAutopilotStatus();
+  } catch (e) { st.textContent = '❌ ' + e.message; st.className = 'text-sm text-red-600'; }
 });
 
 // Nút 🗑️ xoá toàn bộ key của 1 provider

@@ -391,6 +391,37 @@ CREATE TABLE IF NOT EXISTS email_log (
 );
 CREATE INDEX IF NOT EXISTS idx_email_log_to ON email_log(to_email);
 
+-- Google Drive synced images
+CREATE TABLE IF NOT EXISTS gdrive_images (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  drive_file_id TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  mime_type TEXT DEFAULT 'image/jpeg',
+  view_url TEXT NOT NULL,
+  used_count INTEGER NOT NULL DEFAULT 0,
+  last_used_at INTEGER,
+  synced_at INTEGER NOT NULL,
+  UNIQUE(hotel_id, drive_file_id)
+);
+CREATE INDEX IF NOT EXISTS idx_gdrive_hotel ON gdrive_images(hotel_id);
+
+-- Content calendar: weekly content strategy per hotel
+CREATE TABLE IF NOT EXISTS content_calendar (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  day_of_week INTEGER NOT NULL,          -- 0=Sun, 1=Mon, ..., 6=Sat
+  content_type TEXT NOT NULL,             -- hotel_photo | news_brand | web_inspiration | community | lifestyle | tips | product
+  image_source TEXT NOT NULL DEFAULT 'ai', -- gdrive | web | ai | unsplash
+  pillar_name TEXT NOT NULL,
+  pillar_emoji TEXT NOT NULL DEFAULT '📝',
+  pillar_desc TEXT NOT NULL DEFAULT '',
+  hook_style TEXT DEFAULT 'question',     -- question | fomo | story | stats | tips | controversial
+  active INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(hotel_id, day_of_week)
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_hotel ON content_calendar(hotel_id);
+
 -- Conversation memory: store recent messages per sender for context
 CREATE TABLE IF NOT EXISTS conversation_memory (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

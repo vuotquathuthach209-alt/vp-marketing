@@ -1,11 +1,14 @@
 import { Router } from 'express';
 import { authMiddleware, AuthRequest, getHotelId } from '../middleware/auth';
-import { setSetting } from '../db';
+import { setSetting, getSetting } from '../db';
 import {
   getAutopilotStatus,
   runAutopilotCycle,
   generateMorningReport,
   generateEveningReport,
+  getWeekCalendar,
+  saveCalendarDay,
+  syncGdriveImages,
 } from '../services/autopilot';
 
 const router = Router();
@@ -58,6 +61,57 @@ router.get('/evening-report', async (req: AuthRequest, res) => {
   try {
     const report = await generateEveningReport(getHotelId(req));
     res.json({ ok: true, report });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Content Calendar ──
+
+router.get('/calendar', (req: AuthRequest, res) => {
+  try {
+    res.json({ calendar: getWeekCalendar(getHotelId(req)) });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/calendar', (req: AuthRequest, res) => {
+  try {
+    const { day_of_week, content_type, image_source, pillar_name, pillar_emoji, pillar_desc, hook_style } = req.body;
+    if (day_of_week === undefined) return res.status(400).json({ error: 'day_of_week required' });
+    saveCalendarDay(getHotelId(req), {
+      day_of_week, content_type, image_source,
+      pillar_name, pillar_emoji, pillar_desc, hook_style,
+    });
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Google Drive ──
+
+router.get('/gdrive', (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
+  res.json({
+    folderId: getSetting('gdrive_folder_id', hotelId) || '',
+    apiKey: getSetting('gdrive_api_key') ? '***configured***' : '',
+  });
+});
+
+router.post('/gdrive', (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
+  const { folderId, apiKey } = req.body;
+  if (folderId !== undefined) setSetting('gdrive_folder_id', folderId, hotelId);
+  if (apiKey && !apiKey.startsWith('***')) setSetting('gdrive_api_key', apiKey);
+  res.json({ ok: true });
+});
+
+router.post('/gdrive/sync', async (req: AuthRequest, res) => {
+  try {
+    const count = await syncGdriveImages(getHotelId(req));
+    res.json({ ok: true, count });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
