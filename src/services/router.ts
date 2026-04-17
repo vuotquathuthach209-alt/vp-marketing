@@ -67,8 +67,8 @@ const FALLBACK: Record<Provider, Provider[]> = {
 
 function hasKey(provider: Provider): boolean {
   if (provider === 'anthropic') return countKeys('anthropic_api_key', config.anthropicApiKey) > 0;
-  if (provider === 'google') return countKeys('google_api_key') > 0;
-  if (provider === 'groq') return countKeys('groq_api_key') > 0;
+  if (provider === 'google') return countKeys('google_api_key', process.env.GOOGLE_API_KEY) > 0;
+  if (provider === 'groq') return countKeys('groq_api_key', process.env.GROQ_API_KEY) > 0;
   if (provider === 'deepseek') return countKeys('deepseek_api_key') > 0;
   if (provider === 'openai') return countKeys('openai_api_key') > 0;
   if (provider === 'mistral') return countKeys('mistral_api_key') > 0;
@@ -217,8 +217,8 @@ async function callAnthropic(route: RouteConfig, system: string, user: string): 
 
 // ---------- Google Gemini ----------
 async function callGemini(route: RouteConfig, system: string, user: string): Promise<CallResult> {
-  const keys = getAllKeys('google_api_key');
-  const startKey = pickKey('google_api_key');
+  const keys = getAllKeys('google_api_key', process.env.GOOGLE_API_KEY);
+  const startKey = pickKey('google_api_key', process.env.GOOGLE_API_KEY);
   const startIdx = keys.indexOf(startKey);
 
   let lastErr: any;
@@ -259,8 +259,8 @@ async function callGemini(route: RouteConfig, system: string, user: string): Pro
 
 // ---------- Groq (OpenAI-compatible, host Gemma/Llama) ----------
 async function callGroq(route: RouteConfig, system: string, user: string): Promise<CallResult> {
-  const keys = getAllKeys('groq_api_key');
-  const startKey = pickKey('groq_api_key');
+  const keys = getAllKeys('groq_api_key', process.env.GROQ_API_KEY);
+  const startKey = pickKey('groq_api_key', process.env.GROQ_API_KEY);
   const startIdx = keys.indexOf(startKey);
 
   let lastErr: any;
@@ -437,8 +437,8 @@ export function getRouterStatus() {
     tasks: status,
     providers: {
       anthropic: { configured: hasKey('anthropic'), count: countKeys('anthropic_api_key', config.anthropicApiKey) },
-      google:    { configured: hasKey('google'),    count: countKeys('google_api_key') },
-      groq:      { configured: hasKey('groq'),      count: countKeys('groq_api_key') },
+      google:    { configured: hasKey('google'),    count: countKeys('google_api_key', process.env.GOOGLE_API_KEY) },
+      groq:      { configured: hasKey('groq'),      count: countKeys('groq_api_key', process.env.GROQ_API_KEY) },
       deepseek:  { configured: hasKey('deepseek'),  count: countKeys('deepseek_api_key') },
       openai:    { configured: hasKey('openai'),     count: countKeys('openai_api_key') },
       mistral:   { configured: hasKey('mistral'),    count: countKeys('mistral_api_key') },
