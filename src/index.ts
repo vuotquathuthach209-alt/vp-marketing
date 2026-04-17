@@ -33,6 +33,13 @@ app.use(cookieParser());
 // Static frontend
 app.use(express.static(path.join(__dirname, '..', 'src', 'public')));
 
+// Public media (room images, uploaded photos) — no auth, FB/clients fetch directly
+import { config as _cfg } from './config';
+app.use('/media', express.static(_cfg.mediaDir, {
+  maxAge: '30d',
+  fallthrough: false,
+}));
+
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/settings', settingsRoutes);

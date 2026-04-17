@@ -105,4 +105,34 @@ router.delete('/room-images/:id', (req: any, res) => {
   res.json({ ok: true });
 });
 
+// POST /api/media/room-images/upload — bulk multipart upload
+// Form fields: room_type_name (required), caption (optional), files[] (up to 10 images)
+router.post('/room-images/upload', upload.array('files', 10), (req: any, res) => {
+  const hotelId = req.hotelId || 1;
+  const { room_type_name, caption } = req.body;
+  if (!room_type_name) return res.status(400).json({ error: 'room_type_name bắt buộc' });
+  const files = (req.files || []) as Express.Multer.File[];
+  if (files.length === 0) return res.status(400).json({ error: 'Chưa chọn file nào' });
+
+  // Determine base URL for served images (absolute so FB can fetch)
+  const base = (req.protocol + '://' + req.get('host')).replace(/\/+$/, '');
+  const now = Date.now();
+  const ins = db.prepare(
+    `INSERT INTO room_images (hotel_id, room_type_name, image_url, caption, display_order, active, created_at)
+     VALUES (?, ?, ?, ?, ?, 1, ?)`
+  );
+  const created: number[] = [];
+  const tx = db.transaction(() => {
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      // Use public /media/ route (no auth) so Facebook/clients can fetch
+      const url = `${base}/media/${encodeURIComponent(f.filename)}`;
+      const r = ins.run(hotelId, room_type_name, url, caption || '', i, now + i);
+      created.push(Number(r.lastInsertRowid));
+    }
+  });
+  tx();
+  res.json({ ok: true, count: created.length, ids: created });
+});
+
 export default router;

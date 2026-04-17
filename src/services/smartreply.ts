@@ -781,10 +781,30 @@ export async function smartReply(
   if (intent !== 'unknown' && confidence >= 0.6) {
     const handled = await handleDeterministic(classified, msg, hotelId, senderName);
     if (handled) {
+      // Auto-attach 1 preview image per room type for visual-relevant intents
+      let images = handled.images;
+      const VISUAL_INTENTS: Intent[] = ['price', 'rooms', 'check_dates', 'branch_select'];
+      if (!images && VISUAL_INTENTS.includes(handled.intent)) {
+        const roomImgs = getRoomImages(hotelId);
+        if (roomImgs.length > 0) {
+          const byType = new Map<string, any>();
+          for (const img of roomImgs) {
+            if (!byType.has(img.room_type_name)) byType.set(img.room_type_name, img);
+          }
+          const preview = [...byType.values()].slice(0, 4);
+          if (preview.length > 0) {
+            images = preview.map((img: any) => ({
+              title: img.room_type_name,
+              subtitle: img.caption || '',
+              image_url: img.image_url,
+            }));
+          }
+        }
+      }
       if (senderId) saveMessage(senderId, pid, 'bot', handled.reply, handled.intent);
       return {
         reply: handled.reply, tier: 'rules', latency_ms: Date.now() - t0,
-        intent: handled.intent, confidence, images: handled.images,
+        intent: handled.intent, confidence, images,
       };
     }
   }
