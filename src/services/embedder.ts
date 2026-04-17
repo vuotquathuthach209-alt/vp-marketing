@@ -6,7 +6,7 @@ import { pickKey, getAllKeys, countKeys } from './keyrotator';
  * Fallback: nếu không có Google key, trả null và caller sẽ dùng keyword scoring.
  */
 
-const EMBED_MODEL = 'text-embedding-004';
+const EMBED_MODEL = 'gemini-embedding-001';
 const EMBED_DIMS = 768;
 
 export function isEmbedderReady(): boolean {
@@ -36,7 +36,7 @@ export async function embed(text: string): Promise<Float32Array | null> {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${EMBED_MODEL}:embedContent?key=${key}`;
       const resp = await axios.post(
         url,
-        { model: `models/${EMBED_MODEL}`, content: { parts: [{ text: clean }] } },
+        { model: `models/${EMBED_MODEL}`, content: { parts: [{ text: clean }] }, outputDimensionality: EMBED_DIMS },
         { timeout: 30000, headers: { 'Content-Type': 'application/json' } }
       );
       const values: number[] | undefined = resp.data?.embedding?.values;
