@@ -107,7 +107,7 @@ router.get('/current', (req: AuthRequest, res) => {
 // POST /api/subscription/upgrade — tạo request nâng cấp
 router.post('/upgrade', (req: AuthRequest, res) => {
   const hotelId = getHotelId(req);
-  const { plan } = req.body;
+  const { plan, ref_code } = req.body;
   if (!plan || !PLAN_LIMITS[plan]) {
     return res.status(400).json({ error: 'Plan không hợp lệ. Chọn: free, starter, pro, enterprise' });
   }
@@ -123,10 +123,11 @@ router.post('/upgrade', (req: AuthRequest, res) => {
   }
 
   const price = getPrice(plan);
+  const cleanRef = (ref_code || '').toString().trim().toUpperCase() || null;
   const result = db.prepare(`
-    INSERT INTO subscription_requests (hotel_id, current_plan, requested_plan, amount, status, created_at)
-    VALUES (?, ?, ?, ?, 'awaiting_proof', ?)
-  `).run(hotelId, hotel.plan, plan, price, Date.now());
+    INSERT INTO subscription_requests (hotel_id, current_plan, requested_plan, amount, status, ref_code, created_at)
+    VALUES (?, ?, ?, ?, 'awaiting_proof', ?, ?)
+  `).run(hotelId, hotel.plan, plan, price, cleanRef, Date.now());
 
   // Telegram notify admin (best effort)
   try {
@@ -208,6 +209,17 @@ router.post('/admin/approve', superadminOnly, (req: AuthRequest, res) => {
   db.prepare(
     `UPDATE subscription_requests SET status = 'approved', reviewed_by = ?, reviewed_at = ?, admin_note = ? WHERE id = ?`
   ).run((req as any).user?.id || null, now, note || null, request_id);
+
+  // Referral commission
+  if (r.ref_code) {
+    try {
+      const { recordReferralCommission } = require('./referral');
+      const recorded = recordReferralCommission(r.hotel_id, r.ref_code, plan, r.amount || 0, r.id);
+      if (recorded) console.log(`[subscription] referral commission recorded for code ${r.ref_code}`);
+    } catch (e: any) {
+      console.warn('[subscription] referral record fail:', e?.message);
+    }
+  }
 
   try {
     const { notifyAdmin } = require('../services/telegram');

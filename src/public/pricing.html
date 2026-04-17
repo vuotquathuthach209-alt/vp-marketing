@@ -74,9 +74,26 @@
 </div>
 
 <script>
-let BANK = null, PRICES = null, CURRENT_REQUEST_ID = null;
+let BANK = null, PRICES = null, CURRENT_REQUEST_ID = null, REF_CODE = null;
 
 async function init() {
+  // ref code from URL or localStorage
+  const urlRef = new URLSearchParams(location.search).get('ref');
+  if (urlRef) { REF_CODE = urlRef.toUpperCase(); localStorage.setItem('ref_code', REF_CODE); }
+  else REF_CODE = localStorage.getItem('ref_code');
+
+  if (REF_CODE) {
+    try {
+      const v = await fetch('/api/referral/validate/' + REF_CODE).then(r => r.json());
+      if (v.valid) {
+        const banner = document.createElement('div');
+        banner.style.cssText = 'background:#fef3c7;border:1px solid #fbbf24;color:#92400e;padding:12px;border-radius:8px;margin-bottom:20px;text-align:center;font-size:14px;';
+        banner.innerHTML = `🎁 Bạn được giới thiệu bởi <b>${v.referrer_name}</b> (mã: <code>${REF_CODE}</code>)`;
+        document.querySelector('.wrap').insertBefore(banner, document.querySelector('.plans'));
+      } else { REF_CODE = null; localStorage.removeItem('ref_code'); }
+    } catch {}
+  }
+
   const r = await fetch('/api/public/bank-info').then(r => r.json());
   BANK = r.bank; PRICES = r.prices;
   document.getElementById('cZalo').textContent = r.contact.zalo;
@@ -105,7 +122,7 @@ async function choosePlan(planId, planName, price) {
   const up = await fetch('/api/subscription/upgrade', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-    body: JSON.stringify({ plan: planId }),
+    body: JSON.stringify({ plan: planId, ref_code: REF_CODE || undefined }),
   }).then(r => r.json());
 
   if (up.error) { alert(up.error); return; }

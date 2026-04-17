@@ -70,6 +70,7 @@
         <button data-tab="wiki" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">📚 Kien thuc AI</button>
         <button data-tab="feedback" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">⭐ Cham bot</button>
         <button data-tab="guests" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">👥 Khach quen</button>
+        <button data-tab="referral" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">🎁 Gioi thieu</button>
 
         <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Bao cao</div>
         <button data-tab="analytics" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">📈 Thong ke</button>
@@ -1100,6 +1101,38 @@
         <p class="text-sm text-slate-500 mb-4">Bot tu nho khach qua nhieu phien chat. Du lieu duoc dung de ca nhan hoa loi chao / goi y.</p>
         <button onclick="loadGuests()" class="bg-slate-200 px-3 py-1 rounded text-sm mb-4">🔄 Tai lai</button>
         <div id="guests-list" class="bg-white rounded-xl shadow overflow-hidden max-w-5xl"></div>
+      </section>
+
+      <!-- REFERRAL TAB -->
+      <section data-panel="referral" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-4">🎁 Chương trình giới thiệu</h2>
+        <p class="text-sm text-slate-500 mb-6">Chia sẻ link giới thiệu → nhận <b>20% hoa hồng</b> tháng đầu tiên mỗi khi có KS mới đăng ký gói.</p>
+
+        <div class="max-w-3xl space-y-6">
+          <div class="bg-white rounded-xl shadow p-6">
+            <h3 class="font-bold mb-3">Mã & Link của bạn</h3>
+            <div class="flex items-center gap-2 mb-3">
+              <span class="text-slate-500 text-sm">Mã:</span>
+              <code id="ref-code" class="bg-slate-100 px-3 py-1 rounded font-mono text-lg">—</code>
+              <button onclick="copyRefCode()" class="bg-slate-200 px-3 py-1 rounded text-sm">Copy mã</button>
+            </div>
+            <div class="flex items-center gap-2">
+              <input id="ref-link" readonly class="flex-1 border rounded px-3 py-2 text-sm font-mono bg-slate-50" />
+              <button onclick="copyRefLink()" class="bg-blue-600 text-white px-4 py-2 rounded text-sm">Copy link</button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-3 gap-3">
+            <div class="bg-white rounded-xl shadow p-4"><div class="text-xs text-slate-500">Số KS đã giới thiệu</div><div class="text-2xl font-bold" id="ref-total">0</div></div>
+            <div class="bg-white rounded-xl shadow p-4"><div class="text-xs text-slate-500">Chờ nhận</div><div class="text-2xl font-bold text-orange-600" id="ref-pending">0đ</div></div>
+            <div class="bg-white rounded-xl shadow p-4"><div class="text-xs text-slate-500">Đã nhận</div><div class="text-2xl font-bold text-green-600" id="ref-paid">0đ</div></div>
+          </div>
+
+          <div class="bg-white rounded-xl shadow p-6">
+            <h3 class="font-bold mb-3">Lịch sử hoa hồng</h3>
+            <div id="ref-history" class="text-sm"></div>
+          </div>
+        </div>
       </section>
 
       <!-- SYSTEM CONFIG TAB (admin only) -->

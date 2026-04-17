@@ -2936,6 +2936,39 @@ async function loadGuests() {
   }
 }
 
+// ====== REFERRAL ======
+async function loadReferral() {
+  try {
+    const d = await api('/api/referral/my').then(r => r.json());
+    document.getElementById('ref-code').textContent = d.code;
+    document.getElementById('ref-link').value = location.origin + d.link;
+    const s = d.stats || {};
+    document.getElementById('ref-total').textContent = s.total || 0;
+    document.getElementById('ref-pending').textContent = ((s.pending_amount || 0)).toLocaleString('vi') + 'đ';
+    document.getElementById('ref-paid').textContent = ((s.paid_amount || 0)).toLocaleString('vi') + 'đ';
+    const hist = d.recent || [];
+    document.getElementById('ref-history').innerHTML = hist.length ? `
+      <table class="w-full">
+        <thead class="bg-slate-100 text-xs uppercase"><tr>
+          <th class="p-2 text-left">Ngày</th><th class="p-2 text-left">KS được giới thiệu</th>
+          <th class="p-2 text-left">Gói</th><th class="p-2 text-right">Số tiền</th>
+          <th class="p-2 text-right">Hoa hồng</th><th class="p-2 text-center">Trạng thái</th>
+        </tr></thead>
+        <tbody>${hist.map(h => `<tr class="border-t">
+          <td class="p-2 text-xs">${new Date(h.created_at).toLocaleDateString('vi-VN')}</td>
+          <td class="p-2">${escapeHtml(h.referred_name||'Hotel #'+h.referred_hotel_id)}</td>
+          <td class="p-2">${h.plan}</td>
+          <td class="p-2 text-right font-mono">${(h.amount||0).toLocaleString('vi')}đ</td>
+          <td class="p-2 text-right font-mono text-green-700">${(h.commission||0).toLocaleString('vi')}đ</td>
+          <td class="p-2 text-center"><span class="${h.status==='paid'?'text-green-600':'text-orange-600'}">${h.status==='paid'?'✅ Đã trả':'⏳ Chờ'}</span></td>
+        </tr>`).join('')}</tbody>
+      </table>` : '<div class="text-slate-500">Chưa có giao dịch nào. Bắt đầu chia sẻ link để nhận hoa hồng!</div>';
+  } catch(e) { console.warn('ref load fail', e); }
+}
+
+function copyRefCode() { navigator.clipboard.writeText(document.getElementById('ref-code').textContent); alert('Đã copy mã'); }
+function copyRefLink() { navigator.clipboard.writeText(document.getElementById('ref-link').value); alert('Đã copy link'); }
+
 // ====== Tab hooks for new tabs ======
 document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -2943,6 +2976,7 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
     if (btn.dataset.tab === 'sysconfig') { setTimeout(loadSubRequests, 200); }
     if (btn.dataset.tab === 'feedback') { setTimeout(loadFeedbackList, 100); }
     if (btn.dataset.tab === 'guests') { setTimeout(loadGuests, 100); }
+    if (btn.dataset.tab === 'referral') { setTimeout(loadReferral, 100); }
   });
 });
 

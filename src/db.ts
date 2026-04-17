@@ -549,6 +549,7 @@ safeAddColumn('subscription_requests', 'amount', 'INTEGER');
 safeAddColumn('subscription_requests', 'admin_note', 'TEXT');
 safeAddColumn('subscription_requests', 'reviewed_by', 'INTEGER');
 safeAddColumn('subscription_requests', 'reviewed_at', 'INTEGER');
+safeAddColumn('subscription_requests', 'ref_code', 'TEXT');
 
 // Indexes trên hotel_id
 try {

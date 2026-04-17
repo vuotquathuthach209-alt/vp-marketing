@@ -223,6 +223,19 @@ export function startScheduler() {
     }
   });
 
+  // ── Billing renewal reminders: 9h sáng mỗi ngày ──
+  cron.schedule('0 9 * * *', async () => {
+    try {
+      const { runBillingReminders } = require('./billing-reminder');
+      const r = await runBillingReminders();
+      if (r.sent > 0 || r.expired_newly > 0) {
+        console.log(`[scheduler] billing reminders: sent=${r.sent} expired=${r.expired_newly}`);
+      }
+    } catch (e: any) {
+      console.error('[scheduler] billing reminder error:', e?.message);
+    }
+  });
+
   // ── Monthly learning aggregation: 6h sáng mùng 1 hàng tháng ──
   cron.schedule('0 6 1 * *', () => {
     try {

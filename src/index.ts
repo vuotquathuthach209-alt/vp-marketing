@@ -24,6 +24,7 @@ import monitoringRouter from './routes/monitoring';
 import subscriptionRouter from './routes/subscription';
 import paymentRouter from './routes/payment';
 import feedbackRouter from './routes/feedback';
+import referralRouter from './routes/referral';
 
 const app = express();
 
@@ -61,6 +62,7 @@ app.use('/api/monitoring', monitoringRouter);
 app.use('/api/subscription', subscriptionRouter);
 app.use('/api/payment', paymentRouter);
 app.use('/api/feedback', feedbackRouter);
+app.use('/api/referral', referralRouter);
 
 app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 
