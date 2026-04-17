@@ -99,6 +99,14 @@ app.use('/webhook', bankWebhookRouter); // POST /webhook/bank
 
 app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 
+// Public: industries list (for signup page)
+app.get('/api/public/industries', (_req, res) => {
+  try {
+    const { listIndustries } = require('./services/industry');
+    res.json({ items: listIndustries() });
+  } catch { res.json({ items: [] }); }
+});
+
 // Public event tracking (no auth) — used by pricing.html
 app.post('/api/public/track', (req, res) => {
   try {

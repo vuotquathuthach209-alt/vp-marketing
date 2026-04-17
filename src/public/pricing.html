@@ -125,7 +125,12 @@ async function init() {
 
 async function choosePlan(planId, planName, price) {
   const token = localStorage.getItem('token');
-  if (!token) { alert('Vui lòng đăng nhập trước khi đăng ký gói.'); location.href = '/'; return; }
+  if (!token) {
+    if (confirm('Bạn cần tài khoản để đăng ký gói. Tạo tài khoản miễn phí (7 ngày trial) ngay?')) {
+      location.href = '/signup.html' + (REF_CODE ? '?ref=' + REF_CODE : '');
+    }
+    return;
+  }
 
   const up = await fetch('/api/subscription/upgrade', {
     method: 'POST',

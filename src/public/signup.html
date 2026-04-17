@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Đăng ký — VP Marketing</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #222; min-height: 100vh; padding: 30px 15px; }
+  .wrap { max-width: 520px; margin: 0 auto; }
+  .card { background: white; border-radius: 18px; padding: 32px 28px; box-shadow: 0 20px 60px rgba(0,0,0,.2); }
+  h1 { font-size: 26px; margin-bottom: 6px; color: #333; }
+  .sub { color: #666; font-size: 14px; margin-bottom: 24px; }
+  .trial-badge { display: inline-block; background: #ecfdf5; color: #059669; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 12px; margin-bottom: 18px; }
+  label { display: block; margin-top: 14px; font-size: 13px; color: #555; font-weight: 600; }
+  input, select { width: 100%; padding: 11px 12px; border: 1.5px solid #e5e7eb; border-radius: 9px; font-size: 15px; margin-top: 5px; font-family: inherit; transition: border .15s; }
+  input:focus, select:focus { outline: none; border-color: #667eea; }
+  .industries { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 6px; }
+  .ind-btn { padding: 10px 12px; border: 1.5px solid #e5e7eb; border-radius: 9px; background: white; cursor: pointer; text-align: left; font-size: 13px; font-family: inherit; transition: all .15s; }
+  .ind-btn:hover { border-color: #667eea; background: #f5f7ff; }
+  .ind-btn.active { border-color: #667eea; background: #eef2ff; color: #4338ca; font-weight: 600; }
+  button[type=submit] { width: 100%; padding: 13px; background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: 0; border-radius: 9px; font-size: 16px; font-weight: 700; cursor: pointer; margin-top: 22px; transition: opacity .15s; }
+  button[type=submit]:hover { opacity: 0.92; }
+  button[type=submit]:disabled { opacity: 0.5; cursor: not-allowed; }
+  .msg { margin-top: 12px; padding: 10px; border-radius: 8px; font-size: 14px; display: none; }
+  .msg.err { background: #fee; color: #c33; display: block; }
+  .msg.ok { background: #efe; color: #272; display: block; }
+  .footer { text-align: center; margin-top: 18px; color: rgba(255,255,255,.92); font-size: 13px; }
+  .footer a { color: white; text-decoration: underline; }
+  .features { margin-top: 8px; font-size: 12px; color: #666; }
+  .features li { padding: 3px 0; list-style: none; }
+  .features li::before { content: "✓ "; color: #22c55e; font-weight: 700; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>🚀 Tạo tài khoản</h1>
+    <span class="trial-badge">MIỄN PHÍ 7 NGÀY — Không cần thẻ</span>
+    <p class="sub">Bot AI + auto-post Facebook cho doanh nghiệp của bạn. Live trong 60 giây.</p>
+
+    <form id="f">
+      <label>Bạn thuộc ngành nào?</label>
+      <div class="industries" id="industries"></div>
+
+      <label>Tên doanh nghiệp / cơ sở *</label>
+      <input name="hotel_name" required placeholder="VD: Spa Ánh Dương" />
+
+      <label>Website (nếu có — sẽ tự động tạo wiki từ đây)</label>
+      <input name="website_url" type="url" placeholder="https://example.com" />
+
+      <div class="row">
+        <div>
+          <label>Email *</label>
+          <input name="email" type="email" required placeholder="ban@email.com" />
+        </div>
+        <div>
+          <label>Số điện thoại</label>
+          <input name="phone" type="tel" placeholder="09xxxxxxxx" />
+        </div>
+      </div>
+
+      <label>Mật khẩu * <small style="color:#888;font-weight:400">(≥ 8 ký tự)</small></label>
+      <input name="password" type="password" required minlength="8" placeholder="Ít nhất 8 ký tự" />
+
+      <ul class="features">
+        <li>1 Fanpage + chatbot AI trả lời tự động</li>
+        <li>Auto-wiki trích từ website</li>
+        <li>Đổi sang gói trả phí bất cứ lúc nào (từ 300k/tháng)</li>
+      </ul>
+
+      <button type="submit" id="submitBtn">Tạo tài khoản & bắt đầu trial</button>
+      <div class="msg" id="msg"></div>
+    </form>
+  </div>
+
+  <div class="footer">
+    Đã có tài khoản? <a href="/">Đăng nhập</a> · Xem <a href="/pricing.html">bảng giá</a>
+  </div>
+</div>
+
+<script>
+let SELECTED = 'hotel';
+const urlRef = new URLSearchParams(location.search).get('ref');
+const urlInd = new URLSearchParams(location.search).get('industry');
+
+async function init() {
+  // track
+  try {
+    fetch('/api/public/track', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'signup_view', meta: { ref: urlRef, industry: urlInd } }),
+    }).catch(() => {});
+  } catch {}
+
+  const r = await fetch('/api/public/industries').then(r => r.json()).catch(() => ({ items: [] }));
+  const list = r.items?.length ? r.items : [{ id: 'hotel', label: 'Khách sạn', emoji: '🏨' }];
+  if (urlInd && list.find(i => i.id === urlInd)) SELECTED = urlInd;
+
+  document.getElementById('industries').innerHTML = list.map(i => `
+    <button type="button" class="ind-btn ${i.id === SELECTED ? 'active' : ''}" data-id="${i.id}">
+      ${i.emoji} ${i.label}
+    </button>
+  `).join('');
+
+  document.querySelectorAll('.ind-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      SELECTED = btn.dataset.id;
+      document.querySelectorAll('.ind-btn').forEach(b => b.classList.toggle('active', b === btn));
+    });
+  });
+}
+
+document.getElementById('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('submitBtn');
+  const msg = document.getElementById('msg');
+  msg.className = 'msg';
+  btn.disabled = true;
+  btn.textContent = 'Đang tạo tài khoản...';
+
+  const fd = new FormData(e.target);
+  const body = Object.fromEntries(fd.entries());
+  body.industry = SELECTED;
+  if (urlRef) body.ref_code = urlRef.toUpperCase();
+
+  try {
+    const r = await fetch('/api/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(r => r.json());
+
+    if (r.error) {
+      msg.className = 'msg err'; msg.textContent = '❌ ' + r.error;
+      btn.disabled = false; btn.textContent = 'Tạo tài khoản & bắt đầu trial';
+      return;
+    }
+
+    msg.className = 'msg ok';
+    msg.innerHTML = `✅ Đã tạo tài khoản! ${r.auto_wiki_started ? 'Đang tự động tạo wiki từ website...' : ''} Đang chuyển đến dashboard...`;
+
+    try {
+      fetch('/api/public/track', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event: 'signup_success', meta: { industry: SELECTED, auto_wiki: !!r.auto_wiki_started } }),
+      });
+    } catch {}
+
+    setTimeout(() => location.href = '/', 1400);
+  } catch (err) {
+    msg.className = 'msg err'; msg.textContent = '❌ Lỗi kết nối: ' + err.message;
+    btn.disabled = false; btn.textContent = 'Tạo tài khoản & bắt đầu trial';
+  }
+});
+
+init();
+</script>
+</body>
+</html>

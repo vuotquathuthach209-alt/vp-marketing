@@ -741,11 +741,25 @@ async function ragReply(
     otaCtx ? `--- DỮ LIỆU KHÁCH SẠN ---\n${otaCtx}\n--- HẾT ---` : '',
   ].filter(Boolean).join('\n\n');
 
+  // Industry-specific system prompt (unlock vertical expansion)
+  let systemPrompt = RAG_SYSTEM;
+  try {
+    const hotelRow = db.prepare(`SELECT industry FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
+    const industryId = hotelRow?.industry || 'hotel';
+    if (industryId && industryId !== 'hotel') {
+      const { getIndustryTemplate } = require('./industry');
+      const tpl = getIndustryTemplate(industryId);
+      if (tpl?.system_prompt) {
+        systemPrompt = tpl.system_prompt + '\n\n' + RAG_SYSTEM;
+      }
+    }
+  } catch {}
+
   // v5: Qwen local (Ollama) là main generator — free, ~7.5 tok/s trên VPS.
   // Fallback tự động sang Gemini nếu Ollama offline (cấu hình trong FALLBACK chain).
   const raw = await generate({
     task: 'reply_qwen',
-    system: RAG_SYSTEM,
+    system: systemPrompt,
     user: `${contextParts}\n\nKhách viết: "${message}"\n\nTrả lời ngắn, chỉ dựa trên ngữ cảnh trên:`,
   });
 

@@ -262,6 +262,13 @@ router.post('/signup', async (req, res) => {
       trackEvent({ event: 'signup_completed', hotelId, userId, meta: { industry: ind, ref_code: ref_code || null }, ip: req.ip });
     } catch {}
 
+    // Seed industry wiki (12-15 entries khởi động phù hợp ngành)
+    try {
+      const { seedIndustryWiki } = require('../services/industry');
+      const seeded = seedIndustryWiki(hotelId, ind);
+      console.log(`[signup] seeded ${seeded} industry wiki entries (${ind}) for hotel ${hotelId}`);
+    } catch (e: any) { console.error('[signup] seed wiki fail:', e?.message); }
+
     // Notify admin (best effort)
     try {
       const { notifyAdmin } = require('../services/telegram');
