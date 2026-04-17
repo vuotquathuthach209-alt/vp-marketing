@@ -466,11 +466,25 @@
             <div>
               <label class="block text-sm font-semibold mb-1">Loại (namespace)</label>
               <select id="wiki-namespace" class="w-full border rounded-lg px-3 py-2">
-                <option value="business">🏢 business — Thông tin doanh nghiệp</option>
-                <option value="product">🏨 product — Sản phẩm/phòng/combo</option>
-                <option value="campaign">🎯 campaign — Chiến dịch đang chạy</option>
-                <option value="faq">❓ faq — Câu hỏi thường gặp</option>
-                <option value="lesson">📚 lesson — Bài học từ data</option>
+                <optgroup label="— Về khách sạn —">
+                  <option value="hotel_info">🏨 hotel_info — Thông tin chung KS (tên, địa chỉ, hotline)</option>
+                  <option value="room">🛏 room — Từng loại phòng (giá, diện tích, tiện nghi)</option>
+                  <option value="amenity">✨ amenity — Tiện ích & dịch vụ (wifi, bếp, bãi xe)</option>
+                  <option value="directions">🗺 directions — Hướng dẫn di chuyển (sân bay, Grab, bus)</option>
+                  <option value="policy">📋 policy — Chính sách (check-in/out, huỷ, pet, trẻ em)</option>
+                  <option value="nearby">📍 nearby — Xung quanh (ăn uống, tham quan)</option>
+                </optgroup>
+                <optgroup label="— Marketing —">
+                  <option value="promotion">🎯 promotion — Khuyến mãi đang chạy</option>
+                  <option value="brand_voice">🎭 brand_voice — Giọng văn thương hiệu</option>
+                  <option value="faq">❓ faq — Câu hỏi thường gặp khác</option>
+                </optgroup>
+                <optgroup label="— Legacy (data cũ) —">
+                  <option value="business">🏢 business</option>
+                  <option value="product">🏨 product</option>
+                  <option value="campaign">🎯 campaign</option>
+                  <option value="lesson">📚 lesson</option>
+                </optgroup>
               </select>
             </div>
             <div>
@@ -516,11 +530,19 @@
         <div class="mb-3 flex gap-2">
           <select id="wiki-filter-ns" class="border rounded-lg px-3 py-2 text-sm">
             <option value="">-- Tất cả namespace --</option>
-            <option value="business">🏢 business</option>
-            <option value="product">🏨 product</option>
-            <option value="campaign">🎯 campaign</option>
+            <option value="hotel_info">🏨 hotel_info</option>
+            <option value="room">🛏 room</option>
+            <option value="amenity">✨ amenity</option>
+            <option value="directions">🗺 directions</option>
+            <option value="policy">📋 policy</option>
+            <option value="nearby">📍 nearby</option>
+            <option value="promotion">🎯 promotion</option>
+            <option value="brand_voice">🎭 brand_voice</option>
             <option value="faq">❓ faq</option>
-            <option value="lesson">📚 lesson</option>
+            <option value="business">🏢 business (cũ)</option>
+            <option value="product">🏨 product (cũ)</option>
+            <option value="campaign">🎯 campaign (cũ)</option>
+            <option value="lesson">📚 lesson (cũ)</option>
           </select>
         </div>
         <div id="wiki-list" class="space-y-2 max-w-4xl"></div>

@@ -1277,13 +1277,89 @@ function escapeHtml(s) {
 
 function resetWikiForm() {
   document.getElementById('wiki-id').value = '';
-  document.getElementById('wiki-namespace').value = 'business';
+  document.getElementById('wiki-namespace').value = 'hotel_info';
   document.getElementById('wiki-title').value = '';
   document.getElementById('wiki-content').value = '';
   document.getElementById('wiki-tags').value = '';
   document.getElementById('wiki-always-inject').checked = false;
   document.getElementById('wiki-status').textContent = '';
+  updateWikiPlaceholders();
 }
+
+// Placeholder gợi ý theo namespace được chọn
+const WIKI_PLACEHOLDERS = {
+  hotel_info: {
+    title: 'VD: Sonder Airport — Căn hộ dịch vụ gần Tân Sơn Nhất',
+    content: 'VD:\n- Tên: Sonder Airport\n- Địa chỉ: 123 Trường Sơn, P.2, Tân Bình\n- Hotline: 0909...\n- Lễ tân: 24/7\n- Số phòng: 30\n- Khoảng cách sân bay: 800m (đi bộ 10p, taxi 5p)',
+    tags: 'địa chỉ, hotline, overview',
+    alwaysInject: true,
+  },
+  room: {
+    title: 'VD: Studio Deluxe 25m² — giường queen',
+    content: 'VD:\n- Diện tích: 25m²\n- Giường: 1 queen (1.6m)\n- Giá: 650k/đêm (T2-T5), 780k (T6-CN)\n- Tiện nghi: máy lạnh, TV, bếp mini, tủ lạnh, bồn tắm đứng\n- Sức chứa: 2 người lớn + 1 trẻ <6t\n- View: hướng sân bay (ngắm máy bay cất cánh)',
+    tags: 'studio, queen, 2 người',
+    alwaysInject: false,
+  },
+  amenity: {
+    title: 'VD: Wifi & Internet',
+    content: 'VD:\n- Wifi miễn phí tốc độ 200Mbps phủ toàn khu\n- Có router riêng mỗi tầng\n- Hỗ trợ work-from-hotel\n- Mật khẩu ghi trong phòng',
+    tags: 'wifi, internet',
+    alwaysInject: false,
+  },
+  directions: {
+    title: 'VD: Hướng dẫn đi từ sân bay Tân Sơn Nhất',
+    content: 'VD:\n- **Đi bộ**: ra khỏi ga đến, rẽ phải đi Trường Sơn ~800m (10 phút)\n- **Taxi/Grab**: 5 phút, 30-50k\n- **Xe buýt 109**: xuống trạm Công viên Hoàng Văn Thụ, đi bộ 5p\n- **Shuttle miễn phí**: hotel có xe đưa đón, báo trước 1h qua hotline',
+    tags: 'sân bay, grab, taxi, shuttle',
+    alwaysInject: false,
+  },
+  policy: {
+    title: 'VD: Chính sách check-in / check-out',
+    content: 'VD:\n- **Check-in**: 14:00\n- **Check-out**: 12:00\n- **Early check-in**: trước 12:00 tính 50% đêm\n- **Late check-out**: sau 14:00 tính 50% đêm\n- **Giấy tờ**: CCCD/passport bản gốc\n- **Đặt cọc**: 200k, hoàn khi trả phòng',
+    tags: 'check-in, check-out, cọc',
+    alwaysInject: false,
+  },
+  nearby: {
+    title: 'VD: Ăn uống xung quanh',
+    content: 'VD:\n- **Phở Hoàng** (đối diện): phở bò truyền thống, 55k, mở 6-22h\n- **Cơm tấm Ba Ghiền** (300m): cơm sườn nướng 70k, rất đông giờ trưa\n- **Trà sữa Gong Cha** (500m): trong AEON Tân Phú\n- **The Coffee House** (200m): wifi mạnh, ổ cắm nhiều',
+    tags: 'ăn uống, cafe, quanh đây',
+    alwaysInject: false,
+  },
+  promotion: {
+    title: 'VD: Combo cuối tuần T10/2026',
+    content: 'VD:\n- **Tên**: "2 đêm 1 đêm FREE"\n- **Điều kiện**: đặt từ T6 đến CN\n- **Hiệu lực**: 01/10 - 31/10/2026\n- **Code**: WEEKEND24\n- **Giảm**: đêm thứ 2 miễn phí (áp dụng Studio Deluxe trở lên)\n- **Lưu ý**: không cộng dồn với KM khác',
+    tags: 'cuối tuần, combo, code',
+    alwaysInject: false,
+  },
+  brand_voice: {
+    title: 'VD: Giọng văn Sonder Airport',
+    content: 'VD:\n- Xưng "mình" với khách, không dùng "chúng tôi"\n- Tone: trẻ trung, kể chuyện như bạn bè, pha chút hài\n- Tránh: sáo rỗng ("tuyệt vời", "đỉnh cao"), sales-y ("book ngay")\n- Hashtag ưu tiên: #SonderAirport #NgủGầnSânBay',
+    tags: 'tone, brand',
+    alwaysInject: true,
+  },
+  faq: {
+    title: 'VD: Có cho phép mang thú cưng không?',
+    content: '**Câu hỏi:** Mang chó/mèo được không?\n\n**Trả lời:** Mình chưa nhận pet nhé ạ — có bạn khách dị ứng lông nên hotel giữ policy no-pet. Rất tiếc!',
+    tags: 'pet, thú cưng',
+    alwaysInject: false,
+  },
+};
+
+function updateWikiPlaceholders() {
+  const ns = document.getElementById('wiki-namespace').value;
+  const tpl = WIKI_PLACEHOLDERS[ns];
+  if (!tpl) return;
+  const titleEl = document.getElementById('wiki-title');
+  const contentEl = document.getElementById('wiki-content');
+  const tagsEl = document.getElementById('wiki-tags');
+  if (!titleEl.value) titleEl.placeholder = tpl.title;
+  if (!contentEl.value) contentEl.placeholder = tpl.content;
+  if (!tagsEl.value) tagsEl.placeholder = tpl.tags;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const nsSel = document.getElementById('wiki-namespace');
+  if (nsSel) nsSel.addEventListener('change', updateWikiPlaceholders);
+});
 
 window.editWiki = async (id) => {
   const items = await api('/wiki');

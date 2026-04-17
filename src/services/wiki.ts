@@ -117,41 +117,42 @@ export async function buildContext(topic: string, maxCharsOrHotelId?: number, ma
     }
   }
 
+  // Các namespace "always include" nếu active: campaign, promotion (đang chạy)
   for (const r of all) {
-    if (r.namespace === 'campaign' && !pickedIds.has(r.id)) {
+    if ((r.namespace === 'campaign' || r.namespace === 'promotion') && !pickedIds.has(r.id)) {
       picked.push(r);
       pickedIds.add(r.id);
     }
   }
 
-  const products = all
-    .filter((r) => r.namespace === 'product' && !pickedIds.has(r.id))
-    .map((r) => ({ row: r, s: scoreFn(r) }))
-    .filter((x) => x.s >= minScore(x.row))
-    .sort((a, b) => b.s - a.s)
-    .slice(0, 3);
-  for (const p of products) {
-    picked.push(p.row);
-    pickedIds.add(p.row.id);
-  }
+  // Các namespace lấy top-N theo semantic score
+  // key = namespace, value = top-N cần lấy
+  const SEMANTIC_NS: Record<string, number> = {
+    hotel_info: 2,
+    room: 3,
+    amenity: 3,
+    directions: 2,
+    policy: 2,
+    nearby: 2,
+    brand_voice: 2,
+    faq: 3,
+    // Legacy
+    product: 3,
+    lesson: 2,
+  };
 
-  const faqs = all
-    .filter((r) => r.namespace === 'faq' && !pickedIds.has(r.id))
-    .map((r) => ({ row: r, s: scoreFn(r) }))
-    .filter((x) => x.s >= minScore(x.row))
-    .sort((a, b) => b.s - a.s)
-    .slice(0, 2);
-  for (const f of faqs) {
-    picked.push(f.row);
-    pickedIds.add(f.row.id);
+  for (const [ns, topN] of Object.entries(SEMANTIC_NS)) {
+    const picks = all
+      .filter((r) => r.namespace === ns && !pickedIds.has(r.id))
+      .map((r) => ({ row: r, s: scoreFn(r) }))
+      .filter((x) => ns === 'lesson' || x.s >= minScore(x.row)) // lesson không cần ngưỡng
+      .sort((a, b) => b.s - a.s)
+      .slice(0, topN);
+    for (const p of picks) {
+      picked.push(p.row);
+      pickedIds.add(p.row.id);
+    }
   }
-
-  const lessons = all
-    .filter((r) => r.namespace === 'lesson' && !pickedIds.has(r.id))
-    .map((r) => ({ row: r, s: scoreFn(r) }))
-    .sort((a, b) => b.s - a.s)
-    .slice(0, 2);
-  for (const l of lessons) picked.push(l.row);
 
   if (picked.length === 0) return '';
 
@@ -162,14 +163,31 @@ export async function buildContext(topic: string, maxCharsOrHotelId?: number, ma
   }
 
   const nsLabels: Record<string, string> = {
+    hotel_info: '🏨 THÔNG TIN KHÁCH SẠN',
+    room: '🛏 CÁC LOẠI PHÒNG',
+    amenity: '✨ TIỆN ÍCH & DỊCH VỤ',
+    directions: '🗺 HƯỚNG DẪN DI CHUYỂN',
+    policy: '📋 CHÍNH SÁCH',
+    nearby: '📍 XUNG QUANH',
+    promotion: '🎯 KHUYẾN MÃI ĐANG CHẠY',
+    brand_voice: '🎭 GIỌNG VĂN THƯƠNG HIỆU',
+    faq: '❓ FAQ LIÊN QUAN',
+    // Legacy
     business: '🏢 VỀ DOANH NGHIỆP',
     product: '🏨 SẢN PHẨM',
     campaign: '🎯 CHIẾN DỊCH ĐANG CHẠY',
-    faq: '❓ FAQ LIÊN QUAN',
     lesson: '📚 BÀI HỌC TỪ DATA',
   };
 
-  const order = ['business', 'campaign', 'product', 'faq', 'lesson'];
+  const order = [
+    'hotel_info', 'business',
+    'promotion', 'campaign',
+    'room', 'product',
+    'amenity', 'directions', 'policy', 'nearby',
+    'brand_voice',
+    'faq',
+    'lesson',
+  ];
   const parts: string[] = [];
   for (const ns of order) {
     if (!byNs[ns]) continue;
