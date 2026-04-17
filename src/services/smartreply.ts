@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { generate, TaskType } from './router';
+import { generate } from './router';
 import { buildContext } from './wiki';
 import {
   isBookingIntent,
@@ -8,26 +8,30 @@ import {
   markTransferReceived,
 } from './bookingflow';
 import { getOtaDbConfig, getOtaRoomTypes, getOtaHotelStats } from './ota-db';
+import { notifyAll } from './telegram';
 
 /**
- * Smart Reply Engine v3 — Context-Aware Chatbot
+ * Smart Reply Engine v4 — RAG + AI Intent Classification + Structured Output
  *
- * ARCHITECTURE:
- *   1) Conversation Memory — lưu lịch sử chat, đọc ngữ cảnh
- *   2) Intent Detection — dùng Gemma (nhẹ, nhanh) phân tích ý định
- *   3) Dynamic FAQ — trả lời từ data cache (0ms)
- *   4) Lightweight AI — Gemma/Groq cho câu hỏi cần hiểu ngữ cảnh (~500ms)
- *   5) Full AI — Claude/Gemini cho câu hỏi phức tạp (3-15s)
+ * ARCHITECTURE (6 IMPROVEMENTS):
+ *   1) RAG — AI chỉ trả lời dựa trên context thực (OTA DB + wiki), KHÔNG hallucinate
+ *   2) FSM narrow-scope system prompts — mỗi state có prompt riêng, hẹp
+ *   3) AI Intent Classifier — chạy TRƯỚC generation (Gemma/Flash, temp 0.2, JSON output)
+ *   4) Structured JSON + confidence — validate output, reject hallucination markers
+ *   5) Few-shot examples — bao gồm negative examples để bot học từ chối đúng cách
+ *   6) Temperature thấp 0.2-0.3 — nhất quán, giảm bịa
  *
- * FLOW:
- *   Greeting → Giới thiệu chi nhánh → Khách chọn → Q&A theo context
+ * FALLBACK FLOW:
+ *   Confidence thấp hoặc >3 turns không chốt booking → xin số điện thoại →
+ *   lưu customer_contacts + notify staff via Telegram → friendly closing
  */
 
 export interface SmartReplyResult {
   reply: string;
-  tier: 'rules' | 'wiki' | 'ai' | 'ai_light';
+  tier: 'rules' | 'wiki' | 'ai' | 'ai_light' | 'phone_capture' | 'closing';
   latency_ms: number;
   intent?: string;
+  confidence?: number;
   images?: Array<{ title: string; subtitle: string; image_url: string }>;
 }
 
@@ -35,15 +39,13 @@ export interface SmartReplyResult {
    CONVERSATION MEMORY
    ═══════════════════════════════════════════ */
 
-const MAX_HISTORY = 8; // Giữ 8 tin gần nhất cho context
+const MAX_HISTORY = 8;
 
 function saveMessage(senderId: string, pageId: number, role: 'user' | 'bot', message: string, intent?: string) {
   try {
     db.prepare(
       `INSERT INTO conversation_memory (sender_id, page_id, role, message, intent, created_at) VALUES (?, ?, ?, ?, ?, ?)`
     ).run(senderId, pageId, role, message.slice(0, 500), intent || null, Date.now());
-
-    // Cleanup: giữ tối đa 20 tin mỗi sender
     db.prepare(
       `DELETE FROM conversation_memory WHERE sender_id = ? AND id NOT IN (
         SELECT id FROM conversation_memory WHERE sender_id = ? ORDER BY created_at DESC LIMIT 20
@@ -58,21 +60,26 @@ function getConversationHistory(senderId: string): Array<{ role: string; message
       `SELECT role, message, intent FROM conversation_memory
        WHERE sender_id = ? ORDER BY created_at DESC LIMIT ?`
     ).all(senderId, MAX_HISTORY).reverse() as any[];
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
-function getLastBotIntent(senderId: string): string | null {
+function countUserTurns(senderId: string): number {
   try {
     const row = db.prepare(
-      `SELECT intent FROM conversation_memory WHERE sender_id = ? AND role = 'bot' AND intent IS NOT NULL
-       ORDER BY created_at DESC LIMIT 1`
+      `SELECT COUNT(*) as cnt FROM conversation_memory WHERE sender_id = ? AND role = 'user'`
     ).get(senderId) as any;
-    return row?.intent || null;
-  } catch {
-    return null;
-  }
+    return row?.cnt || 0;
+  } catch { return 0; }
+}
+
+function hasBookingProgress(senderId: string): boolean {
+  try {
+    const row = db.prepare(
+      `SELECT COUNT(*) as cnt FROM conversation_memory WHERE sender_id = ?
+       AND intent IN ('booking', 'transfer', 'check_dates')`
+    ).get(senderId) as any;
+    return (row?.cnt || 0) > 0;
+  } catch { return false; }
 }
 
 function isFirstMessage(senderId: string): boolean {
@@ -80,10 +87,17 @@ function isFirstMessage(senderId: string): boolean {
     const row = db.prepare(
       `SELECT COUNT(*) as cnt FROM conversation_memory WHERE sender_id = ?`
     ).get(senderId) as any;
-    return (row?.cnt || 0) <= 1; // 0 or 1 (just saved current)
-  } catch {
-    return true;
-  }
+    return (row?.cnt || 0) <= 1;
+  } catch { return true; }
+}
+
+function alreadyCapturedPhone(senderId: string): boolean {
+  try {
+    const row = db.prepare(
+      `SELECT id FROM customer_contacts WHERE sender_id = ? LIMIT 1`
+    ).get(senderId) as any;
+    return !!row;
+  } catch { return false; }
 }
 
 /* ═══════════════════════════════════════════
@@ -94,20 +108,6 @@ function removeDiacritics(str: string): string {
   return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
 }
 
-function countMatches(msg: string, msgNorm: string, keywords: string[]): number {
-  let count = 0;
-  for (const kw of keywords) {
-    const kwL = kw.toLowerCase();
-    if (msg.includes(kwL) || msgNorm.includes(removeDiacritics(kwL))) count++;
-  }
-  return count;
-}
-
-function msgContains(msg: string, msgNorm: string, keywords: string[]): boolean {
-  return countMatches(msg, msgNorm, keywords) > 0;
-}
-
-/** Get hotel info from cache */
 function getHotelCache(hotelId: number) {
   const mktHotel = db.prepare(`SELECT ota_hotel_id, name, config FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
   const otaId = mktHotel?.ota_hotel_id;
@@ -121,13 +121,11 @@ function getRoomImages(hotelId: number) {
   return db.prepare(`SELECT * FROM room_images WHERE hotel_id = ? AND active = 1 ORDER BY display_order`).all(hotelId) as any[];
 }
 
-/** Get all hotel branches (for greeting) */
 function getAllBranches(): Array<{ id: number; name: string; address?: string; phone?: string }> {
   try {
     const hotels = db.prepare(
       `SELECT h.id, h.name, h.ota_hotel_id FROM mkt_hotels h WHERE h.status = 'active' ORDER BY h.id`
     ).all() as any[];
-
     return hotels.map((h: any) => {
       let address = '', phone = '';
       if (h.ota_hotel_id) {
@@ -139,131 +137,9 @@ function getAllBranches(): Array<{ id: number; name: string; address?: string; p
       }
       return { id: h.id, name: h.name, address, phone };
     });
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
-/* ═══════════════════════════════════════════
-   INTENT DETECTION — Phân loại ý định nhanh
-   ═══════════════════════════════════════════ */
-
-type Intent = 'greeting' | 'price' | 'rooms' | 'room_images' | 'booking' | 'checkin' |
-  'check_dates' | 'location' | 'amenities' | 'payment' | 'cancel' | 'promo' | 'hourly' | 'contact' |
-  'pet' | 'review' | 'thanks' | 'branch_select' | 'unknown';
-
-interface IntentRule {
-  intent: Intent;
-  keywords: string[];
-  excludeKeywords?: string[];
-  weight: number;
-  maxMsgLength?: number;
-}
-
-const INTENT_RULES: IntentRule[] = [
-  { intent: 'room_images', keywords: ['hình', 'ảnh', 'photo', 'image', 'xem phòng', 'hình phòng', 'ảnh phòng', 'picture', 'gallery', 'cho xem', 'gửi hình', 'gửi ảnh'], weight: 15 },
-  { intent: 'cancel', keywords: ['huỷ', 'hủy', 'cancel', 'hoàn tiền', 'refund'], weight: 12 },
-  { intent: 'booking', keywords: ['đặt phòng', 'book', 'booking', 'reserve', 'muốn ở', 'muốn thuê', 'đặt ngay'], weight: 10 },
-  { intent: 'price', keywords: ['giá', 'bao nhiêu', 'price', 'phí', 'tiền', 'cost', 'rate', 'vnđ', 'vnd', 'xem giá'], excludeKeywords: ['hình', 'ảnh'], weight: 10 },
-  { intent: 'rooms', keywords: ['phòng', 'room', 'loại phòng', 'các phòng', 'có phòng', 'phòng nào', 'còn phòng'], excludeKeywords: ['hình', 'ảnh', 'đặt', 'huỷ', 'hủy'], weight: 10 },
-  { intent: 'location', keywords: ['địa chỉ', 'ở đâu', 'location', 'chỗ nào', 'đường nào', 'quận', 'vị trí', 'map', 'bản đồ'], weight: 10 },
-  { intent: 'payment', keywords: ['thanh toán', 'payment', 'trả tiền', 'chuyển khoản', 'momo', 'vnpay', 'visa', 'thẻ'], weight: 10 },
-  { intent: 'hourly', keywords: ['thuê giờ', 'theo giờ', 'hourly', 'vài giờ', 'nghỉ trưa'], weight: 10 },
-  { intent: 'pet', keywords: ['thú cưng', 'pet', 'chó', 'mèo'], weight: 10 },
-  { intent: 'checkin', keywords: ['giờ nhận', 'giờ trả', 'giờ check', 'mấy giờ', 'sớm', 'muộn'], weight: 9 },
-  { intent: 'promo', keywords: ['khuyến mãi', 'giảm giá', 'deal', 'voucher', 'ưu đãi', 'rẻ'], weight: 8 },
-  { intent: 'amenities', keywords: ['tiện ích', 'amenities', 'wifi', 'hồ bơi', 'gym', 'spa', 'đỗ xe', 'parking', 'có gì', 'dịch vụ'], weight: 8 },
-  { intent: 'contact', keywords: ['hotline', 'liên hệ', 'contact', 'số điện thoại', 'phone', 'email', 'gọi'], weight: 8 },
-  { intent: 'review', keywords: ['review', 'đánh giá', 'feedback', 'rating'], weight: 8 },
-  { intent: 'thanks', keywords: ['cảm ơn', 'thanks', 'thank', 'cám ơn', 'tks', 'ok'], weight: 2, maxMsgLength: 30 },
-  { intent: 'greeting', keywords: ['hi', 'hello', 'xin chào', 'chào bạn', 'chào', 'alo', 'hey'], weight: 2, maxMsgLength: 30 },
-];
-
-/** Detect if message contains dates like 17/05, 2025-05-17, ngày 17, etc. */
-function containsDate(msg: string): boolean {
-  return /\d{1,2}[\/\-\.]\d{1,2}/.test(msg) || /ngày\s*\d{1,2}/.test(msg) || /\d{1,2}\s*tháng\s*\d{1,2}/.test(msg);
-}
-
-function detectIntent(msg: string): { intent: Intent; score: number } {
-  const msgL = msg.toLowerCase().trim();
-  const msgNorm = removeDiacritics(msgL);
-
-  // Date detection takes priority — if message has dates + "check" or "phòng", it's about availability
-  if (containsDate(msgL)) {
-    const hasCheckKeywords = countMatches(msgL, msgNorm, ['check', 'phòng', 'room', 'ngày', 'đêm', 'ở', 'thuê', 'out', 'in']);
-    if (hasCheckKeywords > 0) {
-      return { intent: 'check_dates', score: 20 };
-    }
-  }
-
-  let bestIntent: Intent = 'unknown';
-  let bestScore = 0;
-
-  for (const rule of INTENT_RULES) {
-    if (rule.maxMsgLength && msgL.length > rule.maxMsgLength) continue;
-
-    const matches = countMatches(msgL, msgNorm, rule.keywords);
-    if (matches === 0) continue;
-
-    let penalty = 0;
-    if (rule.excludeKeywords) {
-      penalty = countMatches(msgL, msgNorm, rule.excludeKeywords) * 10;
-    }
-
-    const score = matches * rule.weight - penalty;
-    if (score > bestScore) {
-      bestScore = score;
-      bestIntent = rule.intent;
-    }
-  }
-
-  // Detect branch selection: "1", "2", "chi nhánh 1", "bạch đằng", etc.
-  if (bestIntent === 'unknown' && msgL.length < 50) {
-    const branches = getAllBranches();
-    for (let i = 0; i < branches.length; i++) {
-      const num = String(i + 1);
-      const nameL = branches[i].name.toLowerCase();
-      if (msgL === num || msgL.includes(nameL) || removeDiacritics(msgL).includes(removeDiacritics(nameL))) {
-        return { intent: 'branch_select', score: 20 };
-      }
-    }
-  }
-
-  return { intent: bestIntent, score: bestScore };
-}
-
-/* ═══════════════════════════════════════════
-   FAQ HANDLERS — Data-driven responses
-   ═══════════════════════════════════════════ */
-
-interface FaqResult {
-  reply: string;
-  intent: Intent;
-  images?: Array<{ title: string; subtitle: string; image_url: string }>;
-}
-
-function handleGreeting(hotelName: string, senderName?: string): FaqResult {
-  const branches = getAllBranches();
-  const greeting = senderName ? `Chào ${senderName}! 👋` : 'Chào bạn! 👋';
-
-  if (branches.length > 1) {
-    const branchList = branches.map((b, i) =>
-      `${i + 1}️⃣ *${b.name}*${b.address ? `\n   📍 ${b.address}` : ''}${b.phone ? ` | 📞 ${b.phone}` : ''}`
-    ).join('\n\n');
-
-    return {
-      reply: `${greeting} Cảm ơn bạn đã liên hệ!\n\nChúng mình hiện có ${branches.length} chi nhánh:\n\n${branchList}\n\n👉 Bạn muốn tìm hiểu chi nhánh nào? Gõ số (1, 2...) hoặc tên chi nhánh nhé!`,
-      intent: 'greeting',
-    };
-  }
-
-  return {
-    reply: `${greeting} Cảm ơn bạn đã nhắn tin cho ${hotelName}!\n\nMình có thể giúp bạn:\n💰 Xem giá phòng\n📸 Xem hình phòng\n📅 Đặt phòng nhanh\n📍 Địa chỉ & tiện ích\n⏰ Check-in / Check-out\n\nBạn cần tư vấn gì ạ?`,
-    intent: 'greeting',
-  };
-}
-
-/** Fetch rooms from OTA real-time (when cache is empty) */
 async function fetchRoomsRealtime(hotelId: number): Promise<any[]> {
   try {
     const mktHotel = db.prepare(`SELECT ota_hotel_id FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
@@ -271,24 +147,259 @@ async function fetchRoomsRealtime(hotelId: number): Promise<any[]> {
     if (!otaId || !getOtaDbConfig()) return [];
     const roomTypes = await getOtaRoomTypes(otaId);
     return roomTypes.map(rt => ({
-      name: rt.name,
-      base_price: rt.base_price,
-      hourly_price: rt.hourly_price,
-      max_guests: rt.max_guests,
-      bed_type: rt.bed_type,
-      room_count: rt.room_count,
-      available_count: rt.available_count,
+      name: rt.name, base_price: rt.base_price, hourly_price: rt.hourly_price,
+      max_guests: rt.max_guests, bed_type: rt.bed_type,
+      room_count: rt.room_count, available_count: rt.available_count,
     }));
   } catch { return []; }
 }
 
-async function handleFaq(intent: Intent, msg: string, hotelId: number, senderName?: string): Promise<FaqResult | null> {
+/* ═══════════════════════════════════════════
+   PHONE CAPTURE
+   ═══════════════════════════════════════════ */
+
+// Vietnamese phone: 10-11 digits, starts with 0 or +84, allows spaces/dots/dashes
+const PHONE_REGEX = /(?:\+?84|0)[\s.\-]?\d{2,3}[\s.\-]?\d{3,4}[\s.\-]?\d{3,4}/g;
+
+function extractPhone(msg: string): string | null {
+  const matches = msg.match(PHONE_REGEX);
+  if (!matches) return null;
+  for (const m of matches) {
+    const digits = m.replace(/\D/g, '');
+    if (digits.length >= 9 && digits.length <= 12) {
+      return digits.startsWith('84') ? '0' + digits.slice(2) : digits;
+    }
+  }
+  return null;
+}
+
+async function capturePhone(
+  senderId: string, senderName: string | undefined, phone: string,
+  lastMessage: string, lastIntent: string | null,
+  history: Array<{ role: string; message: string }>,
+  pageId: number, hotelId: number,
+): Promise<void> {
+  try {
+    db.prepare(
+      `INSERT INTO customer_contacts
+       (sender_id, sender_name, phone, page_id, hotel_id, last_intent, last_message, context, notified_staff, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
+    ).run(
+      senderId, senderName || null, phone, pageId, hotelId,
+      lastIntent || null, lastMessage.slice(0, 500),
+      JSON.stringify(history.slice(-6)), Date.now(),
+    );
+
+    const hotel = db.prepare(`SELECT name FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
+    const hName = hotel?.name || 'Khach san';
+    const msg = [
+      `🔔 *KHÁCH MỚI CẦN HỖ TRỢ* — ${hName}`,
+      `👤 ${senderName || 'Khách'}  |  📞 *${phone}*`,
+      `💬 "${lastMessage.slice(0, 200)}"`,
+      lastIntent ? `🎯 Intent: ${lastIntent}` : '',
+      `⏰ ${new Date().toLocaleString('vi-VN')}`,
+    ].filter(Boolean).join('\n');
+
+    notifyAll(msg).catch(() => {});
+
+    db.prepare(`UPDATE customer_contacts SET notified_staff = 1 WHERE sender_id = ? AND phone = ?`).run(senderId, phone);
+  } catch (e: any) {
+    console.error('[smartreply] capturePhone failed:', e.message);
+  }
+}
+
+function requestPhoneReply(senderName?: string): string {
+  const name = senderName ? ` ${senderName}` : '';
+  return `Cảm ơn${name} đã quan tâm ạ! 💚\n\nĐể team tư vấn hỗ trợ nhanh & chính xác nhất — đặc biệt về giá tốt, phòng trống và ưu đãi riêng — bạn cho mình xin *số điện thoại* nhé? Bên mình sẽ gọi lại trong vài phút thôi ạ. 📞`;
+}
+
+function friendlyClosing(senderName?: string): string {
+  const name = senderName ? ` ${senderName}` : ' bạn';
+  return `Cảm ơn${name} đã tin tưởng tụi mình nhé! 💚\nMong sớm được đón${name} tại khách sạn. Chúc${name} một ngày thật nhiều năng lượng và niềm vui! ☀️✨`;
+}
+
+/* ═══════════════════════════════════════════
+   AI INTENT CLASSIFIER (Bước 1 — chạy TRƯỚC)
+   ═══════════════════════════════════════════ */
+
+type Intent =
+  | 'greeting' | 'price' | 'rooms' | 'room_images' | 'booking' | 'checkin'
+  | 'check_dates' | 'location' | 'amenities' | 'payment' | 'cancel' | 'promo'
+  | 'hourly' | 'contact' | 'pet' | 'review' | 'thanks' | 'branch_select'
+  | 'phone_provided' | 'complaint' | 'unknown';
+
+interface IntentResult {
+  intent: Intent;
+  confidence: number;         // 0..1
+  entities: {
+    dates?: string;
+    guests?: number;
+    room_type?: string;
+    branch?: string;
+    phone?: string;
+  };
+  emotion: 'neutral' | 'positive' | 'frustrated' | 'urgent';
+  reasoning?: string;
+}
+
+const INTENT_CLASSIFIER_SYSTEM = `Bạn là bộ phân loại ý định (intent classifier) cho chatbot khách sạn Việt Nam.
+NHIỆM VỤ: Đọc tin nhắn khách + lịch sử chat, xuất JSON DUY NHẤT (không giải thích thêm).
+
+INTENTS (chọn đúng 1):
+- greeting: chào hỏi đầu tiên
+- price: hỏi giá, bao nhiêu tiền
+- rooms: hỏi có loại phòng gì, còn phòng không
+- room_images: xin hình/ảnh phòng
+- booking: muốn đặt phòng, đặt ngay
+- check_dates: khách báo ngày check-in/out cụ thể
+- checkin: hỏi giờ nhận/trả phòng
+- location: hỏi địa chỉ, ở đâu
+- amenities: hỏi tiện ích (wifi, hồ bơi, đỗ xe...)
+- payment: hỏi thanh toán
+- cancel: hủy phòng, hoàn tiền
+- promo: hỏi khuyến mãi, giảm giá
+- hourly: thuê theo giờ
+- contact: hỏi hotline, SĐT
+- pet: mang thú cưng
+- review: đánh giá
+- branch_select: khách chọn chi nhánh (gõ "1", "2", tên chi nhánh)
+- phone_provided: khách CUNG CẤP số điện thoại của họ
+- thanks: cảm ơn, ok
+- complaint: phàn nàn, bức xúc
+- unknown: không rõ
+
+FORMAT OUTPUT (JSON only, no markdown):
+{"intent":"<tên>","confidence":<0..1>,"entities":{"dates":"<string|null>","guests":<number|null>,"room_type":"<string|null>","phone":"<string|null>"},"emotion":"<neutral|positive|frustrated|urgent>"}
+
+QUY TẮC:
+- confidence >= 0.8 khi chắc chắn
+- confidence 0.5-0.79 khi có vài khả năng
+- confidence < 0.5 khi mơ hồ → trả unknown
+- NẾU tin nhắn có số điện thoại VN (0xxx hoặc +84) → intent = "phone_provided"
+- NẾU khách viết "bức xúc", "tệ", "chán", "không hài lòng" → complaint
+
+FEW-SHOT EXAMPLES:
+
+Input: "giá phòng bao nhiêu vậy"
+Output: {"intent":"price","confidence":0.95,"entities":{},"emotion":"neutral"}
+
+Input: "cho xem hình phòng deluxe với"
+Output: {"intent":"room_images","confidence":0.92,"entities":{"room_type":"deluxe"},"emotion":"neutral"}
+
+Input: "0987654321"
+Output: {"intent":"phone_provided","confidence":0.99,"entities":{"phone":"0987654321"},"emotion":"neutral"}
+
+Input: "17/5 check-in 2 người ở 2 đêm"
+Output: {"intent":"check_dates","confidence":0.95,"entities":{"dates":"17/5","guests":2},"emotion":"neutral"}
+
+Input: "chào bạn"
+Output: {"intent":"greeting","confidence":0.98,"entities":{},"emotion":"positive"}
+
+Input: "1"
+Output: {"intent":"branch_select","confidence":0.85,"entities":{"branch":"1"},"emotion":"neutral"}
+
+NEGATIVE EXAMPLES (đừng bịa):
+
+Input: "ủa gì vậy"
+Output: {"intent":"unknown","confidence":0.3,"entities":{},"emotion":"neutral"}
+
+Input: "hôm qua tôi đặt rồi mà không ai gọi lại"
+Output: {"intent":"complaint","confidence":0.88,"entities":{},"emotion":"frustrated"}
+
+Input: "asdfgh"
+Output: {"intent":"unknown","confidence":0.1,"entities":{},"emotion":"neutral"}`;
+
+async function classifyIntent(
+  message: string,
+  history: Array<{ role: string; message: string }>,
+): Promise<IntentResult> {
+  const histText = history.slice(-4).map(h => `${h.role === 'user' ? 'Khách' : 'Bot'}: ${h.message}`).join('\n');
+  const userPrompt = `${histText ? `Lịch sử:\n${histText}\n\n` : ''}Tin nhắn hiện tại: "${message}"\n\nJSON:`;
+
+  try {
+    const raw = await generate({ task: 'classify', system: INTENT_CLASSIFIER_SYSTEM, user: userPrompt });
+    // Extract JSON
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('no json');
+    const parsed = JSON.parse(m[0]);
+    const intent: Intent = parsed.intent || 'unknown';
+    const confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0));
+    return {
+      intent,
+      confidence,
+      entities: parsed.entities || {},
+      emotion: parsed.emotion || 'neutral',
+      reasoning: parsed.reasoning,
+    };
+  } catch {
+    // Fallback: keyword-based quick classify
+    return keywordFallbackClassify(message);
+  }
+}
+
+function keywordFallbackClassify(msg: string): IntentResult {
+  const m = msg.toLowerCase().trim();
+  const n = removeDiacritics(m);
+  const phone = extractPhone(msg);
+  if (phone) return { intent: 'phone_provided', confidence: 0.95, entities: { phone }, emotion: 'neutral' };
+
+  const has = (kws: string[]) => kws.some(k => m.includes(k) || n.includes(removeDiacritics(k)));
+
+  if (/\d{1,2}[\/\-\.]\d{1,2}/.test(m)) return { intent: 'check_dates', confidence: 0.7, entities: { dates: m.match(/\d{1,2}[\/\-\.]\d{1,2}/)?.[0] }, emotion: 'neutral' };
+  if (has(['hình', 'ảnh', 'photo', 'xem phòng'])) return { intent: 'room_images', confidence: 0.8, entities: {}, emotion: 'neutral' };
+  if (has(['giá', 'bao nhiêu', 'price'])) return { intent: 'price', confidence: 0.8, entities: {}, emotion: 'neutral' };
+  if (has(['đặt phòng', 'book', 'đặt ngay'])) return { intent: 'booking', confidence: 0.8, entities: {}, emotion: 'neutral' };
+  if (has(['hủy', 'huỷ', 'cancel', 'refund'])) return { intent: 'cancel', confidence: 0.8, entities: {}, emotion: 'frustrated' };
+  if (has(['địa chỉ', 'ở đâu', 'location'])) return { intent: 'location', confidence: 0.8, entities: {}, emotion: 'neutral' };
+  if (has(['wifi', 'hồ bơi', 'gym', 'tiện ích', 'parking'])) return { intent: 'amenities', confidence: 0.75, entities: {}, emotion: 'neutral' };
+  if (has(['thanh toán', 'chuyển khoản', 'momo', 'vnpay'])) return { intent: 'payment', confidence: 0.8, entities: {}, emotion: 'neutral' };
+  if (has(['khuyến mãi', 'giảm giá', 'deal', 'voucher'])) return { intent: 'promo', confidence: 0.75, entities: {}, emotion: 'neutral' };
+  if (has(['theo giờ', 'thuê giờ', 'hourly'])) return { intent: 'hourly', confidence: 0.8, entities: {}, emotion: 'neutral' };
+  if (has(['phòng', 'room'])) return { intent: 'rooms', confidence: 0.6, entities: {}, emotion: 'neutral' };
+  if (m.length < 20 && has(['hi', 'hello', 'chào', 'alo'])) return { intent: 'greeting', confidence: 0.85, entities: {}, emotion: 'positive' };
+  if (m.length < 15 && has(['cảm ơn', 'thanks', 'cám ơn', 'ok'])) return { intent: 'thanks', confidence: 0.8, entities: {}, emotion: 'positive' };
+  if (/^\d{1,2}$/.test(m)) return { intent: 'branch_select', confidence: 0.7, entities: { branch: m }, emotion: 'neutral' };
+  return { intent: 'unknown', confidence: 0.2, entities: {}, emotion: 'neutral' };
+}
+
+/* ═══════════════════════════════════════════
+   DETERMINISTIC HANDLERS (FSM narrow-scope)
+   Dùng dữ liệu tính sẵn — KHÔNG gọi AI
+   ═══════════════════════════════════════════ */
+
+interface HandlerResult {
+  reply: string;
+  intent: Intent;
+  images?: Array<{ title: string; subtitle: string; image_url: string }>;
+}
+
+function handleGreeting(hotelName: string, senderName?: string): HandlerResult {
+  const branches = getAllBranches();
+  const greeting = senderName ? `Chào ${senderName}! 👋` : 'Chào bạn! 👋';
+  if (branches.length > 1) {
+    const branchList = branches.map((b, i) =>
+      `${i + 1}️⃣ *${b.name}*${b.address ? `\n   📍 ${b.address}` : ''}${b.phone ? ` | 📞 ${b.phone}` : ''}`
+    ).join('\n\n');
+    return {
+      reply: `${greeting} Cảm ơn bạn đã liên hệ!\n\nTụi mình hiện có ${branches.length} chi nhánh:\n\n${branchList}\n\n👉 Bạn muốn tìm hiểu chi nhánh nào? Gõ số (1, 2...) hoặc tên chi nhánh nhé!`,
+      intent: 'greeting',
+    };
+  }
+  return {
+    reply: `${greeting} Cảm ơn bạn đã nhắn tin cho ${hotelName}!\n\nMình có thể giúp bạn:\n💰 Xem giá phòng\n📸 Xem hình phòng\n📅 Đặt phòng nhanh\n📍 Địa chỉ & tiện ích\n⏰ Check-in / Check-out\n\nBạn cần tư vấn gì ạ?`,
+    intent: 'greeting',
+  };
+}
+
+async function handleDeterministic(
+  result: IntentResult, msg: string, hotelId: number, senderName?: string,
+): Promise<HandlerResult | null> {
+  const { intent, entities } = result;
   const msgL = msg.toLowerCase().trim();
   const msgNorm = removeDiacritics(msgL);
   const { hotel, rooms: cachedRooms, hotelCache } = getHotelCache(hotelId);
   const hotelName = hotel?.name || 'Khách sạn';
 
-  // Nếu cache trống → fetch real-time từ OTA
   let rooms = cachedRooms;
   if (rooms.length === 0 && ['price', 'rooms', 'room_images', 'branch_select', 'hourly', 'check_dates'].includes(intent)) {
     rooms = await fetchRoomsRealtime(hotelId);
@@ -314,7 +425,7 @@ async function handleFaq(intent: Intent, msg: string, hotelId: number, senderNam
             ).join('\n');
           }
           return {
-            reply: `🏨 ${b.name}\n${b.address ? `📍 ${b.address}\n` : ''}${b.phone ? `📞 ${b.phone}\n` : ''}${roomInfo}\n\nBạn muốn:\n💰 Xem giá chi tiết → gõ "giá"\n📸 Xem hình phòng → gõ "hình"\n📅 Đặt phòng → gõ "đặt phòng"\n\nHoặc hỏi bất kỳ thông tin nào nhé!`,
+            reply: `🏨 ${b.name}\n${b.address ? `📍 ${b.address}\n` : ''}${b.phone ? `📞 ${b.phone}\n` : ''}${roomInfo}\n\nBạn muốn:\n💰 Xem giá chi tiết → gõ "giá"\n📸 Xem hình phòng → gõ "hình"\n📅 Đặt phòng → gõ "đặt phòng"`,
             intent: 'branch_select',
           };
         }
@@ -322,7 +433,6 @@ async function handleFaq(intent: Intent, msg: string, hotelId: number, senderNam
       return null;
     }
 
-    // ── Khách gửi ngày check-in/out → check phòng trống ──
     case 'check_dates': {
       if (rooms.length > 0) {
         const roomList = rooms.map((r: any) => {
@@ -330,11 +440,11 @@ async function handleFaq(intent: Intent, msg: string, hotelId: number, senderNam
           return `🏨 ${r.name} — ${r.base_price?.toLocaleString('vi-VN')}₫/đêm | Còn ${avail} phòng`;
         }).join('\n');
         return {
-          reply: `📅 Phòng trống tại ${hotelName}:\n\n${roomList}\n\n✅ Bạn muốn đặt phòng nào? Nhắn tên phòng hoặc gõ "đặt phòng" nhé!`,
+          reply: `📅 Phòng trống tại ${hotelName}${entities.dates ? ` (${entities.dates})` : ''}:\n\n${roomList}\n\n✅ Bạn muốn đặt phòng nào? Nhắn tên phòng hoặc gõ "đặt phòng" nhé!`,
           intent: 'check_dates',
         };
       }
-      return null; // Fall through to AI
+      return null;
     }
 
     case 'room_images': {
@@ -370,7 +480,7 @@ async function handleFaq(intent: Intent, msg: string, hotelId: number, senderNam
         }).join('\n');
         return { reply: `💰 Bảng giá ${hotelName}:\n\n${roomList}\n\n✅ Giá tốt nhất khi đặt trực tiếp!\nBạn muốn đặt phòng nào ạ?`, intent: 'price' };
       }
-      return { reply: `💰 Nhắn mình ngày check-in, mình báo giá phòng mới nhất nhé!`, intent: 'price' };
+      return null;
     }
 
     case 'rooms': {
@@ -382,17 +492,17 @@ async function handleFaq(intent: Intent, msg: string, hotelId: number, senderNam
         }).join('\n');
         return { reply: `🏨 Các loại phòng tại ${hotelName}:\n\n${roomList}\n\nGõ "giá" xem chi tiết hoặc "hình" xem ảnh phòng!`, intent: 'rooms' };
       }
-      return { reply: `🏨 Nhắn mình ngày check-in để kiểm tra phòng trống nhé!`, intent: 'rooms' };
+      return null;
     }
 
     case 'checkin': {
       const checkIn = hotelCache?.check_in_time || '14:00';
       const checkOut = hotelCache?.check_out_time || '12:00';
-      if (msgContains(msgL, msgNorm, ['sớm', 'early', 'trước'])) {
+      if (msgL.includes('sớm') || msgNorm.includes('som') || msgL.includes('early')) {
         return { reply: `⏰ Check-in tiêu chuẩn: ${checkIn}\n\nNhận sớm tùy phòng trống:\n• Trước 2h: +30%\n• Trước 4h: +50%\n\nBạn muốn check-in lúc mấy giờ?`, intent: 'checkin' };
       }
-      if (msgContains(msgL, msgNorm, ['muộn', 'trễ', 'late'])) {
-        return { reply: `⏰ Check-out tiêu chuẩn: ${checkOut}\n\nTrả muộn:\n• +2h: +30%\n• +4h: +50%\n• Sau 18:00: +1 đêm\n\nBạn cần trả muộn đến mấy giờ?`, intent: 'checkin' };
+      if (msgL.includes('muộn') || msgNorm.includes('muon') || msgL.includes('trễ') || msgL.includes('late')) {
+        return { reply: `⏰ Check-out tiêu chuẩn: ${checkOut}\n\nTrả muộn:\n• +2h: +30%\n• +4h: +50%\n• Sau 18:00: +1 đêm`, intent: 'checkin' };
       }
       return { reply: `🕐 ${hotelName}:\n⬆️ Check-in: ${checkIn}\n⬇️ Check-out: ${checkOut}\n\nCần nhận sớm/trả muộn? Nhắn mình nhé!`, intent: 'checkin' };
     }
@@ -402,7 +512,7 @@ async function handleFaq(intent: Intent, msg: string, hotelId: number, senderNam
         const parts = [hotelCache.address, hotelCache.district, hotelCache.city].filter(Boolean);
         return { reply: `📍 ${hotelName}:\n🏨 ${parts.join(', ') || 'Liên hệ mình nhé'}\n${hotelCache.phone ? `📞 ${hotelCache.phone}` : ''}\n\nBạn cần chỉ đường không ạ?`, intent: 'location' };
       }
-      return { reply: `📍 Liên hệ mình để biết địa chỉ ${hotelName} nhé!`, intent: 'location' };
+      return null;
     }
 
     case 'amenities': {
@@ -413,7 +523,7 @@ async function handleFaq(intent: Intent, msg: string, hotelId: number, senderNam
           amenities = Array.isArray(parsed) ? parsed : Object.keys(parsed).filter(k => parsed[k]);
         } catch {}
         if (amenities.length > 0) {
-          const emojiMap: Record<string, string> = { 'wifi': '📶', 'pool': '🏊', 'gym': '💪', 'spa': '🧖', 'parking': '🅿️', 'restaurant': '🍽️', 'elevator': '🛗', 'ac': '❄️', 'reception': '👨‍💼' };
+          const emojiMap: Record<string, string> = { wifi: '📶', pool: '🏊', gym: '💪', spa: '🧖', parking: '🅿️', restaurant: '🍽️', elevator: '🛗', ac: '❄️' };
           const formatted = amenities.slice(0, 10).map(a => {
             const key = a.toLowerCase().replace(/\s+/g, '');
             const emoji = Object.entries(emojiMap).find(([k]) => key.includes(k))?.[1] || '✅';
@@ -422,7 +532,7 @@ async function handleFaq(intent: Intent, msg: string, hotelId: number, senderNam
           return { reply: `🏨 Tiện ích ${hotelName}:\n\n${formatted}`, intent: 'amenities' };
         }
       }
-      return { reply: `🏨 ${hotelName} có đầy đủ tiện nghi. Hỏi cụ thể mình nhé!`, intent: 'amenities' };
+      return null;
     }
 
     case 'booking':
@@ -432,10 +542,10 @@ async function handleFaq(intent: Intent, msg: string, hotelId: number, senderNam
       return { reply: `💳 Thanh toán ${hotelName}:\n\n✅ Tại nơi lưu trú\n💚 Chuyển khoản\n💳 Visa / Mastercard\n📱 VNPay, MoMo\n\nKhông phụ phí ẩn.`, intent: 'payment' };
 
     case 'cancel':
-      return { reply: `🔄 Huỷ phòng ${hotelName}:\n\n✅ Huỷ miễn phí trước ngày check-in\n\nCần huỷ? Nhắn mã booking!`, intent: 'cancel' };
+      return { reply: `🔄 Huỷ phòng ${hotelName}:\n\n✅ Huỷ miễn phí trước ngày check-in\n\nCần huỷ? Nhắn mã booking giúp mình nhé!`, intent: 'cancel' };
 
     case 'promo':
-      return { reply: `🎉 ${hotelName}:\n\n🔥 Giá tốt nhất khi đặt trực tiếp!\n💎 Ưu đãi riêng cho khách quen\n\nInbox ngày check-in, mình check deal!`, intent: 'promo' };
+      return { reply: `🎉 ${hotelName}:\n\n🔥 Giá tốt nhất khi đặt trực tiếp!\n💎 Ưu đãi riêng cho khách quen\n\nInbox ngày check-in, mình check deal ngay!`, intent: 'promo' };
 
     case 'contact': {
       const phone = hotelCache?.phone || '';
@@ -466,50 +576,37 @@ async function handleFaq(intent: Intent, msg: string, hotelId: number, senderNam
 }
 
 /* ═══════════════════════════════════════════
-   TẦNG 2: WIKI SEARCH
+   RAG AI — Chỉ dùng cho câu hỏi phức tạp, BẮT BUỘC có context
    ═══════════════════════════════════════════ */
 
-function searchWikiDirect(message: string): string | null {
-  const keywords = message.toLowerCase().split(/\s+/).filter((w) => w.length > 2).slice(0, 5);
-  if (keywords.length === 0) return null;
+const RAG_SYSTEM = `Bạn là nhân viên tư vấn khách sạn Việt Nam. Giọng thân thiện, như hai người bạn nói chuyện.
 
-  const allWiki = db
-    .prepare(`SELECT title, content FROM knowledge_wiki WHERE content IS NOT NULL AND length(content) > 10`)
-    .all() as Array<{ title: string; content: string }>;
+QUY TẮC TUYỆT ĐỐI (vi phạm = sai):
+1. CHỈ trả lời dựa trên NGỮ CẢNH được cung cấp bên dưới. KHÔNG suy diễn.
+2. Nếu NGỮ CẢNH không có thông tin → trả lời CHÍNH XÁC: "Để mình kiểm tra và báo lại bạn nhé!"
+3. KHÔNG bịa giá, số liệu, tiện ích, địa chỉ.
+4. KHÔNG dùng các cụm: "theo tôi biết", "có lẽ", "khoảng chừng", "mình nghĩ là".
+5. Trả lời ngắn gọn 2-4 câu, tiếng Việt tự nhiên, 1-2 emoji.
+6. Đọc LỊCH SỬ HỘI THOẠI — KHÔNG hỏi lại thứ khách đã nói.
+7. Cuối câu gợi ý bước tiếp theo (xem giá / xem hình / đặt phòng).`;
 
-  let bestEntry: { title: string; content: string } | null = null;
-  let bestScore = 0;
+const HALLUCINATION_MARKERS = [
+  'theo tôi biết', 'theo mình biết', 'có lẽ', 'có thể là',
+  'khoảng chừng', 'tôi nghĩ là', 'mình nghĩ là', 'chắc là',
+  'tôi đoán', 'mình đoán', 'hình như',
+];
 
-  for (const entry of allWiki) {
-    const text = (entry.title + ' ' + entry.content).toLowerCase();
-    let score = 0;
-    for (const kw of keywords) { if (text.includes(kw)) score++; }
-    if (score / keywords.length >= 0.5 && score > bestScore) {  // Tăng threshold từ 0.4 → 0.5
-      bestScore = score;
-      bestEntry = entry;
-    }
+function validateResponse(reply: string): { valid: boolean; reason?: string } {
+  if (!reply || reply.trim().length < 5) return { valid: false, reason: 'empty' };
+  const low = reply.toLowerCase();
+  for (const marker of HALLUCINATION_MARKERS) {
+    if (low.includes(marker)) return { valid: false, reason: `hallucination: "${marker}"` };
   }
-
-  if (!bestEntry) return null;
-  const content = bestEntry.content;
-  return `📋 ${bestEntry.title}:\n\n${content.slice(0, 400)}${content.length > 400 ? '...' : ''}\n\n💬 Bạn cần biết thêm gì?`;
+  if (reply.length > 1200) return { valid: false, reason: 'too_long' };
+  return { valid: true };
 }
 
-/* ═══════════════════════════════════════════
-   TẦNG 3: AI — Context-Aware (Lightweight + Full)
-   ═══════════════════════════════════════════ */
-
-const REPLY_SYSTEM = `Bạn là nhân viên tư vấn khách sạn chuyên nghiệp tại Việt Nam.
-QUY TẮC:
-- Trả lời tiếng Việt, ngắn gọn 2-5 câu, thân thiện
-- Đọc LỊCH SỬ HỘI THOẠI để hiểu ngữ cảnh — KHÔNG hỏi lại thông tin khách đã nói
-- Dựa vào DỮ LIỆU KHÁCH SẠN bên dưới để trả lời CHÍNH XÁC
-- KHÔNG tự bịa giá, số liệu
-- Nếu không biết → "Để mình kiểm tra và báo lại bạn nhé!"
-- Dùng 1-2 emoji phù hợp
-- Cuối câu luôn gợi ý bước tiếp theo cho khách`;
-
-async function buildOtaContext(hotelId: number = 1): Promise<string> {
+async function buildOtaContext(hotelId: number): Promise<string> {
   if (!getOtaDbConfig()) return '';
   try {
     const mktHotel = db.prepare(`SELECT ota_hotel_id FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
@@ -526,35 +623,24 @@ async function buildOtaContext(hotelId: number = 1): Promise<string> {
         parts.push(`- ${rt.name}: ${rt.base_price.toLocaleString('vi-VN')}₫/đêm | ${rt.max_guests} khách | Còn ${rt.available_count}/${rt.room_count}`);
       }
     }
-    if (stats) {
-      parts.push(`TRẠNG THÁI: ${stats.available_rooms}/${stats.total_rooms} trống | ${stats.occupancy_rate}% công suất`);
-    }
+    if (stats) parts.push(`TRẠNG THÁI: ${stats.available_rooms}/${stats.total_rooms} trống | ${stats.occupancy_rate}% công suất`);
     return parts.join('\n');
   } catch { return ''; }
 }
 
-function buildConversationContext(history: Array<{ role: string; message: string }>): string {
-  if (history.length === 0) return '';
-  const lines = history.map(h => `${h.role === 'user' ? 'Khách' : 'Bot'}: ${h.message}`);
-  return `--- LỊCH SỬ HỘI THOẠI ---\n${lines.join('\n')}\n--- HẾT ---`;
-}
-
-async function aiReplyWithContext(
+async function ragReply(
   message: string,
   history: Array<{ role: string; message: string }>,
-  hotelId: number = 1,
-  lightweight: boolean = false
-): Promise<string> {
-  const [wikiCtx, otaCtx] = await Promise.all([
-    buildContext(message),
-    buildOtaContext(hotelId),
-  ]);
+  hotelId: number,
+): Promise<string | null> {
+  const [wikiCtx, otaCtx] = await Promise.all([buildContext(message), buildOtaContext(hotelId)]);
 
-  const convoCtx = buildConversationContext(history);
+  // STRICT RAG: nếu không có context → không gọi AI
+  if (!wikiCtx && !otaCtx) return null;
 
-  // Lightweight = dùng reply_simple (Gemma/Groq, ~500ms)
-  // Full = dùng reply_complex (Claude/Gemini, 3-15s)
-  const task: TaskType = lightweight ? 'reply_simple' : 'reply_complex';
+  const convoCtx = history.length > 0
+    ? `--- LỊCH SỬ HỘI THOẠI ---\n${history.map(h => `${h.role === 'user' ? 'Khách' : 'Bot'}: ${h.message}`).join('\n')}\n--- HẾT ---`
+    : '';
 
   const contextParts = [
     convoCtx,
@@ -562,15 +648,22 @@ async function aiReplyWithContext(
     otaCtx ? `--- DỮ LIỆU KHÁCH SẠN ---\n${otaCtx}\n--- HẾT ---` : '',
   ].filter(Boolean).join('\n\n');
 
-  return generate({
-    task,
-    system: REPLY_SYSTEM,
-    user: `${contextParts}\n\nKhách viết: "${message}"\n\nTrả lời ngắn gọn, đúng ngữ cảnh:`,
+  const raw = await generate({
+    task: 'reply_simple',
+    system: RAG_SYSTEM,
+    user: `${contextParts}\n\nKhách viết: "${message}"\n\nTrả lời ngắn, chỉ dựa trên ngữ cảnh trên:`,
   });
+
+  const v = validateResponse(raw);
+  if (!v.valid) {
+    console.warn(`[smartreply] reply validation failed: ${v.reason}`);
+    return null;
+  }
+  return raw.trim();
 }
 
 /* ═══════════════════════════════════════════
-   MAIN ENTRY POINT
+   MAIN ENTRY
    ═══════════════════════════════════════════ */
 
 export async function smartReplyWithSender(
@@ -579,19 +672,16 @@ export async function smartReplyWithSender(
   senderName?: string,
   hasImage?: boolean,
   hotelId?: number,
-  pageId?: number
+  pageId?: number,
 ): Promise<SmartReplyResult> {
   const t0 = Date.now();
   const msg = message.trim();
   const hid = hotelId || 1;
   const pid = pageId || 0;
 
-  // Save user message to memory
-  if (senderId) {
-    saveMessage(senderId, pid, 'user', msg);
-  }
+  if (senderId) saveMessage(senderId, pid, 'user', msg);
 
-  // Booking flow (highest priority)
+  // ─── Booking flow priority ───
   if (senderId) {
     if (hasImage) {
       const result = markTransferReceived(senderId);
@@ -620,70 +710,97 @@ export async function smartReply(
   hotelId: number = 1,
   senderId?: string,
   senderName?: string,
-  pageId?: number
+  pageId?: number,
 ): Promise<SmartReplyResult> {
   const t0 = Date.now();
   const msg = message.trim();
+  const pid = pageId || 0;
 
   if (msg.length <= 1) {
     const reply = 'Chào bạn! Bạn cần tư vấn gì ạ? 😊';
-    if (senderId) saveMessage(senderId, pageId || 0, 'bot', reply, 'greeting');
+    if (senderId) saveMessage(senderId, pid, 'bot', reply, 'greeting');
     return { reply, tier: 'rules', latency_ms: 0, intent: 'greeting' };
   }
 
-  // Get conversation history for context
   const history = senderId ? getConversationHistory(senderId) : [];
   const isFirst = senderId ? isFirstMessage(senderId) : true;
 
-  // ── Detect intent ──
-  const { intent, score } = detectIntent(msg);
+  // ─── STEP 1: AI INTENT CLASSIFICATION ───
+  const classified = await classifyIntent(msg, history);
+  const { intent, confidence, entities, emotion } = classified;
 
-  // ── First message → always show greeting with branches ──
-  if (isFirst && (intent === 'greeting' || intent === 'unknown')) {
+  // ─── STEP 2: PHONE CAPTURED? ───
+  if (intent === 'phone_provided' && entities.phone && senderId) {
+    const lastIntent = history.filter(h => h.role === 'bot').pop()?.message || null;
+    await capturePhone(senderId, senderName, entities.phone, msg, lastIntent as any, history, pid, hotelId);
+    const reply = `Cảm ơn bạn đã để lại số điện thoại! 🙏\nBên mình sẽ liên hệ trong vài phút nữa với giá tốt nhất cho bạn ạ. 💚\n\n${friendlyClosing(senderName)}`;
+    saveMessage(senderId, pid, 'bot', reply, 'phone_captured');
+    return { reply, tier: 'phone_capture', latency_ms: Date.now() - t0, intent: 'phone_captured', confidence };
+  }
+
+  // ─── STEP 3: FIRST MESSAGE → GREETING ───
+  if (isFirst && (intent === 'greeting' || intent === 'unknown' || confidence < 0.5)) {
     const hotelRow = db.prepare(`SELECT name FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
     const hName = hotelRow?.name || 'Khách sạn';
     const result = handleGreeting(hName, senderName);
-    if (senderId) saveMessage(senderId, pageId || 0, 'bot', result.reply, 'greeting');
-    return { reply: result.reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'greeting' };
+    if (senderId) saveMessage(senderId, pid, 'bot', result.reply, 'greeting');
+    return { reply: result.reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'greeting', confidence };
   }
 
-  // ── FAQ match (score > 0) → instant response ──
-  if (intent !== 'unknown' && score > 0) {
-    const faqResult = await handleFaq(intent, msg, hotelId, senderName);
-    if (faqResult) {
-      if (senderId) saveMessage(senderId, pageId || 0, 'bot', faqResult.reply, faqResult.intent);
+  // ─── STEP 4: DETERMINISTIC HANDLER (thuật toán tính sẵn) ───
+  if (intent !== 'unknown' && confidence >= 0.6) {
+    const handled = await handleDeterministic(classified, msg, hotelId, senderName);
+    if (handled) {
+      if (senderId) saveMessage(senderId, pid, 'bot', handled.reply, handled.intent);
       return {
-        reply: faqResult.reply,
-        tier: 'rules',
-        latency_ms: Date.now() - t0,
-        intent: faqResult.intent,
-        images: faqResult.images,
+        reply: handled.reply, tier: 'rules', latency_ms: Date.now() - t0,
+        intent: handled.intent, confidence, images: handled.images,
       };
     }
   }
 
-  // ── Wiki search ──
-  const wikiReply = searchWikiDirect(msg);
-  if (wikiReply) {
-    if (senderId) saveMessage(senderId, pageId || 0, 'bot', wikiReply, 'wiki');
-    return { reply: wikiReply, tier: 'wiki', latency_ms: Date.now() - t0, intent: 'wiki' };
+  // ─── STEP 5: COMPLAINT → xin SĐT để xử lý offline ───
+  if (intent === 'complaint' || emotion === 'frustrated') {
+    if (senderId && !alreadyCapturedPhone(senderId)) {
+      const reply = `Mình thành thật xin lỗi vì sự bất tiện này ạ. 🙏\nBạn cho mình xin *số điện thoại* để quản lý liên hệ xử lý nhanh nhất nhé? Bên mình cam kết phản hồi trong 5 phút ạ. 📞`;
+      saveMessage(senderId, pid, 'bot', reply, 'complaint_phone');
+      return { reply, tier: 'phone_capture', latency_ms: Date.now() - t0, intent: 'complaint', confidence };
+    }
   }
 
-  // ── AI with context ──
-  // Short/simple questions → Lightweight AI (Gemma/Groq, ~500ms)
-  // Long/complex questions → Full AI (Claude/Gemini, 3-15s)
+  // ─── STEP 6: RAG AI (chỉ khi có context thực) ───
   try {
-    // Dùng lightweight AI cho hầu hết chat (nhanh ~300ms)
-    // Chỉ dùng full AI cho câu dài > 150 ký tự
-    const isSimple = msg.length < 150;
-    const reply = await aiReplyWithContext(msg, history, hotelId, isSimple);
-    const tier = isSimple ? 'ai_light' : 'ai';
-    if (senderId) saveMessage(senderId, pageId || 0, 'bot', reply, 'ai');
-    return { reply, tier: tier as any, latency_ms: Date.now() - t0, intent: 'ai' };
+    const aiReply = await ragReply(msg, history, hotelId);
+    if (aiReply) {
+      if (senderId) saveMessage(senderId, pid, 'bot', aiReply, 'ai_rag');
+      return { reply: aiReply, tier: 'ai', latency_ms: Date.now() - t0, intent: 'ai', confidence };
+    }
   } catch (e: any) {
-    console.error('[smartreply] AI fail:', e.message);
-    const fallback = `Cảm ơn bạn! 😊 Mình sẽ kiểm tra và phản hồi sớm nhất nhé.`;
-    if (senderId) saveMessage(senderId, pageId || 0, 'bot', fallback, 'error');
-    return { reply: fallback, tier: 'rules', latency_ms: Date.now() - t0, intent: 'error' };
+    console.warn('[smartreply] RAG failed:', e.message);
   }
+
+  // ─── STEP 7: FALLBACK — XIN SĐT ───
+  // Nếu chat đã >= 3 lượt mà không chốt được → xin SĐT
+  const userTurns = senderId ? countUserTurns(senderId) : 0;
+  const hasProgress = senderId ? hasBookingProgress(senderId) : false;
+  const alreadyHasPhone = senderId ? alreadyCapturedPhone(senderId) : false;
+
+  if (senderId && userTurns >= 3 && !hasProgress && !alreadyHasPhone) {
+    const reply = requestPhoneReply(senderName);
+    saveMessage(senderId, pid, 'bot', reply, 'request_phone');
+    return { reply, tier: 'phone_capture', latency_ms: Date.now() - t0, intent: 'request_phone', confidence };
+  }
+
+  // ─── STEP 8: SOFT FALLBACK ───
+  const fallback = alreadyHasPhone
+    ? `Mình đã ghi nhận rồi ạ! Team sẽ gọi bạn sớm nhất. 💚\n\n${friendlyClosing(senderName)}`
+    : `Cảm ơn bạn! 😊 Để tư vấn chính xác nhất, bạn cho mình biết:\n• Ngày check-in bạn muốn?\n• Mấy khách, mấy đêm?\n\nHoặc gõ "giá" / "hình" / "đặt phòng" để mình hỗ trợ ngay nhé!`;
+  if (senderId) saveMessage(senderId, pid, 'bot', fallback, 'fallback');
+  return {
+    reply: fallback,
+    tier: alreadyHasPhone ? 'closing' : 'rules',
+    latency_ms: Date.now() - t0,
+    intent: 'fallback',
+    confidence,
+  };
 }

@@ -422,6 +422,23 @@ CREATE TABLE IF NOT EXISTS content_calendar (
 );
 CREATE INDEX IF NOT EXISTS idx_calendar_hotel ON content_calendar(hotel_id);
 
+-- Customer contacts: captured phone numbers when bot can't close
+CREATE TABLE IF NOT EXISTS customer_contacts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sender_id TEXT NOT NULL,
+  sender_name TEXT,
+  phone TEXT NOT NULL,
+  page_id INTEGER NOT NULL DEFAULT 0,
+  hotel_id INTEGER NOT NULL DEFAULT 1,
+  last_intent TEXT,
+  last_message TEXT,
+  context TEXT DEFAULT '[]',
+  notified_staff INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_contacts_sender ON customer_contacts(sender_id);
+CREATE INDEX IF NOT EXISTS idx_contacts_phone ON customer_contacts(phone);
+
 -- Conversation memory: store recent messages per sender for context
 CREATE TABLE IF NOT EXISTS conversation_memory (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

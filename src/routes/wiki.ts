@@ -3,6 +3,7 @@ import { db } from '../db';
 import { authMiddleware, AuthRequest, getHotelId } from '../middleware/auth';
 import { buildContext, getWikiStats } from '../services/wiki';
 import { embed, encodeEmbedding, getEmbedderInfo, EMBED_MODEL } from '../services/embedder';
+import { seedWikiDefaults } from '../scripts/seed-wiki';
 
 const router = Router();
 router.use(authMiddleware);
@@ -67,6 +68,16 @@ router.post('/preview', async (req, res) => {
     res.json({ context: ctx, length: ctx.length, semantic: getEmbedderInfo().ready });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || 'Preview error' });
+  }
+});
+
+// Seed mặc định: nạp bộ wiki CSKH tiếng Việt (business + 15 FAQ + 3 lesson)
+router.post('/seed-defaults', async (_req, res) => {
+  try {
+    const result = seedWikiDefaults();
+    res.json({ ok: true, ...result });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
   }
 });
 
