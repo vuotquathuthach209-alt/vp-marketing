@@ -8,7 +8,13 @@ import { seedWikiDefaults } from '../scripts/seed-wiki';
 const router = Router();
 router.use(authMiddleware);
 
-const VALID_NS = ['business', 'product', 'campaign', 'faq', 'lesson'];
+const VALID_NS = [
+  // Hotel-specific namespaces (new)
+  'hotel_info', 'room', 'amenity', 'directions', 'policy', 'nearby',
+  'promotion', 'brand_voice', 'faq',
+  // Legacy (backward compat)
+  'business', 'product', 'campaign', 'lesson',
+];
 
 function slugify(s: string): string {
   return s
