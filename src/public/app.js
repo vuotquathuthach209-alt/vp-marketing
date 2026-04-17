@@ -110,6 +110,8 @@ function switchTab(tab) {
   if (tab === 'wiki') loadWiki();
   if (tab === 'analytics') loadAnalytics();
   if (tab === 'autopilot') loadAutopilotStatus();
+  if (tab === 'room-images') loadRoomImages();
+  if (tab === 'monitoring') { loadMonitoring(7); loadLearningStats(); }
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
   b.addEventListener('click', () => switchTab(b.dataset.tab));
@@ -2463,6 +2465,128 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
     if (btn.dataset.tab === 'dashboard') setTimeout(loadDashboard, 100);
   });
 });
+
+// ====== ROOM IMAGES ======
+async function loadRoomImages() {
+  try {
+    const resp = await fetch('/api/media/room-images', { credentials: 'include' });
+    const images = await resp.json();
+    const list = document.getElementById('room-images-list');
+    if (!Array.isArray(images) || images.length === 0) {
+      list.innerHTML = '<p class="text-slate-400 col-span-full">Chua co anh nao. Upload o tren de bat dau.</p>';
+      return;
+    }
+    list.innerHTML = images.map(img => `
+      <div class="border rounded overflow-hidden bg-slate-50">
+        <img src="${img.image_url}" alt="${img.room_type_name}" class="w-full h-40 object-cover" onerror="this.style.background='#ddd';this.alt='Loi tai anh'" />
+        <div class="p-2">
+          <div class="text-sm font-medium truncate">${img.room_type_name}</div>
+          ${img.caption ? `<div class="text-xs text-slate-500 truncate">${img.caption}</div>` : ''}
+          <button onclick="deleteRoomImage(${img.id})" class="mt-1 text-xs text-red-600 hover:underline">Xoa</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    document.getElementById('room-images-list').innerHTML = `<p class="text-red-500 col-span-full">Loi: ${e.message}</p>`;
+  }
+}
+
+async function deleteRoomImage(id) {
+  if (!confirm('Xoa anh nay?')) return;
+  try {
+    const resp = await fetch('/api/media/room-images/' + id, { method: 'DELETE', credentials: 'include' });
+    if (!resp.ok) throw new Error('Xoa that bai');
+    loadRoomImages();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+document.getElementById('room-images-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const status = document.getElementById('ri-status');
+  const roomType = document.getElementById('ri-room-type').value.trim();
+  const caption = document.getElementById('ri-caption').value.trim();
+  const files = document.getElementById('ri-files').files;
+  if (!roomType || !files.length) { status.textContent = 'Thieu thong tin'; status.className = 'text-sm ml-3 text-red-600'; return; }
+
+  const fd = new FormData();
+  fd.append('room_type_name', roomType);
+  if (caption) fd.append('caption', caption);
+  for (const f of files) fd.append('files', f);
+
+  status.textContent = '⏳ Dang upload...'; status.className = 'text-sm ml-3 text-slate-500';
+  try {
+    const resp = await fetch('/api/media/room-images/upload', {
+      method: 'POST', credentials: 'include', body: fd,
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Upload that bai');
+    status.textContent = `✅ Upload ${data.count} anh OK`; status.className = 'text-sm ml-3 text-green-600';
+    document.getElementById('room-images-form').reset();
+    loadRoomImages();
+  } catch (err) {
+    status.textContent = '❌ ' + err.message; status.className = 'text-sm ml-3 text-red-600';
+  }
+});
+
+// ====== LEARNING CACHE STATS ======
+async function loadLearningStats() {
+  const box = document.getElementById('learning-stats');
+  if (!box) return;
+  try {
+    const resp = await fetch('/api/monitoring/learning', { credentials: 'include' });
+    const s = await resp.json();
+    box.innerHTML = `
+      <div class="flex gap-6">
+        <div><span class="text-slate-500">Total:</span> <b>${s.total}</b></div>
+        <div><span class="text-slate-500">Promoted (&ge;${s.min_hits} hits):</span> <b class="text-green-600">${s.promoted}</b></div>
+        <div><span class="text-slate-500">Threshold:</span> sim &ge; ${s.serve_threshold}</div>
+      </div>
+      ${s.top && s.top.length ? `
+        <div class="mt-3">
+          <div class="text-xs font-semibold text-slate-500 mb-1">Top cau hoi hoc duoc:</div>
+          <div class="space-y-1">
+            ${s.top.map(t => `
+              <div class="flex justify-between border-b py-1">
+                <span class="truncate mr-2">"${t.question}"</span>
+                <span class="text-xs whitespace-nowrap"><b>${t.hits}</b> hits · ${t.intent || '—'}</span>
+              </div>`).join('')}
+          </div>
+        </div>` : '<p class="text-slate-400 mt-2">Chua co cau nao duoc hoc.</p>'}
+    `;
+  } catch (e) {
+    box.innerHTML = `<p class="text-red-500">Loi: ${e.message}</p>`;
+  }
+}
+
+// ====== WEEKLY REPORT ======
+async function loadWeeklyReport() {
+  const box = document.getElementById('weekly-report');
+  if (!box) return;
+  box.textContent = 'Loading...';
+  try {
+    const resp = await fetch('/api/monitoring/weekly-report', { credentials: 'include' });
+    const data = await resp.json();
+    box.textContent = data.preview || JSON.stringify(data, null, 2);
+  } catch (e) {
+    box.textContent = 'Loi: ' + e.message;
+  }
+}
+
+async function sendWeeklyReport() {
+  if (!confirm('Gui bao cao tuan qua Telegram ngay?')) return;
+  try {
+    const resp = await fetch('/api/monitoring/weekly-report/send', {
+      method: 'POST', credentials: 'include',
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Gui that bai');
+    alert('✅ Da gui Telegram');
+  } catch (e) {
+    alert('❌ ' + e.message);
+  }
+}
 
 // ====== Init ======
 checkAuth();

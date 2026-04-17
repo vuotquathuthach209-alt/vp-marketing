@@ -66,6 +66,7 @@
         <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Tu dong</div>
         <button data-tab="campaigns" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">🔁 Chien dich</button>
         <button data-tab="autoreply" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">💬 Chatbot</button>
+        <button data-tab="room-images" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">📸 Anh phong</button>
         <button data-tab="wiki" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">📚 Kien thuc AI</button>
 
         <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Bao cao</div>
@@ -815,6 +816,40 @@
         </div>
       </section>
 
+      <!-- ROOM IMAGES TAB -->
+      <section data-panel="room-images" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-2">📸 Anh phong khach san</h2>
+        <p class="text-sm text-slate-500 mb-6">Upload anh phong de bot tu dong gui khach khi tu van gia/phong. Toi da 10 anh/lan.</p>
+
+        <div class="max-w-3xl space-y-6">
+          <div class="bg-white rounded-xl shadow p-6">
+            <h3 class="font-bold mb-4">Upload anh moi</h3>
+            <form id="room-images-form" class="space-y-3">
+              <div>
+                <label class="block text-sm font-medium mb-1">Ten loai phong <span class="text-red-500">*</span></label>
+                <input type="text" id="ri-room-type" required placeholder="Deluxe / Superior / Executive..." class="w-full border rounded px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label class="block text-sm font-medium mb-1">Mo ta (tuy chon)</label>
+                <input type="text" id="ri-caption" placeholder="Phong co view bien, giuong king..." class="w-full border rounded px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label class="block text-sm font-medium mb-1">Chon anh <span class="text-red-500">*</span></label>
+                <input type="file" id="ri-files" accept="image/*" multiple required class="w-full text-sm" />
+                <p class="text-xs text-slate-400 mt-1">JPG/PNG/WebP, toi da 10 file/lan, moi file &le; 200MB.</p>
+              </div>
+              <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-blue-700">Upload</button>
+              <span id="ri-status" class="text-sm ml-3"></span>
+            </form>
+          </div>
+
+          <div class="bg-white rounded-xl shadow p-6">
+            <h3 class="font-bold mb-4">Anh hien co</h3>
+            <div id="room-images-list" class="grid grid-cols-2 md:grid-cols-3 gap-3"></div>
+          </div>
+        </div>
+      </section>
+
       <!-- MONITORING TAB -->
       <section data-panel="monitoring" class="panel hidden">
         <h2 class="text-2xl font-bold mb-6">📈 Monitoring Dashboard</h2>
@@ -831,6 +866,27 @@
           <div class="bg-white rounded-xl shadow p-6">
             <h3 class="font-bold mb-4">Loi gan day</h3>
             <div id="errors-list" class="space-y-2 text-sm"></div>
+          </div>
+
+          <!-- Learning cache stats -->
+          <div class="bg-white rounded-xl shadow p-6">
+            <div class="flex justify-between items-center mb-4">
+              <h3 class="font-bold">🧠 Learning cache</h3>
+              <button onclick="loadLearningStats()" class="text-xs text-blue-600">↻ Refresh</button>
+            </div>
+            <div id="learning-stats" class="text-sm space-y-2"></div>
+          </div>
+
+          <!-- Weekly report preview -->
+          <div class="bg-white rounded-xl shadow p-6">
+            <div class="flex justify-between items-center mb-4">
+              <h3 class="font-bold">📅 Bao cao tuan</h3>
+              <div class="flex gap-2">
+                <button onclick="loadWeeklyReport()" class="text-xs text-blue-600">↻ Preview</button>
+                <button onclick="sendWeeklyReport()" class="text-xs bg-blue-600 text-white px-2 py-1 rounded">Gui Telegram ngay</button>
+              </div>
+            </div>
+            <pre id="weekly-report" class="text-xs bg-slate-50 p-3 rounded whitespace-pre-wrap"></pre>
           </div>
         </div>
       </section>
