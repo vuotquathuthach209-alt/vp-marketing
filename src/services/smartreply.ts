@@ -213,6 +213,34 @@ function requestPhoneReply(senderName?: string): string {
   return `Cảm ơn${name} đã quan tâm ạ! 💚\n\nĐể team tư vấn hỗ trợ nhanh & chính xác nhất — đặc biệt về giá tốt, phòng trống và ưu đãi riêng — bạn cho mình xin *số điện thoại* nhé? Bên mình sẽ gọi lại trong vài phút thôi ạ. 📞`;
 }
 
+// Phát hiện phản hồi tiêu cực / khó hiểu / bức xúc từ khách
+// → Trigger xin SĐT NGAY (không đợi 3 lượt)
+const NEGATIVE_MARKERS = [
+  // confusion / unclear
+  'ủa', 'hả', 'gì vậy', 'gì thế', 'không hiểu', 'khong hieu', 'hiểu chết liền',
+  'nói gì', 'là sao', 'sao vậy', 'sao thế', 'chả hiểu',
+  // dissatisfaction
+  'chán', 'tệ', 'dở', 'kém', 'thất vọng', 'bực', 'bức xúc',
+  'không ổn', 'khong on', 'không hài lòng', 'khong hai long',
+  'không đúng', 'khong dung', 'sai rồi', 'sai roi',
+  // giving up
+  'thôi', 'bỏ qua', 'khỏi', 'không cần', 'khong can',
+  'mệt', 'phiền', 'rắc rối',
+  // robotic / bot complaint
+  'máy móc', 'như máy', 'bot', 'robot', 'trả lời tự động',
+  'không trả lời được', 'tự động',
+];
+
+function isNegativeResponse(msg: string): boolean {
+  const m = msg.toLowerCase().trim();
+  if (m.length === 0 || m.length > 80) return false;
+  const n = removeDiacritics(m);
+  for (const marker of NEGATIVE_MARKERS) {
+    if (m.includes(marker) || n.includes(removeDiacritics(marker))) return true;
+  }
+  return false;
+}
+
 function friendlyClosing(senderName?: string): string {
   const name = senderName ? ` ${senderName}` : ' bạn';
   return `Cảm ơn${name} đã tin tưởng tụi mình nhé! 💚\nMong sớm được đón${name} tại khách sạn. Chúc${name} một ngày thật nhiều năng lượng và niềm vui! ☀️✨`;
@@ -759,13 +787,25 @@ export async function smartReply(
     }
   }
 
-  // ─── STEP 5: COMPLAINT → xin SĐT để xử lý offline ───
-  if (intent === 'complaint' || emotion === 'frustrated') {
-    if (senderId && !alreadyCapturedPhone(senderId)) {
-      const reply = `Mình thành thật xin lỗi vì sự bất tiện này ạ. 🙏\nBạn cho mình xin *số điện thoại* để quản lý liên hệ xử lý nhanh nhất nhé? Bên mình cam kết phản hồi trong 5 phút ạ. 📞`;
-      saveMessage(senderId, pid, 'bot', reply, 'complaint_phone');
-      return { reply, tier: 'phone_capture', latency_ms: Date.now() - t0, intent: 'complaint', confidence };
+  // ─── STEP 5: PHẢN HỒI TIÊU CỰC / KHÓ HIỂU / BỨC XÚC → XIN SĐT NGAY ───
+  // Không đợi 3 lượt — bất cứ khi nào khách có dấu hiệu tiêu cực là chuyển người thật
+  const isNegative =
+    intent === 'complaint' ||
+    emotion === 'frustrated' ||
+    isNegativeResponse(msg);
+
+  if (isNegative && senderId && !alreadyCapturedPhone(senderId)) {
+    // Chọn giọng điệu theo mức độ
+    let reply: string;
+    if (intent === 'complaint' || emotion === 'frustrated') {
+      // Bức xúc thật sự → xin lỗi chân thành
+      reply = `Mình thành thật xin lỗi vì trải nghiệm chưa tốt này ạ. 🙏\nĐể quản lý trực tiếp gọi bạn xử lý nhanh nhất, bạn cho mình xin *số điện thoại* nhé? Bên mình cam kết phản hồi trong 5 phút ạ. 📞`;
+    } else {
+      // Khó hiểu / bot không hiểu được → chuyển người thật nhẹ nhàng
+      reply = `Xin lỗi bạn, có vẻ mình chưa hiểu ý bạn đúng ạ. 🙏\nĐể được tư vấn chính xác và nhanh nhất, bạn cho mình xin *số điện thoại* nhé? Team CSKH sẽ gọi lại bạn trong vài phút thôi. 📞💚`;
     }
+    saveMessage(senderId, pid, 'bot', reply, 'negative_phone_request');
+    return { reply, tier: 'phone_capture', latency_ms: Date.now() - t0, intent: 'negative', confidence };
   }
 
   // ─── STEP 6: RAG AI (chỉ khi có context thực) ───
