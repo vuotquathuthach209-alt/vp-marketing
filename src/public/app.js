@@ -104,7 +104,7 @@ function switchTab(tab) {
   if (tab === 'dashboard') loadDashboard();
   if (tab === 'posts') loadPosts();
   if (tab === 'media') loadMedia();
-  if (tab === 'settings') { loadSettings(); loadAllApiKeys(); loadSysConfig(); }
+  if (tab === 'settings') { loadSettings(); loadAllProviderKeys(); loadAiTier(); loadSysConfig(); }
   if (tab === 'campaigns') loadCampaigns();
   if (tab === 'autoreply') loadAutoReply();
   if (tab === 'wiki') loadWiki();
@@ -441,22 +441,166 @@ window.delPage = async (id) => {
   loadPages();
 };
 
-document.getElementById('btn-save-keys').addEventListener('click', async () => {
-  const body = {
-    anthropic_api_key: document.getElementById('key-anthropic').value,
-    google_api_key: document.getElementById('key-google').value,
-    groq_api_key: document.getElementById('key-groq').value,
-    fal_api_key: document.getElementById('key-fal').value,
-  };
-  try {
-    const r = await api('/settings/keys', { method: 'POST', body: JSON.stringify(body) });
-    document.getElementById('keys-status').textContent =
-      `✅ Đã lưu (${r.anthropic_count}A / ${r.google_count}G / ${r.groq_count}Gr / ${r.fal_count}F)`;
-    await loadSettings();
-    setTimeout(() => document.getElementById('keys-status').textContent = '', 4000);
-  } catch (e) {
-    alert(e.message);
+// ═══════════════════════════════════════════════════════════════
+// AI Providers — redesigned settings UI
+// Per-card handlers: Save / Test / Wipe / Toggle visibility
+// Plus: AI tier selector (free/balanced/premium)
+// ═══════════════════════════════════════════════════════════════
+
+const PROVIDER_SETTING_KEY = {
+  google: 'google_api_key',
+  anthropic: 'anthropic_api_key',
+  deepseek: 'deepseek_api_key',
+  openai: 'openai_api_key',
+};
+
+function setProviderMsg(provider, text, kind) {
+  const el = document.querySelector(`[data-msg="${provider}"]`);
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = 'provider-msg text-xs mt-2' + (kind ? ' ' + kind : '');
+  if (text && kind === 'ok') setTimeout(() => { if (el.textContent === text) el.textContent = ''; }, 4000);
+}
+
+function updateBadge(provider, count) {
+  const el = document.querySelector(`[data-badge="${provider}"]`);
+  if (!el) return;
+  if (count > 0) {
+    el.textContent = `✓ ${count} key${count > 1 ? 's' : ''}`;
+    el.className = 'provider-badge text-xs px-2 py-1 rounded ok';
+  } else {
+    el.textContent = '⚠ Chưa có';
+    el.className = 'provider-badge text-xs px-2 py-1 rounded muted';
   }
+}
+
+async function loadAllProviderKeys() {
+  try {
+    const r = await api('/settings');
+    for (const p of ['google','anthropic','deepseek','openai','groq','fal']) {
+      const info = r[p];
+      if (!info) continue;
+      const ta = document.querySelector(`[data-key="${p}"]`);
+      if (ta) ta.value = info.masked || '';
+      updateBadge(p, info.count || 0);
+    }
+  } catch (e) { console.warn('loadAllProviderKeys:', e); }
+}
+
+// Save one provider's key (APPEND mode — preserves existing keys)
+document.addEventListener('click', async (ev) => {
+  const btn = ev.target.closest('.btn-save-key');
+  if (!btn) return;
+  const provider = btn.dataset.provider;
+  const ta = document.querySelector(`[data-key="${provider}"]`);
+  const val = ta ? ta.value.trim() : '';
+  if (!val) { setProviderMsg(provider, 'Chưa nhập key', 'err'); return; }
+
+  try {
+    const body = {};
+    body[`${provider}_api_key`] = val;
+    const r = await api('/settings/keys', { method: 'POST', body: JSON.stringify(body) });
+    setProviderMsg(provider, `✅ Đã lưu · tổng ${r[`${provider}_count`] || '?'} key`, 'ok');
+    // Clear input & reload masked view
+    ta.value = '';
+    await loadAllProviderKeys();
+  } catch (e) {
+    setProviderMsg(provider, '❌ ' + e.message, 'err');
+  }
+});
+
+// Test key (live API call)
+document.addEventListener('click', async (ev) => {
+  const btn = ev.target.closest('.btn-test-key');
+  if (!btn) return;
+  const provider = btn.dataset.provider;
+  const ta = document.querySelector(`[data-key="${provider}"]`);
+  const rawKey = ta ? ta.value.trim() : '';
+  // If user typed a new key that isn't masked, test that one; else test stored
+  const payload = { provider };
+  if (rawKey && !rawKey.startsWith('***')) payload.key = rawKey;
+
+  setProviderMsg(provider, '⏳ Đang test...', 'info');
+  btn.disabled = true;
+  try {
+    const r = await api('/settings/test-key', { method: 'POST', body: JSON.stringify(payload) });
+    if (r.ok) {
+      const extra = r.info ? ` · ${r.info}` : (r.models ? ` · ${r.models.length} model` : '');
+      setProviderMsg(provider, `✅ Key sống${extra}`, 'ok');
+    } else {
+      setProviderMsg(provider, '❌ ' + (r.error || 'Key không hợp lệ'), 'err');
+    }
+  } catch (e) {
+    setProviderMsg(provider, '❌ ' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// Wipe all keys of a provider
+document.addEventListener('click', async (ev) => {
+  const btn = ev.target.closest('.btn-wipe-key');
+  if (!btn) return;
+  const provider = btn.dataset.provider;
+  if (!confirm(`Xoá TẤT CẢ key của ${provider}?`)) return;
+  try {
+    await api(`/settings/keys/${provider}`, { method: 'DELETE' });
+    setProviderMsg(provider, '🗑 Đã xoá', 'ok');
+    const ta = document.querySelector(`[data-key="${provider}"]`);
+    if (ta) ta.value = '';
+    await loadAllProviderKeys();
+  } catch (e) {
+    setProviderMsg(provider, '❌ ' + e.message, 'err');
+  }
+});
+
+// Toggle show/hide key
+document.addEventListener('click', (ev) => {
+  const btn = ev.target.closest('.btn-toggle-vis');
+  if (!btn) return;
+  const ta = document.querySelector(`[data-key="${btn.dataset.key}"]`);
+  if (!ta) return;
+  ta.classList.toggle('visible');
+  btn.textContent = ta.classList.contains('visible') ? '🙈 Ẩn' : '👁 Hiện';
+});
+
+// AI Tier selector
+async function loadAiTier() {
+  try {
+    const r = await api('/settings/ai-tier');
+    const tier = r.tier || 'balanced';
+    document.querySelectorAll('#ai-tier-selector .tier-card').forEach(card => {
+      const isSel = card.dataset.tier === tier;
+      card.classList.toggle('selected', isSel);
+      const radio = card.querySelector('input[type="radio"]');
+      if (radio) radio.checked = isSel;
+    });
+  } catch (e) { console.warn('loadAiTier:', e); }
+}
+document.addEventListener('click', async (ev) => {
+  const card = ev.target.closest('#ai-tier-selector .tier-card');
+  if (!card) return;
+  const tier = card.dataset.tier;
+  try {
+    await api('/settings/ai-tier', { method: 'POST', body: JSON.stringify({ tier }) });
+    document.querySelectorAll('#ai-tier-selector .tier-card').forEach(c => c.classList.toggle('selected', c === card));
+    const st = document.getElementById('ai-tier-status');
+    st.textContent = `✅ Đã chuyển sang chế độ "${tier}"`;
+    st.className = 'text-xs mt-2 text-green-600';
+    setTimeout(() => { st.textContent = ''; }, 3000);
+    // Refresh router status to reflect new tier
+    setTimeout(() => { if (window.loadRouterStatus) window.loadRouterStatus(); }, 300);
+  } catch (e) {
+    const st = document.getElementById('ai-tier-status');
+    st.textContent = '❌ ' + e.message;
+    st.className = 'text-xs mt-2 text-red-600';
+  }
+});
+
+// Load on settings tab open
+window.addEventListener('DOMContentLoaded', () => {
+  loadAiTier();
+  loadAllProviderKeys();
 });
 
 // Load + save image provider
@@ -1766,34 +1910,9 @@ const API_KEY_MAP = {
   'key-unsplash': 'unsplash_access_key',
 };
 
-async function loadAllApiKeys() {
-  try {
-    for (const [elemId, settingKey] of Object.entries(API_KEY_MAP)) {
-      const r = await api('/api/settings/get?key=' + settingKey);
-      const d = await r.json();
-      const el = document.getElementById(elemId);
-      if (el && d.value) el.value = d.value;
-    }
-    document.getElementById('api-keys-status').textContent = '✅ Da tai keys';
-  } catch(e) {
-    document.getElementById('api-keys-status').textContent = '❌ Loi tai keys';
-  }
-}
-
-async function saveAllApiKeys() {
-  let saved = 0;
-  for (const [elemId, settingKey] of Object.entries(API_KEY_MAP)) {
-    const el = document.getElementById(elemId);
-    const val = el ? el.value.trim() : '';
-    if (val) {
-      await api('/api/settings/set', 'POST', { key: settingKey, value: val });
-      saved++;
-    }
-  }
-  document.getElementById('api-keys-status').textContent = `✅ Da luu ${saved} keys! Router se tu dong su dung.`;
-  // Reload router status
-  setTimeout(loadRouterStatus, 500);
-}
+// Legacy functions kept as no-op shims for backward compat (removed UI)
+async function loadAllApiKeys() { /* replaced by loadAllProviderKeys */ }
+async function saveAllApiKeys() { /* replaced by per-card btn-save-key handlers */ }
 
 // ====== Sprint 9: OTA Database Config ======
 async function loadOtaConfig() {

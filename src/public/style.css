@@ -10,3 +10,22 @@
   width: 100%;
   border-radius: 8px;
 }
+/* AI tier selector */
+.tier-card { border-color: #e2e8f0; background: rgba(255,255,255,0.4); }
+.tier-card.selected {
+  border-color: #6366f1;
+  background: white;
+  box-shadow: 0 4px 12px rgba(99,102,241,0.15);
+}
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+/* Provider badges */
+.provider-badge.ok { background: #dcfce7; color: #166534; }
+.provider-badge.warn { background: #fef3c7; color: #92400e; }
+.provider-badge.err { background: #fee2e2; color: #991b1b; }
+.provider-badge.muted { background: #f1f5f9; color: #64748b; }
+/* Key input shown state */
+.key-input.visible { -webkit-text-security: none !important; text-security: none !important; }
+/* Provider status message colors */
+.provider-msg.ok { color: #15803d; }
+.provider-msg.err { color: #b91c1c; }
+.provider-msg.info { color: #0369a1; }

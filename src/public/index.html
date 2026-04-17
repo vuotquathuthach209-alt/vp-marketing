@@ -591,126 +591,183 @@
           </div>
         </div>
 
-        <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6">
-          <h3 class="font-bold mb-4">🔑 API Keys</h3>
-          <p class="text-xs text-slate-500 mb-4">💡 Nhập <b>key mới</b> (mỗi dòng 1 key) — hệ thống sẽ <b>THÊM VÀO</b> danh sách, không xoá key cũ. Muốn xoá hết key của provider nào thì bấm nút 🗑️ bên cạnh. Round-robin &amp; failover tự động.</p>
-
-          <div class="mb-3">
-            <label class="block text-sm font-semibold mb-1">
-              🟣 Anthropic Keys (Claude) — caption chính, reply phức tạp
-              <span id="anthropic-count" class="ml-2 text-xs font-normal text-blue-600"></span>
+        <!-- ═══ AI TIER SELECTOR ═══ -->
+        <div class="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl shadow p-6 max-w-2xl mb-6 border border-indigo-200">
+          <h3 class="font-bold mb-2">⚡ Chế độ AI</h3>
+          <p class="text-xs text-slate-600 mb-3">Chọn mức cân bằng giữa chi phí và chất lượng. Router sẽ dùng chuỗi fallback tương ứng.</p>
+          <div class="grid grid-cols-3 gap-2" id="ai-tier-selector">
+            <label class="tier-card cursor-pointer border-2 rounded-lg p-3 text-center hover:bg-white transition" data-tier="free">
+              <input type="radio" name="ai-tier" value="free" class="sr-only">
+              <div class="text-2xl">🆓</div>
+              <div class="font-semibold text-sm mt-1">Free-only</div>
+              <div class="text-xs text-slate-500 mt-1">0₫ / tháng<br>Ollama + Gemini free</div>
             </label>
-            <textarea id="key-anthropic" rows="3" placeholder="Dán key mới vào đây (sk-ant-...) — key cũ vẫn giữ nguyên"
-              class="w-full border rounded-lg px-3 py-2 font-mono text-xs"></textarea>
-            <div class="flex justify-between items-center mt-1">
-              <p class="text-xs text-slate-400">Lấy tại: <a href="https://console.anthropic.com/settings/keys" target="_blank" class="text-blue-600 underline">console.anthropic.com</a></p>
-              <button data-wipe="anthropic" class="btn-wipe text-xs text-red-600 hover:underline">🗑️ Xoá tất cả</button>
-            </div>
-          </div>
-
-          <div class="mb-3">
-            <label class="block text-sm font-semibold mb-1">
-              🔵 Google AI Keys (Gemini Flash) — image prompt, rewrite, rẻ 40x
-              <span id="google-count" class="ml-2 text-xs font-normal text-blue-600"></span>
+            <label class="tier-card cursor-pointer border-2 rounded-lg p-3 text-center hover:bg-white transition" data-tier="balanced">
+              <input type="radio" name="ai-tier" value="balanced" class="sr-only">
+              <div class="text-2xl">⚖️</div>
+              <div class="font-semibold text-sm mt-1">Balanced</div>
+              <div class="text-xs text-slate-500 mt-1">~400k₫ / tháng<br>+ Claude Haiku</div>
             </label>
-            <textarea id="key-google" rows="2" placeholder="Dán key mới (AIzaSy...) — key cũ vẫn giữ"
-              class="w-full border rounded-lg px-3 py-2 font-mono text-xs"></textarea>
-            <div class="flex justify-between items-center mt-1">
-              <p class="text-xs text-slate-400">Lấy MIỄN PHÍ tại: <a href="https://aistudio.google.com/apikey" target="_blank" class="text-blue-600 underline">aistudio.google.com/apikey</a></p>
-              <button data-wipe="google" class="btn-wipe text-xs text-red-600 hover:underline">🗑️ Xoá tất cả</button>
-            </div>
-          </div>
-
-          <div class="mb-3">
-            <label class="block text-sm font-semibold mb-1">
-              🟢 Groq Keys (Gemma / Llama) — classify, reply đơn giản, gần miễn phí
-              <span id="groq-count" class="ml-2 text-xs font-normal text-blue-600"></span>
+            <label class="tier-card cursor-pointer border-2 rounded-lg p-3 text-center hover:bg-white transition" data-tier="premium">
+              <input type="radio" name="ai-tier" value="premium" class="sr-only">
+              <div class="text-2xl">✨</div>
+              <div class="font-semibold text-sm mt-1">Premium</div>
+              <div class="text-xs text-slate-500 mt-1">~800k₫ / tháng<br>Claude/GPT ưu tiên</div>
             </label>
-            <textarea id="key-groq" rows="2" placeholder="Dán key mới (gsk_...) — key cũ vẫn giữ"
-              class="w-full border rounded-lg px-3 py-2 font-mono text-xs"></textarea>
-            <div class="flex justify-between items-center mt-1">
-              <p class="text-xs text-slate-400">Lấy MIỄN PHÍ tại: <a href="https://console.groq.com/keys" target="_blank" class="text-blue-600 underline">console.groq.com/keys</a></p>
-              <button data-wipe="groq" class="btn-wipe text-xs text-red-600 hover:underline">🗑️ Xoá tất cả</button>
-            </div>
           </div>
-
-          <div class="mb-3">
-            <label class="block text-sm font-semibold mb-1">
-              🟠 fal.ai Keys — gen ảnh/video
-              <span id="fal-count" class="ml-2 text-xs font-normal text-blue-600"></span>
-            </label>
-            <textarea id="key-fal" rows="2" placeholder="Dán key mới — key cũ vẫn giữ"
-              class="w-full border rounded-lg px-3 py-2 font-mono text-xs"></textarea>
-            <div class="flex justify-end mt-1">
-              <button data-wipe="fal" class="btn-wipe text-xs text-red-600 hover:underline">🗑️ Xoá tất cả</button>
-            </div>
-          </div>
-
-          <button id="btn-save-keys" class="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-semibold">➕ Thêm key mới</button>
-          <span id="keys-status" class="ml-3 text-sm text-green-600"></span>
-
-          <hr class="my-5">
-          <div>
-            <label class="block text-sm font-semibold mb-1">🎨 Provider gen ảnh</label>
-            <select id="image-provider" class="border rounded-lg px-3 py-2 text-sm">
-              <option value="auto">Tự động (Google → Pollinations → fal.ai)</option>
-              <option value="pollinations">🆓 Pollinations.ai (miễn phí 100%, không cần key)</option>
-              <option value="google">🟦 Google Imagen/Nano Banana (cần paid tier)</option>
-              <option value="fal">🟧 fal.ai Flux schnell (cần nạp balance)</option>
-            </select>
-            <button id="btn-save-image-provider" class="ml-2 bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-semibold">Lưu</button>
-            <span id="image-provider-status" class="ml-2 text-xs text-green-600"></span>
-            <p class="text-xs text-slate-500 mt-1">💡 <b>Pollinations</b> miễn phí hoàn toàn, dùng Flux model, không giới hạn — khuyến nghị nếu bạn không muốn nạp tiền.</p>
-          </div>
+          <p id="ai-tier-status" class="text-xs mt-2"></p>
         </div>
 
-        <!-- Autopilot moved to its own tab -->
+        <!-- ═══ AI PROVIDERS ═══ -->
+        <div class="max-w-2xl mb-6">
+          <h3 class="font-bold mb-3 flex items-center gap-2">
+            🔑 API Keys
+            <span class="text-xs font-normal text-slate-500">— mỗi dòng 1 key, router dùng round-robin</span>
+          </h3>
 
-        <!-- API Keys — All AI Providers -->
-        <div class="bg-white rounded-xl shadow p-6 max-w-2xl mb-6 border-l-4 border-purple-500">
-          <h3 class="font-bold mb-2">🔑 API Keys — Tat ca AI Providers</h3>
-          <p class="text-xs text-slate-500 mb-4">Nhap API key cho cac provider. Co the nhap nhieu key (moi key 1 dong). Router tu dong chon provider re nhat co san.</p>
-
-          <div class="space-y-3" id="api-keys-form">
-            <div>
-              <label class="block text-xs font-semibold mb-1">🟣 Anthropic (Claude) — <a href="https://console.anthropic.com/settings/keys" target="_blank" class="text-blue-500 underline">Lay key</a></label>
-              <textarea id="key-anthropic" rows="2" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="sk-ant-..."></textarea>
+          <!-- Google Gemini (BẮT BUỘC) -->
+          <div class="provider-card bg-white rounded-xl shadow p-5 mb-3 border-l-4 border-red-500" data-provider="google">
+            <div class="flex items-start justify-between mb-2">
+              <div>
+                <div class="font-bold text-slate-800 flex items-center gap-2">
+                  🔴 Google Gemini
+                  <span class="text-xs font-normal px-2 py-0.5 bg-red-100 text-red-700 rounded">BẮT BUỘC</span>
+                </div>
+                <div class="text-xs text-slate-500 mt-0.5">Chatbot intent + embedding + reply fallback · Free 1500 req/ngày</div>
+              </div>
+              <span class="provider-badge text-xs px-2 py-1 rounded" data-badge="google">—</span>
             </div>
-            <div>
-              <label class="block text-xs font-semibold mb-1">🔵 DeepSeek — <a href="https://platform.deepseek.com/api_keys" target="_blank" class="text-blue-500 underline">Lay key</a></label>
-              <textarea id="key-deepseek" rows="2" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="sk-..."></textarea>
+            <textarea data-key="google" rows="2"
+              class="key-input w-full border rounded-lg px-3 py-2 text-sm font-mono bg-slate-50"
+              placeholder="AIzaSy..." style="-webkit-text-security: disc; text-security: disc;"></textarea>
+            <div class="flex justify-between items-center mt-2 flex-wrap gap-2">
+              <a href="https://aistudio.google.com/apikey" target="_blank" class="text-xs text-blue-600 hover:underline">→ Lấy key free tại aistudio.google.com</a>
+              <div class="flex gap-1">
+                <button class="btn-toggle-vis text-xs px-2 py-1 border rounded hover:bg-slate-50" data-key="google">👁 Hiện</button>
+                <button class="btn-test-key text-xs px-2 py-1 border rounded hover:bg-blue-50 text-blue-700" data-provider="google">🧪 Test</button>
+                <button class="btn-save-key text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700" data-provider="google">💾 Lưu</button>
+                <button class="btn-wipe-key text-xs px-2 py-1 border rounded hover:bg-red-50 text-red-600" data-provider="google">🗑</button>
+              </div>
             </div>
-            <div>
-              <label class="block text-xs font-semibold mb-1">🟢 OpenAI (GPT-4o) — <a href="https://platform.openai.com/api-keys" target="_blank" class="text-blue-500 underline">Lay key</a></label>
-              <textarea id="key-openai" rows="2" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="sk-..."></textarea>
-            </div>
-            <div>
-              <label class="block text-xs font-semibold mb-1">🔴 Google Gemini — <a href="https://aistudio.google.com/apikey" target="_blank" class="text-blue-500 underline">Lay key</a></label>
-              <textarea id="key-google" rows="2" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="AIza..."></textarea>
-            </div>
-            <div>
-              <label class="block text-xs font-semibold mb-1">🟡 Groq — <a href="https://console.groq.com/keys" target="_blank" class="text-blue-500 underline">Lay key</a></label>
-              <textarea id="key-groq" rows="2" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="gsk_..."></textarea>
-            </div>
-            <div>
-              <label class="block text-xs font-semibold mb-1">🟠 Mistral — <a href="https://console.mistral.ai/api-keys" target="_blank" class="text-blue-500 underline">Lay key</a></label>
-              <textarea id="key-mistral" rows="2" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="..."></textarea>
-            </div>
-            <div>
-              <label class="block text-xs font-semibold mb-1">🖼️ FAL.AI (anh/video) — <a href="https://fal.ai/dashboard/keys" target="_blank" class="text-blue-500 underline">Lay key</a></label>
-              <textarea id="key-fal" rows="1" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="..."></textarea>
-            </div>
-            <div>
-              <label class="block text-xs font-semibold mb-1">📷 Unsplash (anh stock mien phi) — <a href="https://unsplash.com/oauth/applications" target="_blank" class="text-blue-500 underline">Lay key</a></label>
-              <textarea id="key-unsplash" rows="1" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="Access Key..."></textarea>
-            </div>
+            <p class="provider-msg text-xs mt-2" data-msg="google"></p>
           </div>
 
-          <div class="flex gap-2 mt-4">
-            <button onclick="saveAllApiKeys()" class="bg-purple-600 text-white px-6 py-2 rounded-lg text-sm font-semibold">💾 Luu tat ca</button>
-            <button onclick="loadAllApiKeys()" class="bg-slate-200 px-4 py-2 rounded-lg text-sm">🔄 Tai lai</button>
+          <!-- Anthropic Claude -->
+          <div class="provider-card bg-white rounded-xl shadow p-5 mb-3 border-l-4 border-purple-500" data-provider="anthropic">
+            <div class="flex items-start justify-between mb-2">
+              <div>
+                <div class="font-bold text-slate-800 flex items-center gap-2">
+                  🟣 Anthropic Claude
+                  <span class="text-xs font-normal px-2 py-0.5 bg-purple-100 text-purple-700 rounded">Khuyến nghị</span>
+                </div>
+                <div class="text-xs text-slate-500 mt-0.5">claude-haiku-4-5 · reply chất lượng cao, tiếng Việt tốt nhất · ~$0.008/reply</div>
+              </div>
+              <span class="provider-badge text-xs px-2 py-1 rounded" data-badge="anthropic">—</span>
+            </div>
+            <textarea data-key="anthropic" rows="2"
+              class="key-input w-full border rounded-lg px-3 py-2 text-sm font-mono bg-slate-50"
+              placeholder="sk-ant-..." style="-webkit-text-security: disc; text-security: disc;"></textarea>
+            <div class="flex justify-between items-center mt-2 flex-wrap gap-2">
+              <a href="https://console.anthropic.com/settings/keys" target="_blank" class="text-xs text-blue-600 hover:underline">→ Lấy key tại console.anthropic.com</a>
+              <div class="flex gap-1">
+                <button class="btn-toggle-vis text-xs px-2 py-1 border rounded hover:bg-slate-50" data-key="anthropic">👁 Hiện</button>
+                <button class="btn-test-key text-xs px-2 py-1 border rounded hover:bg-blue-50 text-blue-700" data-provider="anthropic">🧪 Test</button>
+                <button class="btn-save-key text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700" data-provider="anthropic">💾 Lưu</button>
+                <button class="btn-wipe-key text-xs px-2 py-1 border rounded hover:bg-red-50 text-red-600" data-provider="anthropic">🗑</button>
+              </div>
+            </div>
+            <p class="provider-msg text-xs mt-2" data-msg="anthropic"></p>
           </div>
-          <p id="api-keys-status" class="text-sm mt-2"></p>
+
+          <!-- DeepSeek -->
+          <div class="provider-card bg-white rounded-xl shadow p-5 mb-3 border-l-4 border-blue-500" data-provider="deepseek">
+            <div class="flex items-start justify-between mb-2">
+              <div>
+                <div class="font-bold text-slate-800 flex items-center gap-2">
+                  🔵 DeepSeek
+                  <span class="text-xs font-normal px-2 py-0.5 bg-slate-100 text-slate-600 rounded">Tùy chọn</span>
+                </div>
+                <div class="text-xs text-slate-500 mt-0.5">deepseek-chat V3 · fallback rẻ, reasoning tốt · ~$0.003/reply</div>
+              </div>
+              <span class="provider-badge text-xs px-2 py-1 rounded" data-badge="deepseek">—</span>
+            </div>
+            <textarea data-key="deepseek" rows="2"
+              class="key-input w-full border rounded-lg px-3 py-2 text-sm font-mono bg-slate-50"
+              placeholder="sk-..." style="-webkit-text-security: disc; text-security: disc;"></textarea>
+            <div class="flex justify-between items-center mt-2 flex-wrap gap-2">
+              <a href="https://platform.deepseek.com/api_keys" target="_blank" class="text-xs text-blue-600 hover:underline">→ Lấy key tại platform.deepseek.com</a>
+              <div class="flex gap-1">
+                <button class="btn-toggle-vis text-xs px-2 py-1 border rounded hover:bg-slate-50" data-key="deepseek">👁 Hiện</button>
+                <button class="btn-test-key text-xs px-2 py-1 border rounded hover:bg-blue-50 text-blue-700" data-provider="deepseek">🧪 Test</button>
+                <button class="btn-save-key text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700" data-provider="deepseek">💾 Lưu</button>
+                <button class="btn-wipe-key text-xs px-2 py-1 border rounded hover:bg-red-50 text-red-600" data-provider="deepseek">🗑</button>
+              </div>
+            </div>
+            <p class="provider-msg text-xs mt-2" data-msg="deepseek"></p>
+          </div>
+
+          <!-- OpenAI -->
+          <div class="provider-card bg-white rounded-xl shadow p-5 mb-3 border-l-4 border-green-500" data-provider="openai">
+            <div class="flex items-start justify-between mb-2">
+              <div>
+                <div class="font-bold text-slate-800 flex items-center gap-2">
+                  🟢 OpenAI
+                  <span class="text-xs font-normal px-2 py-0.5 bg-slate-100 text-slate-600 rounded">Tùy chọn</span>
+                </div>
+                <div class="text-xs text-slate-500 mt-0.5">gpt-4o-mini · fallback phụ, đa năng · ~$0.002/reply</div>
+              </div>
+              <span class="provider-badge text-xs px-2 py-1 rounded" data-badge="openai">—</span>
+            </div>
+            <textarea data-key="openai" rows="2"
+              class="key-input w-full border rounded-lg px-3 py-2 text-sm font-mono bg-slate-50"
+              placeholder="sk-..." style="-webkit-text-security: disc; text-security: disc;"></textarea>
+            <div class="flex justify-between items-center mt-2 flex-wrap gap-2">
+              <a href="https://platform.openai.com/api-keys" target="_blank" class="text-xs text-blue-600 hover:underline">→ Lấy key tại platform.openai.com</a>
+              <div class="flex gap-1">
+                <button class="btn-toggle-vis text-xs px-2 py-1 border rounded hover:bg-slate-50" data-key="openai">👁 Hiện</button>
+                <button class="btn-test-key text-xs px-2 py-1 border rounded hover:bg-blue-50 text-blue-700" data-provider="openai">🧪 Test</button>
+                <button class="btn-save-key text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700" data-provider="openai">💾 Lưu</button>
+                <button class="btn-wipe-key text-xs px-2 py-1 border rounded hover:bg-red-50 text-red-600" data-provider="openai">🗑</button>
+              </div>
+            </div>
+            <p class="provider-msg text-xs mt-2" data-msg="openai"></p>
+          </div>
+
+          <!-- Ollama (local, read-only) -->
+          <div class="provider-card bg-slate-50 rounded-xl shadow p-5 mb-3 border-l-4 border-slate-400" data-provider="ollama">
+            <div class="flex items-start justify-between">
+              <div>
+                <div class="font-bold text-slate-800 flex items-center gap-2">
+                  🧠 Ollama Local
+                  <span class="text-xs font-normal px-2 py-0.5 bg-green-100 text-green-700 rounded">FREE</span>
+                </div>
+                <div class="text-xs text-slate-500 mt-0.5">qwen2.5:7b-instruct-q4 · chạy local trên VPS, không cần key</div>
+              </div>
+              <div class="flex gap-1">
+                <span class="provider-badge text-xs px-2 py-1 rounded" data-badge="ollama">—</span>
+                <button class="btn-test-key text-xs px-2 py-1 border rounded hover:bg-blue-50 text-blue-700" data-provider="ollama">🏓 Ping</button>
+              </div>
+            </div>
+            <p class="provider-msg text-xs mt-2" data-msg="ollama"></p>
+          </div>
+
+          <!-- Image provider (optional) -->
+          <div class="bg-white rounded-xl shadow p-5 mb-3 border-l-4 border-amber-400">
+            <div class="font-bold text-slate-800 mb-1">🖼 Ảnh cho Autopilot
+              <span class="text-xs font-normal text-slate-500">(tùy chọn)</span>
+            </div>
+            <p class="text-xs text-slate-500 mb-3">Provider tự tạo ảnh minh hoạ khi Autopilot đăng bài.</p>
+            <select id="image-provider" class="w-full border rounded-lg px-3 py-2 text-sm">
+              <option value="auto">Tự động (Google → Pollinations → fal.ai)</option>
+              <option value="pollinations">🆓 Pollinations.ai (miễn phí, khuyến nghị)</option>
+              <option value="google">🟦 Google Imagen/Nano Banana (cần paid tier)</option>
+              <option value="fal">🟧 fal.ai Flux (cần nạp balance)</option>
+            </select>
+            <div class="flex justify-end mt-2 gap-2">
+              <button id="btn-save-image-provider" class="bg-slate-700 text-white px-4 py-1.5 rounded-lg text-xs font-semibold">Lưu</button>
+            </div>
+            <span id="image-provider-status" class="text-xs text-green-600"></span>
+          </div>
         </div>
 
         <!-- Router status -->

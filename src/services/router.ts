@@ -1,8 +1,16 @@
 import axios from 'axios';
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config';
+import { getSetting } from '../db';
 import { pickKey, getAllKeys, countKeys, markKeyCooldown } from './keyrotator';
 import { logUsage } from './costtrack';
+
+// AI tier governs the cost/quality trade-off of the fallback cascade
+type AiTier = 'free' | 'balanced' | 'premium';
+function getAiTier(): AiTier {
+  const t = getSetting('ai_tier') || 'balanced';
+  return (['free', 'balanced', 'premium'].includes(t) ? t : 'balanced') as AiTier;
+}
 
 /**
  * Multi-model Router — tiết kiệm 60-80% chi phí token bằng cách route task
@@ -54,15 +62,38 @@ const DEFAULT_ROUTES: Record<TaskType, RouteConfig> = {
  * Fallback chain: nếu provider chính không có key, tự chuyển sang provider khác.
  * Đảm bảo app vẫn chạy dù user chưa cấu hình Gemini/Groq.
  */
-// Gemini-first policy (user preference): Groq deprioritized
-const FALLBACK: Record<Provider, Provider[]> = {
-  google:    ['google', 'ollama', 'anthropic', 'deepseek', 'openai', 'groq', 'mistral'],
-  groq:      ['groq', 'google', 'ollama', 'deepseek', 'anthropic', 'openai', 'mistral'],
-  anthropic: ['anthropic', 'google', 'ollama', 'deepseek', 'openai', 'groq', 'mistral'],
-  deepseek:  ['deepseek', 'google', 'ollama', 'anthropic', 'openai', 'groq', 'mistral'],
-  openai:    ['openai', 'google', 'ollama', 'anthropic', 'deepseek', 'groq', 'mistral'],
-  mistral:   ['mistral', 'google', 'ollama', 'deepseek', 'openai', 'anthropic', 'groq'],
-  ollama:    ['ollama', 'google', 'anthropic', 'deepseek', 'openai', 'groq', 'mistral'],
+// FALLBACK chains per AI tier. User picks tier in Settings.
+// - free:     chỉ dùng provider miễn phí (Ollama local + Gemini free tier)
+// - balanced: + Claude Haiku cho reply phức tạp + OpenAI/DeepSeek fallback (~$15/mo)
+// - premium:  ưu tiên Claude Sonnet/Haiku, dùng mọi provider paid
+const FALLBACK_BY_TIER: Record<AiTier, Record<Provider, Provider[]>> = {
+  free: {
+    google:    ['google', 'ollama'],
+    ollama:    ['ollama', 'google'],
+    anthropic: ['google', 'ollama'],   // downgrade to free
+    deepseek:  ['google', 'ollama'],
+    openai:    ['google', 'ollama'],
+    groq:      ['google', 'ollama'],
+    mistral:   ['google', 'ollama'],
+  },
+  balanced: {
+    google:    ['google', 'ollama', 'anthropic', 'deepseek', 'openai'],
+    ollama:    ['ollama', 'google', 'anthropic', 'deepseek', 'openai'],
+    anthropic: ['anthropic', 'google', 'ollama', 'deepseek', 'openai'],
+    deepseek:  ['deepseek', 'google', 'ollama', 'anthropic', 'openai'],
+    openai:    ['openai', 'google', 'ollama', 'anthropic', 'deepseek'],
+    groq:      ['google', 'ollama', 'anthropic'],
+    mistral:   ['google', 'ollama', 'anthropic'],
+  },
+  premium: {
+    anthropic: ['anthropic', 'openai', 'google', 'deepseek', 'ollama'],
+    openai:    ['openai', 'anthropic', 'google', 'deepseek', 'ollama'],
+    google:    ['google', 'anthropic', 'openai', 'deepseek', 'ollama'],
+    deepseek:  ['deepseek', 'anthropic', 'google', 'openai', 'ollama'],
+    ollama:    ['ollama', 'anthropic', 'google', 'openai', 'deepseek'],
+    groq:      ['anthropic', 'google', 'openai', 'ollama'],
+    mistral:   ['anthropic', 'google', 'openai', 'ollama'],
+  },
 };
 
 function hasKey(provider: Provider): boolean {
@@ -90,7 +121,9 @@ setInterval(probeOllama, 60_000).unref();
 function resolveRoute(task: TaskType): RouteConfig {
   const route = { ...DEFAULT_ROUTES[task] };
   // Thử provider chính trước, nếu không có key → đi theo fallback chain
-  const chain = FALLBACK[route.provider];
+  // Chain thay đổi theo tier user chọn (free/balanced/premium)
+  const tier = getAiTier();
+  const chain = FALLBACK_BY_TIER[tier][route.provider] || [route.provider];
   for (const p of chain) {
     if (hasKey(p)) {
       if (p !== route.provider) {

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import axios from 'axios';
 import { db, getSetting, setSetting } from '../db';
 import { verifyPageToken, debugToken, exchangeLongLivedToken, autoRefreshPageTokens } from '../services/facebook';
 import { authMiddleware, AuthRequest, getHotelId } from '../middleware/auth';
@@ -55,6 +56,77 @@ router.get('/router', (req, res) => {
   res.json(getRouterStatus());
 });
 
+// ═══ AI Tier (free / balanced / premium) — cascade strategy ═══
+const VALID_TIERS = ['free', 'balanced', 'premium'];
+router.get('/ai-tier', (_req, res) => {
+  res.json({ tier: getSetting('ai_tier') || 'balanced' });
+});
+router.post('/ai-tier', (req, res) => {
+  const { tier } = req.body;
+  if (!VALID_TIERS.includes(tier)) return res.status(400).json({ error: 'Tier không hợp lệ' });
+  setSetting('ai_tier', tier);
+  res.json({ ok: true, tier });
+});
+
+// ═══ Test key — verify a provider key is live ═══
+router.post('/test-key', async (req, res) => {
+  const { provider, key } = req.body as { provider: string; key?: string };
+  // Use provided key if given, else fall back to first stored key
+  const testKey = (typeof key === 'string' && key && !key.startsWith('***'))
+    ? key.split('\n')[0].trim()
+    : (getAllKeys(`${provider}_api_key`)[0] || '');
+
+  if (provider === 'ollama') {
+    try {
+      const host = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
+      const r = await axios.get(`${host}/api/tags`, { timeout: 3000 });
+      const models = (r.data?.models || []).map((m: any) => m.name);
+      return res.json({ ok: true, models });
+    } catch (e: any) {
+      return res.status(400).json({ ok: false, error: 'Ollama offline: ' + e.message });
+    }
+  }
+
+  if (!testKey) return res.status(400).json({ ok: false, error: 'Chưa có key để test' });
+
+  try {
+    if (provider === 'google') {
+      // List models is cheapest auth check
+      const r = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models?key=${testKey}&pageSize=1`, { timeout: 10000 });
+      return res.json({ ok: true, info: `${(r.data?.models || []).length > 0 ? 'Key OK' : 'Key OK (no models)'}` });
+    }
+    if (provider === 'anthropic') {
+      const r = await axios.post('https://api.anthropic.com/v1/messages', {
+        model: 'claude-haiku-4-5-20251001', max_tokens: 5, messages: [{ role: 'user', content: 'hi' }],
+      }, { timeout: 15000, headers: { 'x-api-key': testKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } });
+      return res.json({ ok: true, info: `Model ${r.data?.model || 'ok'}` });
+    }
+    if (provider === 'openai') {
+      const r = await axios.get('https://api.openai.com/v1/models', {
+        timeout: 10000, headers: { Authorization: `Bearer ${testKey}` },
+      });
+      return res.json({ ok: true, info: `${(r.data?.data || []).length} models` });
+    }
+    if (provider === 'deepseek') {
+      const r = await axios.get('https://api.deepseek.com/models', {
+        timeout: 10000, headers: { Authorization: `Bearer ${testKey}` },
+      });
+      return res.json({ ok: true, info: `${(r.data?.data || []).length} models` });
+    }
+    if (provider === 'groq') {
+      const r = await axios.get('https://api.groq.com/openai/v1/models', {
+        timeout: 10000, headers: { Authorization: `Bearer ${testKey}` },
+      });
+      return res.json({ ok: true, info: `${(r.data?.data || []).length} models` });
+    }
+    return res.status(400).json({ ok: false, error: 'Provider chưa hỗ trợ test' });
+  } catch (e: any) {
+    const status = e?.response?.status;
+    const msg = e?.response?.data?.error?.message || e?.response?.data?.error || e.message;
+    return res.status(400).json({ ok: false, error: `HTTP ${status || '?'}: ${msg}` });
+  }
+});
+
 // Thêm API keys mới (APPEND)
 router.post('/keys', (req, res) => {
   const { anthropic_api_key, fal_api_key, google_api_key, groq_api_key, deepseek_api_key, openai_api_key, mistral_api_key } = req.body;
@@ -104,7 +176,11 @@ router.post('/image-provider', (req, res) => {
 });
 
 router.delete('/keys/:provider', (req, res) => {
-  const map: Record<string, string> = { anthropic: 'anthropic_api_key', fal: 'fal_api_key', google: 'google_api_key', groq: 'groq_api_key' };
+  const map: Record<string, string> = {
+    anthropic: 'anthropic_api_key', fal: 'fal_api_key', google: 'google_api_key',
+    groq: 'groq_api_key', deepseek: 'deepseek_api_key', openai: 'openai_api_key',
+    mistral: 'mistral_api_key', unsplash: 'unsplash_access_key',
+  };
   const name = map[req.params.provider];
   if (!name) return res.status(400).json({ error: 'Provider không hợp lệ' });
   setSetting(name, '');
