@@ -83,6 +83,8 @@
       <section data-panel="dashboard" class="panel">
         <h2 class="text-2xl font-bold mb-6">📊 Tong quan</h2>
         <div class="max-w-4xl space-y-6">
+          <!-- Status banner (pending/expired/trial) -->
+          <div id="dash-banner" class="hidden rounded-xl p-4 border-2"></div>
           <!-- Quick stats -->
           <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="dash-stats"></div>
 
@@ -1139,6 +1141,46 @@
               <div><label class="block text-xs font-semibold mb-1">MoMo Secret Key</label><input id="sys-momo_secret_key" type="password" class="w-full border rounded px-3 py-2 text-sm font-mono" /></div>
               <div><label class="block text-xs font-semibold mb-1">MoMo Return URL</label><input id="sys-momo_return_url" class="w-full border rounded px-3 py-2 text-sm font-mono" /></div>
             </div>
+          </div>
+
+          <!-- Bank transfer (VietQR) -->
+          <div class="bg-white rounded-xl shadow p-6">
+            <h3 class="font-bold mb-3">🏦 Ngan hang nhan chuyen khoan (VietQR)</h3>
+            <p class="text-xs text-slate-500 mb-3">Dien thong tin → he thong tu sinh QR cho trang /pricing.html</p>
+            <div class="grid grid-cols-2 gap-3">
+              <div><label class="block text-xs font-semibold mb-1">BIN (ma NH) — VD: 970436 VCB, 970422 MB, 970407 TCB</label><input id="sys-bank_bin" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="970436" /></div>
+              <div><label class="block text-xs font-semibold mb-1">Ten NH hien thi</label><input id="sys-bank_name" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="Vietcombank" /></div>
+              <div><label class="block text-xs font-semibold mb-1">So tai khoan</label><input id="sys-bank_account" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="0123456789" /></div>
+              <div><label class="block text-xs font-semibold mb-1">Chu tai khoan</label><input id="sys-bank_holder" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="NGUYEN VAN A" /></div>
+            </div>
+            <p class="text-xs text-slate-400 mt-2">Tra cuu BIN: <a href="https://api.vietqr.io/v2/banks" target="_blank" class="text-blue-500 underline">api.vietqr.io/v2/banks</a></p>
+          </div>
+
+          <!-- Admin contacts + notify -->
+          <div class="bg-white rounded-xl shadow p-6">
+            <h3 class="font-bold mb-3">📞 Lien he admin + Telegram notify</h3>
+            <div class="grid grid-cols-2 gap-3">
+              <div><label class="block text-xs font-semibold mb-1">Zalo (hien public)</label><input id="sys-admin_zalo" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="0942883133" /></div>
+              <div><label class="block text-xs font-semibold mb-1">Hotline</label><input id="sys-admin_hotline" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="0942883133" /></div>
+              <div class="col-span-2"><label class="block text-xs font-semibold mb-1">Telegram chat_id admin (nhan notify don moi)</label><input id="sys-admin_telegram_chat_id" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="8702958210" /></div>
+            </div>
+          </div>
+
+          <!-- Pricing override -->
+          <div class="bg-white rounded-xl shadow p-6">
+            <h3 class="font-bold mb-3">💰 Gia goi (VND/thang)</h3>
+            <div class="grid grid-cols-3 gap-3">
+              <div><label class="block text-xs font-semibold mb-1">Starter</label><input id="sys-price_starter" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="300000" /></div>
+              <div><label class="block text-xs font-semibold mb-1">Pro</label><input id="sys-price_pro" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="600000" /></div>
+              <div><label class="block text-xs font-semibold mb-1">Enterprise</label><input id="sys-price_enterprise" class="w-full border rounded px-3 py-2 text-sm font-mono" placeholder="1500000" /></div>
+            </div>
+          </div>
+
+          <!-- Pending subscription requests -->
+          <div class="bg-white rounded-xl shadow p-6">
+            <h3 class="font-bold mb-3">📋 Don dang ky / nang cap cho duyet</h3>
+            <button onclick="loadSubRequests()" class="bg-slate-200 px-3 py-1 rounded text-sm mb-3">🔄 Tai lai</button>
+            <div id="sub-requests-list" class="space-y-3 text-sm"></div>
           </div>
 
           <div class="flex gap-3">

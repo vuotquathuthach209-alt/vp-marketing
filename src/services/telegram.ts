@@ -470,6 +470,27 @@ export function stopBot() {
 /**
  * Notification cho các chat đã authorized + bật notify.
  */
+/**
+ * Gửi message tới admin chính (chat_id trong settings.admin_telegram_chat_id).
+ * Fallback: nếu chưa cấu hình → broadcast tới tất cả authorized chats.
+ */
+export async function notifyAdmin(text: string) {
+  if (!getToken()) return;
+  const row = db.prepare(`SELECT value FROM settings WHERE key = 'admin_telegram_chat_id'`).get() as
+    | { value: string } | undefined;
+  const chatId = row?.value?.trim();
+  if (chatId) {
+    try {
+      await sendMessage(chatId, text);
+      return;
+    } catch (e: any) {
+      console.warn('[telegram] notifyAdmin fail:', e?.message);
+    }
+  }
+  // fallback broadcast
+  return notifyAll(text);
+}
+
 export async function notifyAll(text: string) {
   if (!getToken()) return;
   const chats = db.prepare(

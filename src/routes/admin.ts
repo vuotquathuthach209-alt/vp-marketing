@@ -279,6 +279,12 @@ const SYSTEM_CONFIGS = [
   'vnp_tmn_code', 'vnp_hash_secret', 'vnp_return_url',
   // MoMo
   'momo_partner_code', 'momo_access_key', 'momo_secret_key', 'momo_return_url',
+  // Bank transfer (VietQR dynamic)
+  'bank_bin', 'bank_account', 'bank_holder', 'bank_name',
+  // Admin contacts (public) + notifications
+  'admin_zalo', 'admin_hotline', 'admin_telegram_chat_id',
+  // Pricing (VND)
+  'price_starter', 'price_pro', 'price_enterprise',
 ];
 
 // GET /api/admin/system-config — lấy tất cả config (masked secrets)

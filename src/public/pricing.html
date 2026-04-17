@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Bảng giá — VP Marketing</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #222; min-height: 100vh; padding: 40px 20px; }
+  .wrap { max-width: 1200px; margin: 0 auto; }
+  h1 { color: white; text-align: center; font-size: 40px; margin-bottom: 8px; }
+  .sub { color: rgba(255,255,255,.9); text-align: center; margin-bottom: 40px; font-size: 17px; }
+  .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-bottom: 40px; }
+  .card { background: white; border-radius: 16px; padding: 32px 24px; box-shadow: 0 10px 40px rgba(0,0,0,.15); position: relative; transition: transform .2s; }
+  .card:hover { transform: translateY(-4px); }
+  .card.featured { border: 3px solid #ff6b35; }
+  .badge { position: absolute; top: -14px; left: 50%; transform: translateX(-50%); background: #ff6b35; color: white; padding: 6px 16px; border-radius: 20px; font-size: 12px; font-weight: 700; }
+  .card h2 { font-size: 24px; margin-bottom: 8px; }
+  .price { font-size: 36px; font-weight: 800; color: #667eea; margin: 16px 0 4px; }
+  .price small { font-size: 14px; color: #888; font-weight: 400; }
+  ul { list-style: none; margin: 20px 0; }
+  li { padding: 8px 0; color: #444; font-size: 15px; }
+  li::before { content: "✓ "; color: #22c55e; font-weight: 700; margin-right: 6px; }
+  button { width: 100%; padding: 14px; border: 0; border-radius: 8px; background: #667eea; color: white; font-size: 15px; font-weight: 600; cursor: pointer; transition: background .2s; }
+  button:hover { background: #5568d3; }
+  .card.featured button { background: #ff6b35; }
+  .card.featured button:hover { background: #e55a2a; }
+  .qr-section { background: white; border-radius: 16px; padding: 32px; display: none; }
+  .qr-section.active { display: block; }
+  .qr-grid { display: grid; grid-template-columns: 280px 1fr; gap: 32px; align-items: start; }
+  .qr-grid img { width: 100%; border-radius: 8px; border: 1px solid #eee; }
+  .info-row { padding: 10px 0; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
+  .info-row:last-child { border-bottom: 0; }
+  .info-row .label { color: #888; }
+  .info-row .val { font-weight: 600; font-family: 'Courier New', monospace; }
+  .copy-btn { background: none; border: 1px solid #667eea; color: #667eea; padding: 2px 10px; font-size: 12px; border-radius: 4px; width: auto; margin-left: 8px; }
+  input, textarea { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; margin-top: 8px; font-family: inherit; font-size: 14px; }
+  .contact { color: white; text-align: center; margin-top: 30px; font-size: 14px; }
+  .contact a { color: white; text-decoration: underline; }
+  @media (max-width: 640px) { .qr-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>VP Marketing</h1>
+  <p class="sub">AI Chatbot + Auto-post cho khách sạn • 300k/tháng từ gói Starter</p>
+
+  <div class="plans" id="plans"></div>
+
+  <div class="qr-section" id="qrSection">
+    <h2 style="margin-bottom: 20px;">💳 Thanh toán gói <span id="qrPlanName"></span></h2>
+    <div class="qr-grid">
+      <img id="qrImage" alt="VietQR" />
+      <div>
+        <div class="info-row"><span class="label">Ngân hàng</span><span class="val" id="bankName">—</span></div>
+        <div class="info-row"><span class="label">Số TK</span><span><span class="val" id="bankAccount">—</span><button class="copy-btn" onclick="copyVal('bankAccount')">Copy</button></span></div>
+        <div class="info-row"><span class="label">Chủ TK</span><span class="val" id="bankHolder">—</span></div>
+        <div class="info-row"><span class="label">Số tiền</span><span class="val" id="qrAmount">—</span></div>
+        <div class="info-row"><span class="label">Nội dung</span><span><span class="val" id="qrMemo">—</span><button class="copy-btn" onclick="copyVal('qrMemo')">Copy</button></span></div>
+
+        <h3 style="margin-top: 24px; font-size: 16px;">📤 Sau khi chuyển khoản</h3>
+        <p style="color: #666; font-size: 13px; margin-top: 6px;">Chụp ảnh bill → upload lên imgur/drive → paste link dưới đây. Admin sẽ duyệt trong ≤ 2h.</p>
+        <input id="proofUrl" placeholder="https://i.imgur.com/xxx.jpg (link ảnh bill)" />
+        <textarea id="proofNote" placeholder="Ghi chú (tùy chọn)" rows="2"></textarea>
+        <button onclick="submitProof()" style="margin-top: 12px;">Gửi bill cho admin</button>
+        <div id="proofMsg" style="margin-top: 12px; font-size: 14px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="contact">
+    📞 Hotline/Zalo: <a id="cZalo" href="#">0942883133</a> • Hoặc <a href="/">Đăng nhập dashboard</a>
+  </div>
+</div>
+
+<script>
+let BANK = null, PRICES = null, CURRENT_REQUEST_ID = null;
+
+async function init() {
+  const r = await fetch('/api/public/bank-info').then(r => r.json());
+  BANK = r.bank; PRICES = r.prices;
+  document.getElementById('cZalo').textContent = r.contact.zalo;
+  document.getElementById('cZalo').href = 'https://zalo.me/' + r.contact.zalo.replace(/\D/g, '');
+
+  const plans = [
+    { id: 'starter', name: 'Starter', price: PRICES.starter, features: ['1 Fanpage', 'Chatbot AI tự trả lời', '3 bài đăng tự động/ngày', '100 entry wiki', 'Support cơ bản'] },
+    { id: 'pro', name: 'Pro', price: PRICES.pro, features: ['3 Fanpages', 'Chatbot + Autopilot', '5 bài/ngày + A/B test', '500 entry wiki', 'Gen ảnh/video AI', 'Support 24/7'], featured: true },
+    { id: 'enterprise', name: 'Enterprise', price: PRICES.enterprise, features: ['10 Fanpages', 'Tất cả Pro +', '20 bài/ngày', 'White-label', 'Dedicated manager', 'Custom AI training'] },
+  ];
+  document.getElementById('plans').innerHTML = plans.map(p => `
+    <div class="card ${p.featured ? 'featured' : ''}">
+      ${p.featured ? '<div class="badge">PHỔ BIẾN</div>' : ''}
+      <h2>${p.name}</h2>
+      <div class="price">${p.price.toLocaleString('vi')}đ <small>/ tháng</small></div>
+      <ul>${p.features.map(f => `<li>${f}</li>`).join('')}</ul>
+      <button onclick="choosePlan('${p.id}', '${p.name}', ${p.price})">Chọn gói ${p.name}</button>
+    </div>
+  `).join('');
+}
+
+async function choosePlan(planId, planName, price) {
+  const token = localStorage.getItem('token');
+  if (!token) { alert('Vui lòng đăng nhập trước khi đăng ký gói.'); location.href = '/'; return; }
+
+  const up = await fetch('/api/subscription/upgrade', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify({ plan: planId }),
+  }).then(r => r.json());
+
+  if (up.error) { alert(up.error); return; }
+  if (up.applied) { alert('Đã áp dụng gói ' + planId); return; }
+
+  CURRENT_REQUEST_ID = up.request_id;
+  const memo = `VPMKT REQ${up.request_id} ${planId.toUpperCase()}`;
+  document.getElementById('qrPlanName').textContent = planName;
+  document.getElementById('bankName').textContent = BANK.name || '—';
+  document.getElementById('bankAccount').textContent = BANK.account || '—';
+  document.getElementById('bankHolder').textContent = BANK.holder || '—';
+  document.getElementById('qrAmount').textContent = price.toLocaleString('vi') + 'đ';
+  document.getElementById('qrMemo').textContent = memo;
+
+  if (BANK.bin && BANK.account) {
+    const url = `https://img.vietqr.io/image/${BANK.bin}-${BANK.account}-compact2.png?amount=${price}&addInfo=${encodeURIComponent(memo)}&accountName=${encodeURIComponent(BANK.holder || '')}`;
+    document.getElementById('qrImage').src = url;
+  } else {
+    document.getElementById('qrImage').alt = 'Admin chưa cấu hình thông tin ngân hàng';
+  }
+
+  document.getElementById('qrSection').classList.add('active');
+  document.getElementById('qrSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+function copyVal(id) {
+  navigator.clipboard.writeText(document.getElementById(id).textContent.trim());
+}
+
+async function submitProof() {
+  if (!CURRENT_REQUEST_ID) return;
+  const proof = document.getElementById('proofUrl').value.trim();
+  const note = document.getElementById('proofNote').value.trim();
+  if (!proof) return alert('Paste link ảnh bill');
+  const token = localStorage.getItem('token');
+  const r = await fetch('/api/subscription/submit-proof', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify({ request_id: CURRENT_REQUEST_ID, proof_url: proof, note }),
+  }).then(r => r.json());
+  const msg = document.getElementById('proofMsg');
+  if (r.error) { msg.style.color = '#e53935'; msg.textContent = '❌ ' + r.error; }
+  else { msg.style.color = '#22c55e'; msg.textContent = '✅ Đã gửi bill. Admin sẽ duyệt sớm!'; }
+}
+
+init();
+</script>
+</body>
+</html>

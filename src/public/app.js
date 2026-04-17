@@ -101,7 +101,7 @@ function switchTab(tab) {
   document.querySelectorAll('.panel').forEach((p) => {
     p.classList.toggle('hidden', p.dataset.panel !== tab);
   });
-  if (tab === 'dashboard') loadDashboard();
+  if (tab === 'dashboard') { loadDashboard(); loadStatusBanner && loadStatusBanner(); }
   if (tab === 'posts') loadPosts();
   if (tab === 'media') loadMedia();
   if (tab === 'settings') { loadSettings(); loadAllProviderKeys(); loadAiTier(); loadSysConfig(); }
@@ -2676,6 +2676,9 @@ const SYS_KEYS = [
   'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from',
   'vnp_tmn_code', 'vnp_hash_secret', 'vnp_return_url',
   'momo_partner_code', 'momo_access_key', 'momo_secret_key', 'momo_return_url',
+  'bank_bin', 'bank_account', 'bank_holder', 'bank_name',
+  'admin_zalo', 'admin_hotline', 'admin_telegram_chat_id',
+  'price_starter', 'price_pro', 'price_enterprise',
 ];
 
 async function loadSysConfig() {
@@ -2716,10 +2719,114 @@ async function saveSysConfig() {
     : '❌ Loi luu';
 }
 
+// ====== SUBSCRIPTION REQUESTS (Admin duyet don) ======
+async function loadSubRequests() {
+  const box = document.getElementById('sub-requests-list');
+  if (!box) return;
+  box.innerHTML = '<div class="text-slate-500">Dang tai...</div>';
+  try {
+    const r = await api('/api/subscription/admin/requests');
+    const rows = await r.json();
+    if (!Array.isArray(rows) || rows.length === 0) {
+      box.innerHTML = '<div class="text-slate-500">Chua co don nao</div>';
+      return;
+    }
+    box.innerHTML = rows.map(r => {
+      const d = new Date(r.created_at).toLocaleString('vi-VN');
+      const amt = (r.amount || 0).toLocaleString('vi');
+      const statusColor = {
+        awaiting_proof: 'bg-yellow-100 text-yellow-800',
+        proof_submitted: 'bg-blue-100 text-blue-800',
+        approved: 'bg-green-100 text-green-800',
+        rejected: 'bg-red-100 text-red-800',
+        pending: 'bg-slate-100 text-slate-700',
+      }[r.status] || 'bg-slate-100';
+      const proofLink = r.proof_url ? `<a href="${r.proof_url}" target="_blank" class="text-blue-600 underline">Xem bill</a>` : '<span class="text-slate-400">chua co bill</span>';
+      const actions = (r.status === 'proof_submitted' || r.status === 'awaiting_proof') ? `
+        <button onclick="approveSubRequest(${r.id})" class="bg-green-600 text-white px-3 py-1 rounded text-xs">✓ Duyet</button>
+        <button onclick="rejectSubRequest(${r.id})" class="bg-red-600 text-white px-3 py-1 rounded text-xs">✗ Tu choi</button>
+      ` : '';
+      return `
+        <div class="border rounded p-3">
+          <div class="flex justify-between items-start">
+            <div>
+              <div class="font-semibold">#${r.id} · ${r.hotel_name || 'Hotel #' + r.hotel_id}</div>
+              <div class="text-xs text-slate-500">${d} · ${r.current_plan || '—'} → <b>${r.requested_plan}</b> · ${amt}đ</div>
+              <div class="text-xs mt-1">${proofLink} ${r.admin_note ? '· <i>' + r.admin_note + '</i>' : ''}</div>
+            </div>
+            <div class="flex flex-col gap-1 items-end">
+              <span class="px-2 py-0.5 rounded text-xs ${statusColor}">${r.status}</span>
+              <div class="flex gap-1 mt-1">${actions}</div>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  } catch(e) {
+    box.innerHTML = '<div class="text-red-600">Loi tai don (chi admin xem duoc)</div>';
+  }
+}
+
+async function approveSubRequest(id) {
+  const note = prompt('Ghi chu duyet (tuy chon):') || '';
+  const r = await api('/api/subscription/admin/approve', 'POST', { request_id: id, note });
+  const d = await r.json();
+  if (d.ok) { alert('✅ Da duyet. Plan active, het han: ' + new Date(d.expires_at).toLocaleDateString('vi-VN')); loadSubRequests(); }
+  else alert('❌ ' + (d.error || 'Loi'));
+}
+
+async function rejectSubRequest(id) {
+  const reason = prompt('Ly do tu choi:') || 'Tu choi';
+  const r = await api('/api/subscription/admin/reject', 'POST', { request_id: id, reason });
+  const d = await r.json();
+  if (d.ok) { alert('Da tu choi'); loadSubRequests(); }
+  else alert('❌ ' + (d.error || 'Loi'));
+}
+
+// ====== STATUS BANNER (dashboard) ======
+async function loadStatusBanner() {
+  const el = document.getElementById('dash-banner');
+  if (!el) return;
+  try {
+    const r = await api('/api/subscription/current');
+    const d = await r.json();
+    if (!d || d.error) { el.classList.add('hidden'); return; }
+
+    let html = '', cls = '';
+    if (d.banner === 'expired') {
+      cls = 'bg-red-50 border-red-400 text-red-800';
+      html = `⚠️ <b>Goi ${d.plan} da het han</b> (${new Date(d.plan_expires_at).toLocaleDateString('vi-VN')}). <a href="/pricing.html" class="underline font-bold">Gia han ngay</a>`;
+    } else if (d.banner === 'trial_expired') {
+      cls = 'bg-orange-50 border-orange-400 text-orange-800';
+      html = `⏰ <b>Thoi gian dung thu da ket thuc.</b> <a href="/pricing.html" class="underline font-bold">Chon goi de tiep tuc</a>`;
+    } else if (d.pending_request) {
+      const pr = d.pending_request;
+      cls = 'bg-blue-50 border-blue-400 text-blue-800';
+      const statusTxt = { awaiting_proof: 'Cho ban chuyen khoan + gui bill', proof_submitted: 'Da nhan bill, admin dang duyet', pending: 'Dang cho xu ly' }[pr.status] || pr.status;
+      html = `⏳ Don nang cap len <b>${pr.requested_plan}</b>: ${statusTxt}. ${pr.status === 'awaiting_proof' ? '<a href="/pricing.html" class="underline font-bold">Hoan tat thanh toan</a>' : ''}`;
+    } else if (d.plan_expires_at) {
+      const days = Math.ceil((d.plan_expires_at - Date.now()) / 86400000);
+      if (days <= 7) {
+        cls = 'bg-yellow-50 border-yellow-400 text-yellow-800';
+        html = `🔔 Goi <b>${d.plan}</b> con ${days} ngay. <a href="/pricing.html" class="underline font-bold">Gia han</a>`;
+      }
+    }
+
+    if (html) {
+      el.className = 'rounded-xl p-4 border-2 ' + cls;
+      el.innerHTML = html;
+    } else {
+      el.classList.add('hidden');
+    }
+  } catch {
+    el.classList.add('hidden');
+  }
+}
+
 // ====== Tab hooks for new tabs ======
 document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    if (btn.dataset.tab === 'dashboard') setTimeout(loadDashboard, 100);
+    if (btn.dataset.tab === 'dashboard') { setTimeout(loadDashboard, 100); setTimeout(loadStatusBanner, 150); }
+    if (btn.dataset.tab === 'sysconfig') { setTimeout(loadSubRequests, 200); }
   });
 });
 

@@ -62,6 +62,33 @@ app.use('/api/payment', paymentRouter);
 
 app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 
+// Public: bank info + pricing + admin contact (no auth) — pricing page reads this
+app.get('/api/public/bank-info', (_req, res) => {
+  const { db } = require('./db');
+  const get = (k: string) => (db.prepare(`SELECT value FROM settings WHERE key = ?`).get(k) as any)?.value || '';
+  const price = (k: string, def: number) => {
+    const v = get(k);
+    return v ? parseInt(v, 10) : def;
+  };
+  res.json({
+    bank: {
+      bin: get('bank_bin'),
+      account: get('bank_account'),
+      holder: get('bank_holder'),
+      name: get('bank_name'),
+    },
+    contact: {
+      zalo: get('admin_zalo') || '0942883133',
+      hotline: get('admin_hotline') || '0942883133',
+    },
+    prices: {
+      starter: price('price_starter', 300000),
+      pro: price('price_pro', 600000),
+      enterprise: price('price_enterprise', 1500000),
+    },
+  });
+});
+
 // Global error handler — prevent stack trace leaks
 app.use((err: any, req: any, res: any, next: any) => {
   console.error(`[error] ${req.method} ${req.path}:`, err.message);

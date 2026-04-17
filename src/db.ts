@@ -467,6 +467,50 @@ CREATE TABLE IF NOT EXISTS learned_qa_cache (
 );
 CREATE INDEX IF NOT EXISTS idx_learned_hotel_hits ON learned_qa_cache(hotel_id, hits DESC);
 CREATE INDEX IF NOT EXISTS idx_learned_last_hit ON learned_qa_cache(last_hit_at);
+
+-- v2 Phase 1: Guest profiles (memory across sessions)
+CREATE TABLE IF NOT EXISTS guest_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  fb_user_id TEXT,
+  phone TEXT,
+  name TEXT,
+  language TEXT DEFAULT 'vi',
+  first_seen INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL,
+  total_conversations INTEGER NOT NULL DEFAULT 0,
+  booked_count INTEGER NOT NULL DEFAULT 0,
+  preferences TEXT DEFAULT '{}',
+  UNIQUE(hotel_id, fb_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_guest_hotel ON guest_profiles(hotel_id, last_seen DESC);
+
+-- v2 Phase 1: Bot feedback (staff rates bot answers → feed into learning)
+CREATE TABLE IF NOT EXISTS bot_feedback (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  message_id TEXT,
+  user_question TEXT NOT NULL,
+  bot_answer TEXT NOT NULL,
+  rating INTEGER,
+  corrected_answer TEXT,
+  reviewed_by INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_hotel ON bot_feedback(hotel_id, created_at DESC);
+
+-- v2 Phase 1: Monthly cross-hotel learning patterns (anonymized)
+CREATE TABLE IF NOT EXISTS monthly_learnings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  month TEXT NOT NULL,
+  pattern_type TEXT NOT NULL,
+  pattern TEXT NOT NULL,
+  accuracy REAL DEFAULT 0,
+  hotels_learned_from INTEGER DEFAULT 0,
+  applied_to_hotels INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_learnings_month ON monthly_learnings(month);
 `);
 
 // 1.1 Migration: thêm hotel_id vào các bảng hiện tại (safe — chỉ ADD COLUMN nếu chưa có)
@@ -495,6 +539,16 @@ safeAddColumn('ab_experiments', 'hotel_id', 'INTEGER', '1');
 safeAddColumn('pending_bookings', 'hotel_id', 'INTEGER', '1');
 safeAddColumn('telegram_chats', 'hotel_id', 'INTEGER', '1');
 safeAddColumn('settings', 'hotel_id', 'INTEGER', '1');
+
+// v2 Phase 1: SaaS subscription tracking
+safeAddColumn('mkt_hotels', 'plan_expires_at', 'INTEGER');
+safeAddColumn('mkt_hotels', 'trial_ends_at', 'INTEGER');
+safeAddColumn('mkt_hotels', 'onboarding_step', 'TEXT', `'pending'`);
+safeAddColumn('subscription_requests', 'proof_url', 'TEXT');
+safeAddColumn('subscription_requests', 'amount', 'INTEGER');
+safeAddColumn('subscription_requests', 'admin_note', 'TEXT');
+safeAddColumn('subscription_requests', 'reviewed_by', 'INTEGER');
+safeAddColumn('subscription_requests', 'reviewed_at', 'INTEGER');
 
 // Indexes trên hotel_id
 try {
