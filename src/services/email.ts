@@ -151,7 +151,7 @@ export async function checkAndAlert(): Promise<void> {
   }
 
   // AI cost spike
-  const aiCost = db.prepare(`SELECT SUM(COALESCE(cost, 0)) as total FROM ai_usage_log WHERE created_at > ?`).get(hourAgo) as any;
+  const aiCost = db.prepare(`SELECT SUM(COALESCE(cost_usd, 0)) as total FROM ai_usage_log WHERE created_at > ?`).get(hourAgo) as any;
   if ((aiCost?.total || 0) > 5) { // > $5/hour
     await sendAlertToAdmin('AI cost spike', `Chi phi AI: $${aiCost.total.toFixed(2)} trong 1h qua.`);
   }
