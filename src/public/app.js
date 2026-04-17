@@ -44,9 +44,17 @@ function showApp() {
 
   // Show/hide admin-only elements
   const isAdmin = currentUser.role === 'superadmin';
-  document.querySelectorAll('.admin-only').forEach(el => {
+  document.querySelectorAll('.admin-only, .nav-admin').forEach(el => {
     el.classList.toggle('hidden', !isAdmin);
   });
+
+  // Topbar user + plan
+  const ub = document.getElementById('topbar-user');
+  if (ub) ub.textContent = (isAdmin ? '👑 Admin' : '🏨 ') + (currentUser.email || '');
+  api('/settings/profile').then(p => {
+    const pb = document.getElementById('topbar-plan');
+    if (pb && p?.plan) { pb.textContent = String(p.plan).toUpperCase(); pb.classList.remove('hidden'); }
+  }).catch(()=>{});
 }
 
 // Login tab switcher

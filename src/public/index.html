@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Marketing Auto - Du lịch & Lưu trú</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body class="bg-slate-50 text-slate-800">
@@ -85,7 +88,16 @@
       <button id="logout-btn" class="mt-4 text-xs text-slate-500 hover:text-white px-3 py-2">↩ Dang xuat</button>
     </aside>
 
-    <main class="flex-1 p-8 overflow-auto">
+    <main class="flex-1 overflow-auto">
+      <div class="app-topbar">
+        <div class="brand-mark"><span class="dot"></span><span>VP Marketing — Dashboard</span></div>
+        <div class="flex items-center gap-3">
+          <span class="trust-chip">Hệ thống hoạt động</span>
+          <span id="topbar-plan" class="pill pill-info hidden"></span>
+          <span id="topbar-user" class="text-xs text-slate-500"></span>
+        </div>
+      </div>
+      <div class="p-8">
       <!-- DASHBOARD TAB -->
       <section data-panel="dashboard" class="panel">
         <h2 class="text-2xl font-bold mb-6">📊 Tong quan</h2>
@@ -1314,6 +1326,7 @@
           <p id="sys-config-status" class="text-sm"></p>
         </div>
       </section>
+      </div>
     </main>
   </div>
 </div>
