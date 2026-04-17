@@ -212,6 +212,133 @@ router.post('/login', async (req, res) => {
   return res.status(400).json({ error: 'Cần password (admin) hoặc email + password (hotel owner)' });
 });
 
+/**
+ * SELF-SIGNUP — zero-touch onboarding.
+ * KS/SMB bất kỳ đăng ký trực tiếp, free trial 7 ngày, không cần admin approve.
+ * Body: { email, password, hotel_name, phone?, industry?, website_url? }
+ */
+router.post('/signup', async (req, res) => {
+  try {
+    const { email, password, hotel_name, phone, industry, website_url, ref_code } = req.body || {};
+
+    if (!email || !password || !hotel_name) {
+      return res.status(400).json({ error: 'Thiếu email, password, hoặc tên cơ sở' });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'Email không hợp lệ' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Mật khẩu tối thiểu 8 ký tự' });
+    }
+    const validIndustries = ['hotel', 'restaurant', 'spa', 'clinic', 'real_estate', 'education', 'ecommerce', 'other'];
+    const ind = validIndustries.includes(industry) ? industry : 'hotel';
+
+    // Duplicate check
+    const dupe = db.prepare(`SELECT id FROM mkt_users WHERE email = ? LIMIT 1`).get(email) as any;
+    if (dupe) return res.status(409).json({ error: 'Email đã được đăng ký. Thử đăng nhập?' });
+
+    const now = Date.now();
+    const trialEnds = now + 7 * 24 * 3600 * 1000;
+    const slug = (hotel_name as string).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40) + '-' + Math.random().toString(36).slice(2, 6);
+
+    // Create tenant (mkt_hotels row) trên plan 'free' với trial
+    const hotelRes = db.prepare(`
+      INSERT INTO mkt_hotels (name, slug, plan, status, config, features, max_posts_per_day, max_pages, industry, website_url, trial_ends_at, activated_at, created_at, updated_at)
+      VALUES (?, ?, 'free', 'active', '{}', '{"chatbot":true,"autopilot":false,"booking":true,"analytics":true}', 1, 1, ?, ?, ?, ?, ?, ?)
+    `).run(hotel_name, slug, ind, website_url || null, trialEnds, now, now, now);
+    const hotelId = Number(hotelRes.lastInsertRowid);
+
+    // Hash password + create user
+    const hash = await bcrypt.hash(password, 10);
+    const userRes = db.prepare(`
+      INSERT INTO mkt_users (email, hotel_id, role, display_name, phone, password_hash, signup_source, last_login, status, created_at, updated_at)
+      VALUES (?, ?, 'owner', ?, ?, ?, 'self', ?, 'active', ?, ?)
+    `).run(email, hotelId, hotel_name, phone || null, hash, now, now, now);
+    const userId = Number(userRes.lastInsertRowid);
+
+    // Track event
+    try {
+      const { trackEvent } = require('../services/events');
+      trackEvent({ event: 'signup_completed', hotelId, userId, meta: { industry: ind, ref_code: ref_code || null }, ip: req.ip });
+    } catch {}
+
+    // Notify admin (best effort)
+    try {
+      const { notifyAdmin } = require('../services/telegram');
+      if (typeof notifyAdmin === 'function') {
+        notifyAdmin(`🎉 Self-signup mới\n${hotel_name} (${email})\nNgành: ${ind}\nHotel #${hotelId}`).catch(() => {});
+      }
+    } catch {}
+
+    // Kick off auto-wiki nếu có website_url (background, không block response)
+    if (website_url) {
+      setImmediate(async () => {
+        try {
+          const { autoWikiFromUrl } = require('../services/auto-wiki');
+          await autoWikiFromUrl(hotelId, website_url);
+        } catch (e: any) { console.error('[signup] auto-wiki fail:', e?.message); }
+      });
+    }
+
+    // Issue JWT
+    const token = jwt.sign(
+      { admin: false, hotelId, userId, role: 'owner', email },
+      config.jwtSecret,
+      { expiresIn: '30d' }
+    );
+    res.cookie('auth', token, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 3600 * 1000 });
+
+    res.json({
+      ok: true,
+      hotel_id: hotelId,
+      user_id: userId,
+      plan: 'free',
+      trial_ends_at: trialEnds,
+      auto_wiki_started: !!website_url,
+    });
+  } catch (e: any) {
+    console.error('[auth] signup error:', e);
+    res.status(500).json({ error: 'Lỗi đăng ký: ' + e.message });
+  }
+});
+
+/** LOGIN bằng email+password với password_hash (self-signup users) */
+router.post('/signin', async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) return res.status(400).json({ error: 'Thiếu email/password' });
+
+    const user = db.prepare(
+      `SELECT u.*, h.name AS hotel_name, h.plan, h.status AS hotel_status, h.trial_ends_at, h.plan_expires_at
+       FROM mkt_users u LEFT JOIN mkt_hotels h ON h.id = u.hotel_id
+       WHERE u.email = ? AND u.signup_source = 'self' AND u.status = 'active' LIMIT 1`
+    ).get(email) as any;
+    if (!user || !user.password_hash) return res.status(401).json({ error: 'Sai email hoặc mật khẩu' });
+
+    const ok = await bcrypt.compare(password, user.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Sai email hoặc mật khẩu' });
+
+    if (user.hotel_status !== 'active') return res.status(403).json({ error: 'Tài khoản tạm ngừng. Liên hệ support.' });
+
+    db.prepare(`UPDATE mkt_users SET last_login = ? WHERE id = ?`).run(Date.now(), user.id);
+
+    const token = jwt.sign(
+      { admin: false, hotelId: user.hotel_id, userId: user.id, role: user.role || 'owner', email: user.email },
+      config.jwtSecret,
+      { expiresIn: '30d' }
+    );
+    res.cookie('auth', token, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 3600 * 1000 });
+
+    res.json({
+      ok: true, mode: 'self', hotel_name: user.hotel_name, plan: user.plan,
+      trial_ends_at: user.trial_ends_at, plan_expires_at: user.plan_expires_at,
+    });
+  } catch (e: any) {
+    console.error('[auth] signin error:', e);
+    res.status(500).json({ error: 'Lỗi: ' + e.message });
+  }
+});
+
 router.post('/logout', (req, res) => {
   res.clearCookie('auth');
   res.json({ ok: true });

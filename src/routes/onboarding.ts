@@ -4,6 +4,7 @@ import { authMiddleware, AuthRequest, getHotelId } from '../middleware/auth';
 import { verifyPageToken } from '../services/facebook';
 import { verifyHotelBot, saveHotelTelegramConfig, setHotelBotUsername } from '../services/hotel-telegram';
 import { autoGenWikiFromOta } from '../services/ota-sync';
+import { autoWikiFromUrl } from '../services/auto-wiki';
 import { getOtaRoomImages } from '../services/ota-db';
 import axios from 'axios';
 import fs from 'fs';
@@ -216,6 +217,22 @@ router.post('/complete', (req: AuthRequest, res) => {
   db.prepare(`UPDATE mkt_hotels SET status = 'active', activated_at = ?, updated_at = ? WHERE id = ?`)
     .run(Date.now(), Date.now(), hotelId);
   res.json({ ok: true });
+});
+
+// POST /api/onboarding/auto-wiki — crawl website → seed wiki
+router.post('/auto-wiki', async (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
+  const { url } = req.body || {};
+  if (!url || !/^https?:\/\//.test(url)) return res.status(400).json({ error: 'URL không hợp lệ' });
+  try {
+    const result = await autoWikiFromUrl(hotelId, url);
+    db.prepare(`UPDATE mkt_hotels SET website_url = ?, updated_at = ? WHERE id = ?`)
+      .run(url, Date.now(), hotelId);
+    res.json({ ok: true, count: result.count, preview: result.entries.slice(0, 5) });
+  } catch (e: any) {
+    console.error('[onboarding] auto-wiki error:', e?.message);
+    res.status(500).json({ error: e?.message || 'Auto-wiki thất bại' });
+  }
 });
 
 export default router;

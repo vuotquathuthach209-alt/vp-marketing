@@ -26,6 +26,7 @@ import paymentRouter from './routes/payment';
 import feedbackRouter from './routes/feedback';
 import referralRouter from './routes/referral';
 import zaloRouter, { zaloWebhookRouter } from './routes/zalo';
+import bankWebhookRouter from './routes/bank-webhook';
 import rateLimit from 'express-rate-limit';
 
 const app = express();
@@ -94,6 +95,7 @@ app.use('/api/feedback', feedbackRouter);
 app.use('/api/referral', referralRouter);
 app.use('/api/zalo', zaloRouter);
 app.use('/', zaloWebhookRouter); // POST /webhook/zalo
+app.use('/webhook', bankWebhookRouter); // POST /webhook/bank
 
 app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 

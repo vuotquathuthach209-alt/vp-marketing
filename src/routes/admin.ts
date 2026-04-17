@@ -288,6 +288,10 @@ const SYSTEM_CONFIGS = [
   'price_starter', 'price_pro', 'price_enterprise',
   // Zalo OA (platform-level)
   'zalo_app_id', 'zalo_app_secret',
+  // Bank auto-approve webhook (SePay/Casso)
+  'bank_webhook_secret',
+  // Optional offsite DB backup
+  'backup_webhook_url',
 ];
 
 // GET /api/admin/system-config — lấy tất cả config (masked secrets)

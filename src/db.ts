@@ -555,6 +555,13 @@ safeAddColumn('subscription_requests', 'ref_code', 'TEXT');
 safeAddColumn('mkt_hotels', 'bot_paused_until', 'INTEGER');
 safeAddColumn('mkt_hotels', 'bot_pause_reason', 'TEXT');
 
+// Self-signup (standalone users, không qua OTA DB)
+safeAddColumn('mkt_users', 'password_hash', 'TEXT');
+safeAddColumn('mkt_users', 'phone', 'TEXT');
+safeAddColumn('mkt_users', 'signup_source', 'TEXT');   // 'self' | 'ota' | 'invite' | 'fb_oauth'
+safeAddColumn('mkt_hotels', 'industry', 'TEXT', `'hotel'`);
+safeAddColumn('mkt_hotels', 'website_url', 'TEXT');
+
 // Indexes trên hotel_id
 try {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_pages_hotel ON pages(hotel_id)`);
