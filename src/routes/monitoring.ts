@@ -3,6 +3,7 @@ import { db } from '../db';
 import { authMiddleware, AuthRequest, getHotelId, superadminOnly } from '../middleware/auth';
 import { getAiCacheStats } from '../services/ai-cache';
 import { getLearningStats, pruneLearned } from '../services/learning';
+import { computeWeekStats, formatReport, sendWeeklyReport } from '../services/weekly-report';
 
 const router = Router();
 router.use(authMiddleware);
@@ -170,6 +171,25 @@ router.post('/learning/prune', (_req, res) => {
   try {
     const deleted = pruneLearned();
     res.json({ ok: true, deleted });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Weekly report — preview + manual send
+router.get('/weekly-report', (_req, res) => {
+  try {
+    const stats = computeWeekStats();
+    res.json({ stats, preview: formatReport(stats) });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/weekly-report/send', async (_req, res) => {
+  try {
+    await sendWeeklyReport();
+    res.json({ ok: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

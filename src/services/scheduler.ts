@@ -11,6 +11,7 @@ import { runAutopilotCycle, generateMorningReport, generateEveningReport, resear
 import { runFullSync, runBookingSync } from './ota-sync';
 import { cleanupAiCache } from './ai-cache';
 import { pruneLearned } from './learning';
+import { sendWeeklyReport } from './weekly-report';
 import { checkAndAlert } from './email';
 import { runBackup } from './backup';
 
@@ -222,5 +223,10 @@ export function startScheduler() {
     }
   });
 
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h');
+  // ── Weekly quality report: Chủ nhật 8h sáng ──
+  cron.schedule('0 8 * * 0', () => {
+    sendWeeklyReport().catch(e => console.error('[scheduler] weekly report error:', e));
+  });
+
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h');
 }

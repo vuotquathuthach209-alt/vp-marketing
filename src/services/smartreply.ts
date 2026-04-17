@@ -625,13 +625,49 @@ const HALLUCINATION_MARKERS = [
   'tôi đoán', 'mình đoán', 'hình như',
 ];
 
-function validateResponse(reply: string): { valid: boolean; reason?: string } {
+// Parse numeric prices mentioned in bot reply (VND pattern: "500.000₫", "1,200,000 đ", "500k", "1.5tr")
+function extractPricesVND(text: string): number[] {
+  const out: number[] = [];
+  // Pattern 1: digits with thousand separators + đ/₫/đồng
+  const re1 = /(\d[\d\.,]{2,})\s*(?:₫|đ|đồng|vnd)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re1.exec(text)) !== null) {
+    const n = parseInt(m[1].replace(/[.,]/g, ''), 10);
+    if (n >= 50_000 && n <= 50_000_000) out.push(n);
+  }
+  // Pattern 2: "500k", "1.5tr"
+  const re2 = /(\d+(?:[.,]\d+)?)\s*(k|tr|triệu)/gi;
+  while ((m = re2.exec(text)) !== null) {
+    const base = parseFloat(m[1].replace(',', '.'));
+    const mult = m[2].toLowerCase() === 'k' ? 1_000 : 1_000_000;
+    const n = Math.round(base * mult);
+    if (n >= 50_000 && n <= 50_000_000) out.push(n);
+  }
+  return out;
+}
+
+function validateResponse(
+  reply: string,
+  opts?: { validPrices?: number[] },
+): { valid: boolean; reason?: string } {
   if (!reply || reply.trim().length < 5) return { valid: false, reason: 'empty' };
   const low = reply.toLowerCase();
   for (const marker of HALLUCINATION_MARKERS) {
     if (low.includes(marker)) return { valid: false, reason: `hallucination: "${marker}"` };
   }
   if (reply.length > 1200) return { valid: false, reason: 'too_long' };
+
+  // Price cross-check: any VND amount in reply must exist in OTA rooms data.
+  // Allow ±5% tolerance (rounding in AI output).
+  if (opts?.validPrices && opts.validPrices.length > 0) {
+    const quoted = extractPricesVND(reply);
+    for (const q of quoted) {
+      const matched = opts.validPrices.some((p) => Math.abs(q - p) / p <= 0.05);
+      if (!matched) {
+        return { valid: false, reason: `price_hallucination: ${q.toLocaleString('vi-VN')}₫ not in rooms` };
+      }
+    }
+  }
   return { valid: true };
 }
 
@@ -685,7 +721,15 @@ async function ragReply(
     user: `${contextParts}\n\nKhách viết: "${message}"\n\nTrả lời ngắn, chỉ dựa trên ngữ cảnh trên:`,
   });
 
-  const v = validateResponse(raw);
+  // Build valid price whitelist from current OTA rooms (base_price + hourly_price)
+  const { rooms } = getHotelCache(hotelId);
+  const validPrices: number[] = [];
+  for (const r of rooms) {
+    if (r.base_price) validPrices.push(r.base_price);
+    if (r.hourly_price) validPrices.push(r.hourly_price);
+  }
+
+  const v = validateResponse(raw, { validPrices });
   if (!v.valid) {
     console.warn(`[smartreply] reply validation failed: ${v.reason}`);
     return null;
