@@ -223,6 +223,17 @@ export function startScheduler() {
     }
   });
 
+  // ── Monthly learning aggregation: 6h sáng mùng 1 hàng tháng ──
+  cron.schedule('0 6 1 * *', () => {
+    try {
+      const { aggregateMonthlyLearnings } = require('./monthly-learning');
+      const result = aggregateMonthlyLearnings();
+      console.log(`[scheduler] monthly learning: ${JSON.stringify(result)}`);
+    } catch (e: any) {
+      console.error('[scheduler] monthly learning error:', e?.message);
+    }
+  });
+
   // ── Weekly quality report: Chủ nhật 8h sáng ──
   cron.schedule('0 8 * * 0', () => {
     sendWeeklyReport().catch(e => console.error('[scheduler] weekly report error:', e));

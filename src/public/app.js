@@ -2340,6 +2340,7 @@ async function loadOnboarding() {
       chatbot: '🤖 Cau hinh Chatbot',
       autopilot: '🚀 Bat Autopilot',
       wiki: '📚 Tao kien thuc AI',
+      room_images: '📸 Import anh phong tu OTA',
     };
 
     const stepsHtml = Object.entries(data.steps).map(([key, done]) => `
@@ -2398,6 +2399,10 @@ function showObStep(step, done) {
       <button onclick="obInitWiki()" class="bg-blue-600 text-white px-4 py-2 rounded text-sm">Tao kien thuc</button>
       <span id="ob-wiki-status" class="text-sm ml-2"></span>`,
     hotel_info: `<p class="text-green-600">Thong tin khach san da duoc tu dong lay tu OTA.</p>`,
+    room_images: `
+      <p class="text-sm mb-3">Tu dong tai ve toan bo anh phong tu OTA DB → luu vao Media → bot gui khach khi can.</p>
+      <button onclick="obImportRoomImages()" class="bg-blue-600 text-white px-4 py-2 rounded text-sm">📥 Import ngay</button>
+      <span id="ob-rooms-status" class="text-sm ml-2"></span>`,
   };
 
   title.textContent = step;
@@ -2444,6 +2449,17 @@ async function obInitWiki() {
   const r = await api('/api/onboarding/step/wiki-init', 'POST');
   const d = await r.json();
   document.getElementById('ob-wiki-status').textContent = d.ok ? `✅ Tao ${d.wiki_entries} muc` : '❌ ' + d.error;
+  if (d.ok) loadOnboarding();
+}
+
+async function obImportRoomImages() {
+  const el = document.getElementById('ob-rooms-status');
+  el.textContent = 'Dang tai anh...';
+  const r = await api('/api/onboarding/step/import-room-images', 'POST');
+  const d = await r.json();
+  el.textContent = d.ok
+    ? `✅ Import ${d.imported} anh (bo qua ${d.skipped}, loi ${d.failed})`
+    : '❌ ' + (d.error || 'Loi');
   if (d.ok) loadOnboarding();
 }
 

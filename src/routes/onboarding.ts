@@ -4,6 +4,12 @@ import { authMiddleware, AuthRequest, getHotelId } from '../middleware/auth';
 import { verifyPageToken } from '../services/facebook';
 import { verifyHotelBot, saveHotelTelegramConfig, setHotelBotUsername } from '../services/hotel-telegram';
 import { autoGenWikiFromOta } from '../services/ota-sync';
+import { getOtaRoomImages } from '../services/ota-db';
+import axios from 'axios';
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import { config } from '../config';
 
 const router = Router();
 router.use(authMiddleware);
@@ -33,9 +39,14 @@ router.get('/status', (req: AuthRequest, res) => {
   const autopilotOn = getSetting('autopilot_enabled', hotelId) === '1';
   const wikiCount = db.prepare(`SELECT COUNT(*) as n FROM knowledge_wiki WHERE hotel_id = ? AND active = 1`).get(hotelId) as any;
 
+  const roomImagesCount = db.prepare(
+    `SELECT COUNT(*) as n FROM media WHERE hotel_id = ? AND source = 'ota-room'`
+  ).get(hotelId) as any;
+
   const steps = {
     hotel_info: !!hotel.ota_hotel_id || hotel.status === 'active',
     fb_page: pages.length > 0,
+    room_images: (roomImagesCount?.n || 0) > 0,
     telegram: tgConfig.some((t: any) => t.enabled),
     chatbot: autoReply.some((a: any) => a.reply_messages),
     autopilot: autopilotOn,
@@ -152,6 +163,48 @@ router.post('/step/wiki-init', async (req: AuthRequest, res) => {
   try {
     const count = await autoGenWikiFromOta(hotelId, hotel.ota_hotel_id);
     res.json({ ok: true, wiki_entries: count });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/onboarding/step/import-room-images — tải ảnh phòng từ OTA DB về local media
+router.post('/step/import-room-images', async (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
+  const hotel = db.prepare(`SELECT ota_hotel_id FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
+  if (!hotel?.ota_hotel_id) return res.status(400).json({ error: 'Hotel chưa liên kết OTA' });
+
+  try {
+    const imgs = await getOtaRoomImages(hotel.ota_hotel_id);
+    if (!imgs.length) return res.json({ ok: true, imported: 0, message: 'Không có ảnh trong OTA DB' });
+
+    const insertStmt = db.prepare(
+      `INSERT INTO media (filename, mime_type, size, source, prompt, hotel_id, created_at)
+       VALUES (?, ?, ?, 'ota-room', ?, ?, ?)`
+    );
+    const existsStmt = db.prepare(
+      `SELECT id FROM media WHERE hotel_id = ? AND prompt = ? AND source = 'ota-room' LIMIT 1`
+    );
+
+    let imported = 0, skipped = 0, failed = 0;
+    for (const img of imgs) {
+      const tag = `[${img.room_type_name}] ${img.caption || ''} ${img.image_url}`.slice(0, 400);
+      if (existsStmt.get(hotelId, tag)) { skipped++; continue; }
+      try {
+        const resp = await axios.get(img.image_url, { responseType: 'arraybuffer', timeout: 30000 });
+        const ct = (resp.headers['content-type'] as string) || 'image/jpeg';
+        const ext = ct.includes('png') ? 'png' : ct.includes('webp') ? 'webp' : 'jpg';
+        const filename = `ota-${hotelId}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.${ext}`;
+        const fp = path.join(config.mediaDir, filename);
+        fs.writeFileSync(fp, Buffer.from(resp.data));
+        insertStmt.run(filename, ct, fs.statSync(fp).size, tag, hotelId, Date.now());
+        imported++;
+      } catch (e: any) {
+        console.warn('[import-room-images] fail:', img.image_url, e?.message);
+        failed++;
+      }
+    }
+    res.json({ ok: true, imported, skipped, failed, total: imgs.length });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
