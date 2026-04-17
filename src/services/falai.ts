@@ -171,31 +171,36 @@ export async function generateVideo(
   );
 
   const requestId = submitResp.data?.request_id;
-  if (!requestId) throw new Error('fal.ai không trả request_id');
+  // fal.ai trả về status_url + response_url mà dùng base model name (không v1/standard/...)
+  const statusUrl: string = submitResp.data?.status_url;
+  const responseUrl: string = submitResp.data?.response_url;
+  if (!requestId || !statusUrl || !responseUrl) {
+    throw new Error(`fal.ai submit thiếu request_id/status_url: ${JSON.stringify(submitResp.data).slice(0, 200)}`);
+  }
 
-  // Poll (tối đa 6 phút = 72 lần × 5s)
+  // Poll (tối đa 10 phút = 120 lần × 5s — Kling Pro / Veo có thể chậm)
   let videoUrl: string | null = null;
-  for (let i = 0; i < 72; i++) {
+  let lastStatus = '';
+  for (let i = 0; i < 120; i++) {
     await new Promise((r) => setTimeout(r, 5000));
-    const statusResp = await axios.get(
-      `https://queue.fal.run/${endpoint}/requests/${requestId}/status`,
-      { headers: { Authorization: `Key ${key}` }, timeout: 15000, validateStatus: () => true }
-    );
-    const status = statusResp.data?.status;
-    if (status === 'COMPLETED') {
-      const resultResp = await axios.get(
-        `https://queue.fal.run/${endpoint}/requests/${requestId}`,
-        { headers: { Authorization: `Key ${key}` }, timeout: 30000 }
-      );
+    const statusResp = await axios.get(statusUrl, {
+      headers: { Authorization: `Key ${key}` }, timeout: 15000, validateStatus: () => true,
+    });
+    lastStatus = statusResp.data?.status || `HTTP ${statusResp.status}`;
+    if (statusResp.data?.status === 'COMPLETED') {
+      const resultResp = await axios.get(responseUrl, {
+        headers: { Authorization: `Key ${key}` }, timeout: 30000,
+      });
       videoUrl = resultResp.data?.video?.url || resultResp.data?.response?.video?.url || null;
       break;
     }
-    if (status === 'FAILED' || status === 'ERROR') {
-      throw new Error(`fal.ai ${cfg.label} gen video thất bại`);
+    if (statusResp.data?.status === 'FAILED' || statusResp.data?.status === 'ERROR') {
+      const logs = JSON.stringify(statusResp.data?.logs || statusResp.data).slice(0, 200);
+      throw new Error(`fal.ai ${cfg.label} gen video thất bại: ${logs}`);
     }
   }
 
-  if (!videoUrl) throw new Error(`Timeout chờ video ${cfg.label} từ fal.ai`);
+  if (!videoUrl) throw new Error(`Timeout chờ video ${cfg.label} (10 phút) — status cuối: ${lastStatus}`);
 
   const vidResp = await axios.get(videoUrl, { responseType: 'arraybuffer', timeout: 180000 });
   const filename = `ai-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.mp4`;
