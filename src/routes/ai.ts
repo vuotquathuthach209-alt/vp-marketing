@@ -48,15 +48,17 @@ router.post('/image', async (req, res) => {
 
 // Gen video (chậm, ~1-3 phút)
 router.post('/video', async (req, res) => {
-  const { prompt, caption } = req.body;
+  const { prompt, caption, tier, imageMediaId } = req.body as {
+    prompt?: string; caption?: string; tier?: 'standard' | 'pro' | 'veo3'; imageMediaId?: number;
+  };
   try {
     let finalPrompt = prompt;
     if (!finalPrompt && caption) {
       finalPrompt = await generateImagePrompt(caption);
     }
     if (!finalPrompt) return res.status(400).json({ error: 'Thiếu prompt hoặc caption' });
-    const mediaId = await generateVideo(finalPrompt);
-    res.json({ mediaId, prompt: finalPrompt });
+    const mediaId = await generateVideo(finalPrompt, { tier, imageMediaId });
+    res.json({ mediaId, prompt: finalPrompt, tier: tier || 'standard', imageMediaId: imageMediaId || null });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

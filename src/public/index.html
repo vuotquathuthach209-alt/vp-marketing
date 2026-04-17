@@ -212,6 +212,75 @@
             <div class="flex gap-2 mb-2">
               <button id="btn-gen-image" class="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700">🎨 AI tạo ảnh</button>
               <button id="btn-gen-video" class="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700">🎬 AI tạo video</button>
+
+              <!-- Modal chọn tier + ảnh -->
+              <div id="video-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+                  <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-bold text-slate-800">🎬 Tạo video AI</h3>
+                    <button id="video-modal-close" class="text-slate-500 hover:text-slate-700 text-2xl leading-none">&times;</button>
+                  </div>
+
+                  <div class="mb-4">
+                    <div class="text-sm font-semibold mb-2">Mode</div>
+                    <div class="flex gap-2">
+                      <label class="flex-1 border rounded-lg p-3 cursor-pointer hover:bg-slate-50 has-[:checked]:border-indigo-500 has-[:checked]:bg-indigo-50">
+                        <input type="radio" name="vid-mode" value="i2v" checked class="mr-2"/>
+                        <span class="font-medium text-sm">🖼 Từ ảnh có sẵn</span>
+                        <div class="text-xs text-slate-500 mt-0.5">Bám cảnh thật, chất lượng cao nhất</div>
+                      </label>
+                      <label class="flex-1 border rounded-lg p-3 cursor-pointer hover:bg-slate-50 has-[:checked]:border-indigo-500 has-[:checked]:bg-indigo-50">
+                        <input type="radio" name="vid-mode" value="t2v" class="mr-2"/>
+                        <span class="font-medium text-sm">📝 Text-only</span>
+                        <div class="text-xs text-slate-500 mt-0.5">AI tự tưởng tượng</div>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div id="vid-image-picker" class="mb-4">
+                    <div class="text-sm font-semibold mb-2">Chọn ảnh (frame đầu tiên)</div>
+                    <div id="vid-image-grid" class="grid grid-cols-4 gap-2 max-h-48 overflow-y-auto border rounded-lg p-2 bg-slate-50">
+                      <div class="col-span-4 text-xs text-slate-500 text-center py-4">Đang tải ảnh...</div>
+                    </div>
+                    <div class="text-xs text-slate-500 mt-1">Đã chọn: <span id="vid-image-sel" class="font-semibold">—</span></div>
+                  </div>
+
+                  <div class="mb-4">
+                    <div class="text-sm font-semibold mb-2">Chất lượng</div>
+                    <div class="space-y-2">
+                      <label class="flex items-center border rounded-lg p-3 cursor-pointer hover:bg-slate-50 has-[:checked]:border-green-500 has-[:checked]:bg-green-50">
+                        <input type="radio" name="vid-tier" value="standard" class="mr-3"/>
+                        <div class="flex-1">
+                          <div class="font-medium text-sm">🟢 Tiết kiệm · Kling v1 Standard</div>
+                          <div class="text-xs text-slate-500">5 giây · ~2 phút chờ</div>
+                        </div>
+                        <div class="font-bold text-green-700">$0.35</div>
+                      </label>
+                      <label class="flex items-center border rounded-lg p-3 cursor-pointer hover:bg-slate-50 has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50">
+                        <input type="radio" name="vid-tier" value="pro" checked class="mr-3"/>
+                        <div class="flex-1">
+                          <div class="font-medium text-sm">🔵 Cân bằng · Kling v1 Pro ⭐</div>
+                          <div class="text-xs text-slate-500">5 giây · ~3 phút · đẹp hơn rõ rệt</div>
+                        </div>
+                        <div class="font-bold text-blue-700">$0.95</div>
+                      </label>
+                      <label class="flex items-center border rounded-lg p-3 cursor-pointer hover:bg-slate-50 has-[:checked]:border-purple-500 has-[:checked]:bg-purple-50">
+                        <input type="radio" name="vid-tier" value="veo3" class="mr-3"/>
+                        <div class="flex-1">
+                          <div class="font-medium text-sm">🟣 Cao cấp · Google Veo 3</div>
+                          <div class="text-xs text-slate-500">8 giây · ~2 phút · top quality 2026</div>
+                        </div>
+                        <div class="font-bold text-purple-700">$2.50</div>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="flex gap-2 justify-end pt-3 border-t">
+                    <button id="video-modal-cancel" class="px-4 py-2 border rounded-lg text-sm hover:bg-slate-50">Huỷ</button>
+                    <button id="video-modal-submit" class="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700 font-semibold">🎬 Tạo video</button>
+                  </div>
+                </div>
+              </div>
               <label class="bg-slate-200 px-4 py-2 rounded-lg text-sm hover:bg-slate-300 cursor-pointer">
                 📁 Upload từ máy
                 <input id="compose-upload" type="file" accept="image/*,video/*" class="hidden" />

@@ -76,52 +76,126 @@ export async function generateImage(prompt: string): Promise<number> {
   return Number(result.lastInsertRowid);
 }
 
-/**
- * Gen video 5s bằng Kling qua fal.ai (~$0.35/video)
- * Docs: https://fal.ai/models/fal-ai/kling-video/v1/standard/text-to-video
- */
-export async function generateVideo(prompt: string): Promise<number> {
-  const key = getKey();
+export type VideoTier = 'standard' | 'pro' | 'veo3';
 
-  // Video gen có thể mất 1-3 phút, dùng queue API
+const TIER_CONFIG: Record<VideoTier, { t2v: string; i2v: string; duration: string; label: string; cost: number }> = {
+  standard: {
+    t2v: 'fal-ai/kling-video/v1/standard/text-to-video',
+    i2v: 'fal-ai/kling-video/v1/standard/image-to-video',
+    duration: '5',
+    label: 'Kling v1 Standard',
+    cost: 0.35,
+  },
+  pro: {
+    t2v: 'fal-ai/kling-video/v1/pro/text-to-video',
+    i2v: 'fal-ai/kling-video/v1/pro/image-to-video',
+    duration: '5',
+    label: 'Kling v1 Pro',
+    cost: 0.95,
+  },
+  veo3: {
+    t2v: 'fal-ai/veo3',
+    i2v: 'fal-ai/veo3/image-to-video',
+    duration: '8',
+    label: 'Google Veo 3',
+    cost: 2.5,
+  },
+};
+
+/**
+ * Upload local file lên fal.ai storage để lấy public URL (dùng cho image-to-video).
+ * Docs: https://docs.fal.ai/model-endpoints/storage
+ */
+async function uploadToFalStorage(filepath: string, mime: string): Promise<string> {
+  const key = getKey();
+  const buf = fs.readFileSync(filepath);
+  const filename = path.basename(filepath);
+
+  // Step 1: initiate
+  const init = await axios.post(
+    'https://rest.alpha.fal.ai/storage/upload/initiate',
+    { content_type: mime, file_name: filename },
+    { headers: { Authorization: `Key ${key}`, 'Content-Type': 'application/json' }, timeout: 20000 }
+  );
+  const uploadUrl = init.data?.upload_url;
+  const fileUrl = init.data?.file_url;
+  if (!uploadUrl || !fileUrl) throw new Error('fal.ai storage init failed');
+
+  // Step 2: PUT raw bytes
+  await axios.put(uploadUrl, buf, {
+    headers: { 'Content-Type': mime },
+    timeout: 120000,
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+  });
+
+  return fileUrl;
+}
+
+/**
+ * Gen video 5-8s bằng Kling/Veo qua fal.ai.
+ * @param prompt  prompt tiếng Anh
+ * @param opts.tier         'standard' | 'pro' | 'veo3' (default 'standard')
+ * @param opts.imageMediaId  nếu có → image-to-video (bám cảnh thật)
+ */
+export async function generateVideo(
+  prompt: string,
+  opts: { tier?: VideoTier; imageMediaId?: number } = {}
+): Promise<number> {
+  const key = getKey();
+  if (!key) throw new Error('Chưa cấu hình fal.ai API key. Vào Cài đặt → ô 🖼 FAL.AI để nhập.');
+
+  const tier = opts.tier || 'standard';
+  const cfg = TIER_CONFIG[tier];
+  if (!cfg) throw new Error(`Tier không hợp lệ: ${tier}`);
+
+  // Nếu có image → upload lên fal storage, dùng image-to-video endpoint
+  let imageUrl: string | null = null;
+  if (opts.imageMediaId) {
+    const row: any = db.prepare('SELECT filename, mime_type FROM media WHERE id = ?').get(opts.imageMediaId);
+    if (!row) throw new Error(`Không tìm thấy media #${opts.imageMediaId}`);
+    if (!/^image\//.test(row.mime_type)) throw new Error('Media đã chọn không phải ảnh');
+    const fp = path.join(config.mediaDir, row.filename);
+    if (!fs.existsSync(fp)) throw new Error('File ảnh đã bị xoá trên đĩa');
+    imageUrl = await uploadToFalStorage(fp, row.mime_type);
+  }
+
+  const endpoint = imageUrl ? cfg.i2v : cfg.t2v;
+  const payload: any = { prompt, duration: cfg.duration, aspect_ratio: '16:9' };
+  if (imageUrl) payload.image_url = imageUrl;
+
   const submitResp = await axios.post(
-    'https://queue.fal.run/fal-ai/kling-video/v1/standard/text-to-video',
-    { prompt, duration: '5', aspect_ratio: '16:9' },
-    {
-      headers: { Authorization: `Key ${key}`, 'Content-Type': 'application/json' },
-      timeout: 30000,
-    }
+    `https://queue.fal.run/${endpoint}`,
+    payload,
+    { headers: { Authorization: `Key ${key}`, 'Content-Type': 'application/json' }, timeout: 30000 }
   );
 
   const requestId = submitResp.data?.request_id;
   if (!requestId) throw new Error('fal.ai không trả request_id');
 
-  // Poll trạng thái
+  // Poll (tối đa 6 phút = 72 lần × 5s)
   let videoUrl: string | null = null;
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 72; i++) {
     await new Promise((r) => setTimeout(r, 5000));
     const statusResp = await axios.get(
-      `https://queue.fal.run/fal-ai/kling-video/v1/standard/requests/${requestId}`,
-      { headers: { Authorization: `Key ${key}` }, timeout: 15000 }
+      `https://queue.fal.run/${endpoint}/requests/${requestId}/status`,
+      { headers: { Authorization: `Key ${key}` }, timeout: 15000, validateStatus: () => true }
     );
-    if (statusResp.data?.status === 'COMPLETED') {
-      videoUrl = statusResp.data?.video?.url || statusResp.data?.response?.video?.url || null;
-      if (!videoUrl) {
-        // Fetch kết quả đầy đủ
-        const resultResp = await axios.get(
-          `https://queue.fal.run/fal-ai/kling-video/v1/standard/requests/${requestId}`,
-          { headers: { Authorization: `Key ${key}` } }
-        );
-        videoUrl = resultResp.data?.video?.url;
-      }
+    const status = statusResp.data?.status;
+    if (status === 'COMPLETED') {
+      const resultResp = await axios.get(
+        `https://queue.fal.run/${endpoint}/requests/${requestId}`,
+        { headers: { Authorization: `Key ${key}` }, timeout: 30000 }
+      );
+      videoUrl = resultResp.data?.video?.url || resultResp.data?.response?.video?.url || null;
       break;
     }
-    if (statusResp.data?.status === 'FAILED') {
-      throw new Error('fal.ai gen video thất bại');
+    if (status === 'FAILED' || status === 'ERROR') {
+      throw new Error(`fal.ai ${cfg.label} gen video thất bại`);
     }
   }
 
-  if (!videoUrl) throw new Error('Timeout chờ video từ fal.ai');
+  if (!videoUrl) throw new Error(`Timeout chờ video ${cfg.label} từ fal.ai`);
 
   const vidResp = await axios.get(videoUrl, { responseType: 'arraybuffer', timeout: 180000 });
   const filename = `ai-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.mp4`;
@@ -129,12 +203,13 @@ export async function generateVideo(prompt: string): Promise<number> {
   fs.writeFileSync(filepath, Buffer.from(vidResp.data));
 
   const stat = fs.statSync(filepath);
+  const label = `[${cfg.label}${imageUrl ? ' i2v' : ' t2v'}] ${prompt}`;
   const result = db
     .prepare(
       `INSERT INTO media (filename, mime_type, size, source, prompt, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(filename, 'video/mp4', stat.size, 'ai-video', prompt, Date.now());
+    .run(filename, 'video/mp4', stat.size, 'ai-video', label, Date.now());
 
   return Number(result.lastInsertRowid);
 }

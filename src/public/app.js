@@ -189,13 +189,75 @@ document.getElementById('btn-gen-image').addEventListener('click', async () => {
   }
 });
 
-document.getElementById('btn-gen-video').addEventListener('click', async () => {
+// ═══ Video gen modal (3 tiers + image-to-video) ═══
+let _vidSelectedImageId = null;
+
+async function openVideoModal() {
   const caption = document.getElementById('compose-caption').value.trim();
   if (!caption) return setStatus('Viết caption trước đã', 'err');
-  if (!confirm('Tạo video 5s bằng Kling, mất ~2 phút và tốn ~$0.35. Tiếp tục?')) return;
-  setStatus('⏳ Đang tạo video AI... 1-3 phút, vui lòng chờ');
+  _vidSelectedImageId = null;
+  document.getElementById('vid-image-sel').textContent = '—';
+  document.getElementById('video-modal').classList.remove('hidden');
+
+  // Load ảnh gần đây
+  const grid = document.getElementById('vid-image-grid');
+  grid.innerHTML = '<div class="col-span-4 text-xs text-slate-500 text-center py-4">Đang tải...</div>';
   try {
-    const r = await api('/ai/video', { method: 'POST', body: JSON.stringify({ caption }) });
+    const list = await api('/media');
+    const imgs = list.filter(m => (m.mime_type || '').startsWith('image/')).slice(0, 40);
+    if (imgs.length === 0) {
+      grid.innerHTML = '<div class="col-span-4 text-xs text-slate-500 text-center py-4">Chưa có ảnh. Upload hoặc tạo ảnh AI trước.</div>';
+      return;
+    }
+    grid.innerHTML = imgs.map(m =>
+      `<img data-id="${m.id}" data-name="${m.filename}" src="/media/${m.filename}" class="vid-pick w-full h-20 object-cover rounded cursor-pointer border-2 border-transparent hover:border-indigo-400"/>`
+    ).join('');
+    grid.querySelectorAll('.vid-pick').forEach(el => {
+      el.addEventListener('click', () => {
+        grid.querySelectorAll('.vid-pick').forEach(x => x.classList.remove('border-indigo-500'));
+        el.classList.add('border-indigo-500');
+        _vidSelectedImageId = Number(el.dataset.id);
+        document.getElementById('vid-image-sel').textContent = el.dataset.name;
+      });
+    });
+  } catch (e) {
+    grid.innerHTML = `<div class="col-span-4 text-xs text-red-600 text-center py-4">Lỗi: ${e.message}</div>`;
+  }
+}
+
+function closeVideoModal() {
+  document.getElementById('video-modal').classList.add('hidden');
+}
+
+document.getElementById('btn-gen-video').addEventListener('click', openVideoModal);
+document.getElementById('video-modal-close').addEventListener('click', closeVideoModal);
+document.getElementById('video-modal-cancel').addEventListener('click', closeVideoModal);
+
+// Ẩn/hiện khung chọn ảnh theo mode
+document.querySelectorAll('input[name="vid-mode"]').forEach(r => {
+  r.addEventListener('change', () => {
+    const isI2v = document.querySelector('input[name="vid-mode"]:checked').value === 'i2v';
+    document.getElementById('vid-image-picker').style.display = isI2v ? '' : 'none';
+  });
+});
+
+document.getElementById('video-modal-submit').addEventListener('click', async () => {
+  const caption = document.getElementById('compose-caption').value.trim();
+  const mode = document.querySelector('input[name="vid-mode"]:checked').value;
+  const tier = document.querySelector('input[name="vid-tier"]:checked').value;
+  const tierLabel = { standard: 'Kling Std $0.35', pro: 'Kling Pro $0.95', veo3: 'Veo 3 $2.50' }[tier];
+
+  if (mode === 'i2v' && !_vidSelectedImageId) {
+    return alert('Chọn 1 ảnh làm frame đầu (hoặc đổi sang mode Text-only)');
+  }
+  if (!confirm(`Tạo video bằng ${tierLabel}. Mất 2-4 phút. Tiếp tục?`)) return;
+
+  closeVideoModal();
+  setStatus(`⏳ Đang tạo video ${tierLabel}... 2-4 phút, đừng đóng tab`);
+  try {
+    const body = { caption, tier };
+    if (mode === 'i2v') body.imageMediaId = _vidSelectedImageId;
+    const r = await api('/ai/video', { method: 'POST', body: JSON.stringify(body) });
     const list = await api('/media');
     const m = list.find((x) => x.id === r.mediaId);
     if (m) setMediaPreview(m.id, m.mime_type, m.filename);
