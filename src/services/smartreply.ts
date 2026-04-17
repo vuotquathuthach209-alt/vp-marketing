@@ -867,10 +867,17 @@ export async function smartReply(
 
   // ─── STEP 5: PHẢN HỒI TIÊU CỰC / KHÓ HIỂU / BỨC XÚC → XIN SĐT NGAY ───
   // Không đợi 3 lượt — bất cứ khi nào khách có dấu hiệu tiêu cực là chuyển người thật
+  // Guard: câu hỏi thông tin có trợ từ "không?" / "nào?" cuối câu KHÔNG phải tiêu cực
+  // (vd "có wifi không?" — Gemini hay nhầm thành frustrated)
+  const trimmed = msg.trim().toLowerCase();
+  const isInfoQuestion = /(không\??|nào\??|ạ\??|vậy\??|thế\??)\s*$/.test(trimmed) && msg.length < 100;
+
   const isNegative =
-    intent === 'complaint' ||
-    emotion === 'frustrated' ||
-    isNegativeResponse(msg);
+    !isInfoQuestion && (
+      intent === 'complaint' ||
+      (emotion === 'frustrated' && isNegativeResponse(msg)) ||  // cần đồng thuận 2 tín hiệu
+      isNegativeResponse(msg)
+    );
 
   if (isNegative && senderId && !alreadyCapturedPhone(senderId)) {
     // Chọn giọng điệu theo mức độ
