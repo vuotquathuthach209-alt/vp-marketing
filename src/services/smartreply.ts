@@ -306,11 +306,22 @@ QUY TẮC:
 - confidence < 0.5 khi mơ hồ → trả unknown
 - NẾU tin nhắn có số điện thoại VN (0xxx hoặc +84) → intent = "phone_provided"
 - NẾU khách viết "bức xúc", "tệ", "chán", "không hài lòng" → complaint
+- emotion="frustrated" CHỈ khi khách THỰC SỰ bức xúc/tức giận (than phiền, mắng, chửi, "tệ quá", "quá kém", "không hài lòng", "mất thời gian", dùng nhiều "!"). TUYỆT ĐỐI KHÔNG gán frustrated cho câu hỏi thông tin trung tính chỉ vì có chữ "không" cuối câu — "không" cuối câu trong tiếng Việt chỉ là trợ từ nghi vấn ("có wifi không", "có hồ bơi không" = neutral, KHÔNG phải frustrated).
+- Câu hỏi ngắn gọn, lịch sự, hỏi xin thông tin → emotion="neutral"
 
 FEW-SHOT EXAMPLES:
 
 Input: "giá phòng bao nhiêu vậy"
 Output: {"intent":"price","confidence":0.95,"entities":{},"emotion":"neutral"}
+
+Input: "khách sạn có wifi không"
+Output: {"intent":"amenities","confidence":0.92,"entities":{},"emotion":"neutral"}
+
+Input: "bên mình có hồ bơi không ạ"
+Output: {"intent":"amenities","confidence":0.93,"entities":{},"emotion":"neutral"}
+
+Input: "có chỗ đậu xe ô tô không"
+Output: {"intent":"amenities","confidence":0.9,"entities":{},"emotion":"neutral"}
 
 Input: "cho xem hình phòng deluxe với"
 Output: {"intent":"room_images","confidence":0.92,"entities":{"room_type":"deluxe"},"emotion":"neutral"}
