@@ -364,30 +364,28 @@ async function generateCaptionWithHook(
   hotelId: number
 ): Promise<string> {
   const hotel = db.prepare(`SELECT name FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
-  const hotelName = hotel?.name || 'Khach san';
+  const hotelName = hotel?.name || 'Khách sạn';
   const hook = generateHook(hookStyle, hotelName, topic);
 
-  const system = `Ban la copywriter chuyen viet bai Facebook cho khach san ${hotelName}.
-Viet 1 caption hap dan, tu nhien, khong qua quang cao.
+  // Dùng storyteller persona từ claude.ts, chỉ thêm hướng dẫn hook/content type cụ thể
+  const contentTypeHint: Record<string, string> = {
+    news_brand:      'góc nhìn cá nhân về tin tức gần đây liên quan đến du lịch/khách sạn',
+    product:         'trải nghiệm thực tế 1 phòng/dịch vụ cụ thể, nhấn chi tiết cảm quan',
+    behind_scenes:   'khoảnh khắc đáng yêu của staff hoặc hậu trường vận hành khách sạn',
+    community:       'câu chuyện 1 khách nhớ đời (có thể hư cấu dễ thương)',
+    lifestyle:       'kể 1 lát cắt đời sống tại khách sạn — vibe cuối tuần, date đêm, staycation',
+  };
 
-QUY TAC HOOK:
-- Cau DAU TIEN phai la hook hut — dung style "${hookStyle}"
-- Hook goi y: "${hook}"
-- KHONG bat dau bang emoji — bat dau bang chu
+  const userPrompt = `Chủ đề: ${topic}
+Khách sạn: ${hotelName}
+Kiểu mở bài (hook): ${hookStyle} — ví dụ "${hook}" (không copy nguyên, lấy cảm hứng thôi)
+Kiểu nội dung: ${contentType} (${contentTypeHint[contentType] || 'storytelling thường'})
 
-QUY TAC CONTENT:
-- Loai noi dung: ${contentType}
-${contentType === 'news_brand' ? '- Viet nhu chia se tin tuc ket hop goc nhin khach san' : ''}
-${contentType === 'product' || contentType === 'behind_scenes' ? '- Mo ta trai nghiem thuc te tai khach san' : ''}
-${contentType === 'community' ? '- Viet nhu ke chuyen khach hang' : ''}
-${contentType === 'lifestyle' ? '- Viet phong cach lifestyle, cam hung' : ''}
-- Do dai: 150-300 tu
-- 3-5 hashtag cuoi bai
-- 2-4 emoji xuyen suot (KHONG qua nhieu)
-- Ket thuc = CTA (call to action) nhe nhang
-- Viet bang tieng Viet, tone than thien, chuyen nghiep`;
+Hãy viết caption Facebook theo khung 4 đoạn đã nêu trong system. KHÔNG bắt đầu bằng emoji.`;
 
-  return generate({ task: 'caption', system, user: `Chu de: ${topic}\nViet caption:` });
+  // Dùng trực tiếp generateCaption để kế thừa persona storyteller + wiki RAG
+  const { generateCaption } = await import('./claude');
+  return generateCaption(topic, userPrompt);
 }
 
 /* ═══════════════════════════════════════════

@@ -733,6 +733,33 @@
             <p class="provider-msg text-xs mt-2" data-msg="openai"></p>
           </div>
 
+          <!-- FAL.AI (image + video gen) -->
+          <div class="provider-card bg-white rounded-xl shadow p-5 mb-3 border-l-4 border-pink-500" data-provider="fal">
+            <div class="flex items-start justify-between mb-2">
+              <div>
+                <div class="font-bold text-slate-800 flex items-center gap-2">
+                  🖼 FAL.AI
+                  <span class="text-xs font-normal px-2 py-0.5 bg-slate-100 text-slate-600 rounded">Tùy chọn</span>
+                </div>
+                <div class="text-xs text-slate-500 mt-0.5">flux/sdxl + video gen · dùng cho ảnh & video AI · trả tiền theo lần gọi</div>
+              </div>
+              <span class="provider-badge text-xs px-2 py-1 rounded" data-badge="fal">—</span>
+            </div>
+            <textarea data-key="fal" rows="2"
+              class="key-input w-full border rounded-lg px-3 py-2 text-sm font-mono bg-slate-50"
+              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" style="-webkit-text-security: disc; text-security: disc;"></textarea>
+            <div class="flex justify-between items-center mt-2 flex-wrap gap-2">
+              <a href="https://fal.ai/dashboard/keys" target="_blank" class="text-xs text-blue-600 hover:underline">→ Lấy key tại fal.ai/dashboard/keys</a>
+              <div class="flex gap-1">
+                <button class="btn-toggle-vis text-xs px-2 py-1 border rounded hover:bg-slate-50" data-key="fal">👁 Hiện</button>
+                <button class="btn-test-key text-xs px-2 py-1 border rounded hover:bg-blue-50 text-blue-700" data-provider="fal">🧪 Test</button>
+                <button class="btn-save-key text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700" data-provider="fal">💾 Lưu</button>
+                <button class="btn-wipe-key text-xs px-2 py-1 border rounded hover:bg-red-50 text-red-600" data-provider="fal">🗑</button>
+              </div>
+            </div>
+            <p class="provider-msg text-xs mt-2" data-msg="fal"></p>
+          </div>
+
           <!-- Ollama (local, read-only) -->
           <div class="provider-card bg-slate-50 rounded-xl shadow p-5 mb-3 border-l-4 border-slate-400" data-provider="ollama">
             <div class="flex items-start justify-between">

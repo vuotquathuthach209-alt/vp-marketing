@@ -119,6 +119,17 @@ router.post('/test-key', async (req, res) => {
       });
       return res.json({ ok: true, info: `${(r.data?.data || []).length} models` });
     }
+    if (provider === 'fal') {
+      // FAL.AI không có endpoint /models công khai — thử gọi queue status (yêu cầu auth)
+      const r = await axios.get('https://queue.fal.run/fal-ai/flux/requests/health', {
+        timeout: 10000, headers: { Authorization: `Key ${testKey}` },
+        validateStatus: () => true,
+      });
+      if (r.status === 401 || r.status === 403) {
+        return res.status(400).json({ ok: false, error: 'Key không hợp lệ (401/403)' });
+      }
+      return res.json({ ok: true, info: 'Key format OK' });
+    }
     return res.status(400).json({ ok: false, error: 'Provider chưa hỗ trợ test' });
   } catch (e: any) {
     const status = e?.response?.status;
