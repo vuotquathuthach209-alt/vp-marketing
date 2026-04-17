@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db } from '../db';
 import { authMiddleware, AuthRequest, getHotelId, superadminOnly } from '../middleware/auth';
+import { trackEvent } from '../services/events';
 
 const router = Router();
 
@@ -129,6 +130,8 @@ router.post('/upgrade', (req: AuthRequest, res) => {
     VALUES (?, ?, ?, ?, 'awaiting_proof', ?, ?)
   `).run(hotelId, hotel.plan, plan, price, cleanRef, Date.now());
 
+  trackEvent({ event: 'plan_selected', hotelId, userId: req.user?.userId, meta: { plan, price, ref: cleanRef }, ip: req.ip });
+
   // Telegram notify admin (best effort)
   try {
     const { notifyAdmin } = require('../services/telegram');
@@ -159,6 +162,8 @@ router.post('/submit-proof', (req: AuthRequest, res) => {
   db.prepare(
     `UPDATE subscription_requests SET proof_url = ?, admin_note = COALESCE(?, admin_note), status = 'proof_submitted' WHERE id = ?`
   ).run(proof_url, note || null, request_id);
+
+  trackEvent({ event: 'proof_submitted', hotelId, userId: req.user?.userId, meta: { request_id }, ip: req.ip });
 
   try {
     const { notifyAdmin } = require('../services/telegram');
@@ -209,6 +214,8 @@ router.post('/admin/approve', superadminOnly, (req: AuthRequest, res) => {
   db.prepare(
     `UPDATE subscription_requests SET status = 'approved', reviewed_by = ?, reviewed_at = ?, admin_note = ? WHERE id = ?`
   ).run((req as any).user?.id || null, now, note || null, request_id);
+
+  trackEvent({ event: 'plan_approved', hotelId: r.hotel_id, meta: { plan, amount: r.amount, request_id } });
 
   // Referral commission
   if (r.ref_code) {

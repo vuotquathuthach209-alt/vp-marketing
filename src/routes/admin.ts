@@ -5,6 +5,7 @@ import { getOtaHotels } from '../services/ota-db';
 import { autoGenWikiFromOta } from '../services/ota-sync';
 import { getCachedHotels } from '../services/ota-sync';
 import { sendEmail, inviteHotelEmail, sendBulkInvites, sendAlertToAdmin } from '../services/email';
+import { funnel, topEvents } from '../services/events';
 
 const router = Router();
 router.use(authMiddleware);
@@ -285,6 +286,8 @@ const SYSTEM_CONFIGS = [
   'admin_zalo', 'admin_hotline', 'admin_telegram_chat_id',
   // Pricing (VND)
   'price_starter', 'price_pro', 'price_enterprise',
+  // Zalo OA (platform-level)
+  'zalo_app_id', 'zalo_app_secret',
 ];
 
 // GET /api/admin/system-config — lấy tất cả config (masked secrets)
@@ -326,6 +329,20 @@ router.get('/system-config/raw/:key', (req: AuthRequest, res) => {
   const key = req.params.key as string;
   if (!SYSTEM_CONFIGS.includes(key)) return res.status(400).json({ error: 'Invalid key' });
   res.json({ key, value: getSetting(key) || '' });
+});
+
+// ── Funnel + events analytics ──────────────────────────────────────────
+router.get('/funnel', (req: AuthRequest, res) => {
+  const days = Math.max(1, Math.min(90, parseInt(String(req.query.days || '30'), 10) || 30));
+  const sinceMs = Date.now() - days * 24 * 3600_000;
+  const steps = ['pricing_view', 'plan_selected', 'proof_submitted', 'plan_approved'];
+  res.json({ days, since: sinceMs, funnel: funnel(steps, sinceMs) });
+});
+
+router.get('/events/top', (req: AuthRequest, res) => {
+  const days = Math.max(1, Math.min(90, parseInt(String(req.query.days || '7'), 10) || 7));
+  const sinceMs = Date.now() - days * 24 * 3600_000;
+  res.json({ days, top: topEvents(sinceMs, 30) });
 });
 
 export default router;

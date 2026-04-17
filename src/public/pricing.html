@@ -77,6 +77,14 @@
 let BANK = null, PRICES = null, CURRENT_REQUEST_ID = null, REF_CODE = null;
 
 async function init() {
+  // Track pricing_view (fire-and-forget)
+  try {
+    fetch('/api/public/track', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'pricing_view', meta: { ref: new URLSearchParams(location.search).get('ref') || null } }),
+    }).catch(() => {});
+  } catch {}
+
   // ref code from URL or localStorage
   const urlRef = new URLSearchParams(location.search).get('ref');
   if (urlRef) { REF_CODE = urlRef.toUpperCase(); localStorage.setItem('ref_code', REF_CODE); }

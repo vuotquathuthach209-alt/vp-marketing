@@ -551,6 +551,10 @@ safeAddColumn('subscription_requests', 'reviewed_by', 'INTEGER');
 safeAddColumn('subscription_requests', 'reviewed_at', 'INTEGER');
 safeAddColumn('subscription_requests', 'ref_code', 'TEXT');
 
+// Kill switch: KS tạm tắt bot cho hotel
+safeAddColumn('mkt_hotels', 'bot_paused_until', 'INTEGER');
+safeAddColumn('mkt_hotels', 'bot_pause_reason', 'TEXT');
+
 // Indexes trên hotel_id
 try {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_pages_hotel ON pages(hotel_id)`);

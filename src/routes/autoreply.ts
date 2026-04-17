@@ -1,9 +1,28 @@
 import { Router } from 'express';
 import { db } from '../db';
 import { authMiddleware, AuthRequest, getHotelId } from '../middleware/auth';
+import { isBotPaused, pauseBot, resumeBot } from '../services/bot-control';
 
 const router = Router();
 router.use(authMiddleware);
+
+// ── Kill switch ─────────────────────────────────────────────────────────
+router.get('/pause-status', (req: AuthRequest, res) => {
+  res.json(isBotPaused(getHotelId(req)));
+});
+
+router.post('/pause', (req: AuthRequest, res) => {
+  const { minutes, reason } = req.body || {};
+  const m = typeof minutes === 'number' ? minutes : parseInt(minutes, 10);
+  if (isNaN(m)) return res.status(400).json({ error: 'minutes required (number; -1 = vô hạn)' });
+  const until = pauseBot(getHotelId(req), m, reason);
+  res.json({ ok: true, paused_until: until });
+});
+
+router.post('/resume', (req: AuthRequest, res) => {
+  resumeBot(getHotelId(req));
+  res.json({ ok: true });
+});
 
 router.get('/config', (req: AuthRequest, res) => {
   const hotelId = getHotelId(req);

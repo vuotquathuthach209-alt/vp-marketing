@@ -25,12 +25,41 @@ import subscriptionRouter from './routes/subscription';
 import paymentRouter from './routes/payment';
 import feedbackRouter from './routes/feedback';
 import referralRouter from './routes/referral';
+import zaloRouter, { zaloWebhookRouter } from './routes/zalo';
+import rateLimit from 'express-rate-limit';
 
 const app = express();
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
+// ── Rate limiting ───────────────────────────────────────────────────────
+app.set('trust proxy', 1); // respect X-Forwarded-For from nginx
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 10,
+  message: { error: 'Quá nhiều lần đăng nhập. Thử lại sau 15 phút.' },
+  standardHeaders: true, legacyHeaders: false,
+});
+const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 120,
+  standardHeaders: true, legacyHeaders: false,
+});
+const proofLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, max: 5,
+  message: { error: 'Quá nhiều lần gửi bill. Thử lại sau 1 giờ.' },
+  standardHeaders: true, legacyHeaders: false,
+});
+const apiGeneralLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 300,
+  standardHeaders: true, legacyHeaders: false,
+  skip: (req) => req.path.startsWith('/api/health'),
+});
+app.use('/api/auth/login', loginLimiter);
+app.use('/api/auth/register', loginLimiter);
+app.use('/webhook', webhookLimiter);
+app.use('/api/subscription/submit-proof', proofLimiter);
+app.use('/api/', apiGeneralLimiter);
 
 // Static frontend
 app.use(express.static(path.join(__dirname, '..', 'src', 'public')));
@@ -63,8 +92,21 @@ app.use('/api/subscription', subscriptionRouter);
 app.use('/api/payment', paymentRouter);
 app.use('/api/feedback', feedbackRouter);
 app.use('/api/referral', referralRouter);
+app.use('/api/zalo', zaloRouter);
+app.use('/', zaloWebhookRouter); // POST /webhook/zalo
 
 app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
+
+// Public event tracking (no auth) — used by pricing.html
+app.post('/api/public/track', (req, res) => {
+  try {
+    const { trackEvent } = require('./services/events');
+    const { event, meta } = req.body || {};
+    if (!event || typeof event !== 'string' || event.length > 60) return res.status(400).json({ error: 'bad event' });
+    trackEvent({ event: String(event).slice(0, 60), meta, ip: req.ip, ua: String(req.headers['user-agent'] || '') });
+    res.json({ ok: true });
+  } catch { res.json({ ok: false }); }
+});
 
 // Public: bank info + pricing + admin contact (no auth) — pricing page reads this
 app.get('/api/public/bank-info', (_req, res) => {
@@ -98,6 +140,10 @@ app.use((err: any, req: any, res: any, next: any) => {
   console.error(`[error] ${req.method} ${req.path}:`, err.message);
   res.status(err.status || 500).json({ error: config.nodeEnv === 'production' ? 'Internal server error' : err.message });
 });
+
+// 404 cho /api/* để tránh SPA fallback nuốt typo
+app.use('/api', (_req, res) => res.status(404).json({ error: 'API endpoint not found' }));
+app.use('/webhook', (_req, res) => res.status(404).json({ error: 'webhook endpoint not found' }));
 
 // SPA fallback
 app.get('*', (req, res) => {

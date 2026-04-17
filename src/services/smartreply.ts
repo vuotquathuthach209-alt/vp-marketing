@@ -784,6 +784,15 @@ export async function smartReplyWithSender(
 
   if (senderId) saveMessage(senderId, pid, 'user', msg);
 
+  // ─── Kill switch check ───
+  try {
+    const { isBotPaused } = require('./bot-control');
+    const p = isBotPaused(hid);
+    if (p.paused) {
+      return { reply: '', tier: 'rules', latency_ms: Date.now() - t0, intent: 'bot_paused' };
+    }
+  } catch {}
+
   // Upsert guest profile cho cá nhân hóa
   if (senderId) {
     try {

@@ -31,6 +31,7 @@ async function replyToComments(page: any) {
 
         try {
           const { reply } = await smartReply(comment.message);
+          if (!reply) continue; // bot paused
           await axios.post(
             `${GRAPH}/${comment.id}/comments`,
             null,
@@ -134,6 +135,7 @@ async function replyToMessages(page: any) {
           page.hotel_id || 1,
           page.id
         );
+        if (!reply) continue; // bot paused
         await sendFBMessage(page.access_token, senderId, reply);
 
         // Send room images gallery if available
