@@ -112,6 +112,10 @@ function switchTab(tab) {
   if (tab === 'autopilot') loadAutopilotStatus();
   if (tab === 'room-images') loadRoomImages();
   if (tab === 'monitoring') { loadMonitoring(7); loadLearningStats(); }
+  if (tab === 'appointments') loadAppointments();
+  if (tab === 'agent-audit') { loadAgentAudit(); loadAgentToggle(); }
+  if (tab === 'bot-control') loadBotStatus();
+  if (tab === 'funnel') loadFunnel();
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
   b.addEventListener('click', () => switchTab(b.dataset.tab));
@@ -3101,6 +3105,178 @@ async function sendWeeklyReport() {
     alert('❌ ' + e.message);
   }
 }
+
+// ══════ Appointments / Agent audit / Bot control / Funnel ══════
+const _esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const _fmtTs = (ms) => ms ? new Date(Number(ms)).toLocaleString('vi-VN') : '';
+
+async function loadAppointments() {
+  const box = document.getElementById('appt-list');
+  if (!box) return;
+  const status = (document.getElementById('appt-status')?.value || '').trim();
+  box.innerHTML = '<div class="text-slate-500 text-sm">Đang tải...</div>';
+  try {
+    const q = status ? `?status=${encodeURIComponent(status)}` : '';
+    const r = await api('/agent/appointments' + q);
+    const items = r.items || [];
+    if (!items.length) { box.innerHTML = '<div class="text-slate-500 text-sm">Chưa có lịch hẹn.</div>'; return; }
+    box.innerHTML = `<table class="w-full text-sm border">
+      <thead class="bg-slate-100"><tr>
+        <th class="p-2 text-left">ID</th><th class="p-2 text-left">Khách</th>
+        <th class="p-2 text-left">SĐT</th><th class="p-2 text-left">Dịch vụ</th>
+        <th class="p-2 text-left">Thời gian</th><th class="p-2 text-left">Trạng thái</th>
+        <th class="p-2 text-left">Hành động</th></tr></thead>
+      <tbody>${items.map(a => `<tr class="border-t">
+        <td class="p-2">${a.id}</td>
+        <td class="p-2">${_esc(a.customer_name || a.sender_id || '')}</td>
+        <td class="p-2">${_esc(a.phone || '')}</td>
+        <td class="p-2">${_esc(a.service || '')}</td>
+        <td class="p-2">${_fmtTs(a.scheduled_at)}</td>
+        <td class="p-2"><span class="px-2 py-0.5 rounded text-xs bg-slate-200">${_esc(a.status)}</span></td>
+        <td class="p-2 space-x-1">
+          <button onclick="setApptStatus(${a.id},'confirmed')" class="text-xs px-2 py-1 bg-green-100 rounded">✓</button>
+          <button onclick="setApptStatus(${a.id},'done')" class="text-xs px-2 py-1 bg-blue-100 rounded">Done</button>
+          <button onclick="setApptStatus(${a.id},'cancelled')" class="text-xs px-2 py-1 bg-red-100 rounded">✕</button>
+        </td></tr>`).join('')}</tbody></table>`;
+  } catch (e) { box.innerHTML = `<div class="text-red-600 text-sm">Lỗi: ${_esc(e.message)}</div>`; }
+}
+window.setApptStatus = async (id, status) => {
+  try {
+    await api(`/agent/appointments/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) });
+    loadAppointments();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+};
+document.getElementById('appt-status')?.addEventListener('change', loadAppointments);
+document.getElementById('appt-refresh')?.addEventListener('click', loadAppointments);
+
+async function loadAgentToggle() {
+  try {
+    const s = await api('/settings/profile').catch(() => null);
+    const feat = s?.features ? (typeof s.features === 'string' ? JSON.parse(s.features) : s.features) : {};
+    const cb = document.getElementById('agent-toggle');
+    if (cb) cb.checked = !!feat.agent_tools;
+  } catch {}
+}
+window.toggleAgent = async () => {
+  const cb = document.getElementById('agent-toggle');
+  try {
+    await api('/agent/toggle', { method: 'POST', body: JSON.stringify({ enabled: cb.checked }) });
+  } catch (e) { alert('Lỗi: ' + e.message); cb.checked = !cb.checked; }
+};
+document.getElementById('agent-toggle')?.addEventListener('change', window.toggleAgent);
+
+async function loadAgentAudit() {
+  const log = document.getElementById('agent-log');
+  const stats = document.getElementById('agent-stats');
+  if (!log) return;
+  log.innerHTML = '<div class="text-slate-500 text-sm">Đang tải...</div>';
+  try {
+    const [calls, st] = await Promise.all([
+      api('/agent/tool-calls?limit=50'),
+      api('/agent/tool-calls/stats?days=7'),
+    ]);
+    if (stats) {
+      const grouped = {};
+      (st.stats || []).forEach(r => {
+        grouped[r.tool] = grouped[r.tool] || { ok: 0, err: 0 };
+        if (r.status === 'success') grouped[r.tool].ok += r.n; else grouped[r.tool].err += r.n;
+      });
+      const keys = Object.keys(grouped);
+      stats.innerHTML = keys.length ? keys.map(k => `
+        <div class="p-3 bg-white border rounded">
+          <div class="text-xs text-slate-500">${_esc(k)}</div>
+          <div class="text-lg font-semibold">${grouped[k].ok} <span class="text-xs text-green-600">ok</span>
+          <span class="text-sm text-red-600 ml-2">${grouped[k].err} lỗi</span></div>
+        </div>`).join('') : '<div class="text-slate-500 text-sm col-span-4">Chưa có dữ liệu 7 ngày qua.</div>';
+    }
+    const items = calls.items || [];
+    log.innerHTML = items.length ? `<table class="w-full text-xs border">
+      <thead class="bg-slate-100"><tr>
+        <th class="p-2 text-left">Time</th><th class="p-2 text-left">Sender</th>
+        <th class="p-2 text-left">Tool</th><th class="p-2 text-left">Status</th>
+        <th class="p-2 text-left">Latency</th><th class="p-2 text-left">Params</th></tr></thead>
+      <tbody>${items.map(c => `<tr class="border-t">
+        <td class="p-2">${_fmtTs(c.created_at)}</td>
+        <td class="p-2">${_esc(c.sender_id || '')}</td>
+        <td class="p-2 font-mono">${_esc(c.tool)}</td>
+        <td class="p-2">${c.status === 'success' ? '✅' : '❌'} ${_esc(c.status)}</td>
+        <td class="p-2">${c.latency_ms || 0}ms</td>
+        <td class="p-2 text-slate-600 font-mono" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_esc(c.params || '')}</td>
+        </tr>`).join('')}</tbody></table>` : '<div class="text-slate-500 text-sm">Chưa có tool call nào.</div>';
+  } catch (e) { log.innerHTML = `<div class="text-red-600 text-sm">Lỗi: ${_esc(e.message)}</div>`; }
+}
+document.getElementById('agent-refresh')?.addEventListener('click', loadAgentAudit);
+
+async function loadBotStatus() {
+  const box = document.getElementById('bot-status');
+  if (!box) return;
+  box.innerHTML = 'Đang tải...';
+  try {
+    const r = await api('/auto-reply/pause-status');
+    if (r.paused) {
+      const until = r.until ? ` đến ${_fmtTs(r.until)}` : ' (vô thời hạn)';
+      box.innerHTML = `<div class="p-3 bg-amber-50 border border-amber-300 rounded">
+        ⏸️ Bot đang TẠM DỪNG${until}. ${r.reason ? 'Lý do: ' + _esc(r.reason) : ''}</div>`;
+    } else {
+      box.innerHTML = '<div class="p-3 bg-green-50 border border-green-300 rounded">✅ Bot đang HOẠT ĐỘNG.</div>';
+    }
+  } catch (e) { box.innerHTML = `<div class="text-red-600 text-sm">Lỗi: ${_esc(e.message)}</div>`; }
+}
+window.pauseBot = async (minutes) => {
+  let mins = minutes;
+  if (minutes === 'morning') {
+    const now = new Date(); const tmr = new Date(now); tmr.setDate(tmr.getDate() + 1); tmr.setHours(8, 0, 0, 0);
+    mins = Math.ceil((tmr.getTime() - now.getTime()) / 60000);
+  }
+  const reason = prompt('Lý do tạm dừng? (tuỳ chọn)') || '';
+  try {
+    await api('/auto-reply/pause', { method: 'POST', body: JSON.stringify({ minutes: mins, reason }) });
+    loadBotStatus();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+};
+window.resumeBot = async () => {
+  try { await api('/auto-reply/resume', { method: 'POST' }); loadBotStatus(); }
+  catch (e) { alert('Lỗi: ' + e.message); }
+};
+
+async function loadFunnel() {
+  const chart = document.getElementById('funnel-chart');
+  const top = document.getElementById('funnel-top');
+  if (!chart) return;
+  const days = parseInt(document.getElementById('funnel-days')?.value || '30', 10);
+  chart.innerHTML = 'Đang tải...';
+  try {
+    const steps = ['signup_view', 'signup_success', 'plan_selected', 'proof_submitted', 'plan_approved'];
+    const q = `steps=${encodeURIComponent(steps.join(','))}&days=${days}`;
+    const [f, t] = await Promise.all([
+      api('/admin/funnel?' + q),
+      api('/admin/events/top?days=' + days),
+    ]);
+    const rows = f.steps || f.funnel || [];
+    const max = Math.max(1, ...rows.map(r => r.count || 0));
+    chart.innerHTML = rows.map((r, i) => {
+      const pct = Math.round((r.count || 0) / max * 100);
+      const prev = i > 0 ? rows[i - 1].count : null;
+      const drop = prev ? Math.round((1 - (r.count || 0) / prev) * 100) : null;
+      return `<div class="mb-2">
+        <div class="flex justify-between text-xs mb-1">
+          <span class="font-mono">${_esc(r.step || r.event || r.name)}</span>
+          <span>${r.count || 0}${drop !== null ? ` <span class="text-red-600">(-${drop}%)</span>` : ''}</span>
+        </div>
+        <div class="h-6 bg-slate-100 rounded overflow-hidden"><div class="h-full bg-indigo-500" style="width:${pct}%"></div></div>
+      </div>`;
+    }).join('') || '<div class="text-slate-500 text-sm">Chưa có sự kiện nào.</div>';
+    if (top) {
+      const items = t.top || t.items || t.events || [];
+      top.innerHTML = items.length ? `<table class="w-full text-xs border">
+        <thead class="bg-slate-100"><tr><th class="p-2 text-left">Event</th><th class="p-2 text-left">Count</th></tr></thead>
+        <tbody>${items.map(e => `<tr class="border-t"><td class="p-2 font-mono">${_esc(e.event || e.name)}</td><td class="p-2">${e.count || e.n || 0}</td></tr>`).join('')}</tbody></table>`
+        : '<div class="text-slate-500 text-sm">Không có dữ liệu.</div>';
+    }
+  } catch (e) { chart.innerHTML = `<div class="text-red-600 text-sm">Lỗi: ${_esc(e.message)}</div>`; }
+}
+document.getElementById('funnel-days')?.addEventListener('change', loadFunnel);
+document.getElementById('funnel-refresh')?.addEventListener('click', loadFunnel);
 
 // ====== Init ======
 checkAuth();

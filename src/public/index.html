@@ -71,6 +71,10 @@
         <button data-tab="feedback" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">⭐ Cham bot</button>
         <button data-tab="guests" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">👥 Khach quen</button>
         <button data-tab="referral" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">🎁 Gioi thieu</button>
+        <button data-tab="appointments" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">📅 Lich hen</button>
+        <button data-tab="agent-audit" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">🤖 AI Agent</button>
+        <button data-tab="bot-control" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">⏸️ Tam dung bot</button>
+        <button data-tab="funnel" class="nav-btn nav-admin w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">🔻 Funnel (admin)</button>
 
         <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Bao cao</div>
         <button data-tab="analytics" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">📈 Thong ke</button>
@@ -1133,6 +1137,72 @@
             <div id="ref-history" class="text-sm"></div>
           </div>
         </div>
+      </section>
+
+      <!-- APPOINTMENTS TAB -->
+      <section data-panel="appointments" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-2">📅 Lịch hẹn</h2>
+        <p class="text-sm text-slate-500 mb-4">Bot tự tạo lịch khi khách đặt qua chat. Xác nhận hoặc huỷ ngay tại đây.</p>
+        <div class="flex gap-2 mb-4">
+          <select id="appt-status" class="border rounded px-3 py-2 text-sm">
+            <option value="">Tất cả</option>
+            <option value="pending">Chờ xác nhận</option>
+            <option value="confirmed">Đã xác nhận</option>
+            <option value="done">Hoàn thành</option>
+            <option value="cancelled">Đã huỷ</option>
+          </select>
+          <button onclick="loadAppointments()" class="bg-slate-200 px-3 py-1 rounded text-sm">🔄 Tải</button>
+        </div>
+        <div id="appt-list" class="bg-white rounded-xl shadow overflow-hidden"></div>
+      </section>
+
+      <!-- AGENT AUDIT TAB -->
+      <section data-panel="agent-audit" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-2">🤖 AI Agent — Hoạt động của bot</h2>
+        <p class="text-sm text-slate-500 mb-4">Bot của bạn làm gì (đặt lịch, lưu SĐT, gửi QR). Minh bạch 100%.</p>
+        <div class="flex items-center gap-3 mb-4">
+          <label class="flex items-center gap-2 text-sm">
+            <input type="checkbox" id="agent-toggle" onchange="toggleAgent()" />
+            Bật AI Agent (bot tự hành động)
+          </label>
+          <button onclick="loadAgentAudit()" class="bg-slate-200 px-3 py-1 rounded text-sm ml-auto">🔄 Tải</button>
+        </div>
+        <div class="grid grid-cols-4 gap-3 mb-4" id="agent-stats"></div>
+        <div id="agent-log" class="bg-white rounded-xl shadow overflow-hidden"></div>
+      </section>
+
+      <!-- BOT CONTROL / KILL SWITCH TAB -->
+      <section data-panel="bot-control" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-2">⏸️ Tạm dừng bot</h2>
+        <p class="text-sm text-slate-500 mb-4">Khi nhân viên đang chat trực tiếp với khách, tạm dừng bot để không xung đột.</p>
+        <div class="bg-white rounded-xl shadow p-6 max-w-2xl">
+          <div id="bot-status" class="mb-6 p-4 rounded-lg"></div>
+          <h3 class="font-bold mb-3">Tạm dừng trong:</h3>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
+            <button onclick="pauseBot(60)" class="bg-amber-500 hover:bg-amber-600 text-white py-2 rounded text-sm">1 giờ</button>
+            <button onclick="pauseBot(240)" class="bg-amber-600 hover:bg-amber-700 text-white py-2 rounded text-sm">4 giờ</button>
+            <button onclick="pauseBot(720)" class="bg-orange-500 hover:bg-orange-600 text-white py-2 rounded text-sm">Đến sáng mai</button>
+            <button onclick="pauseBot(-1)" class="bg-red-500 hover:bg-red-600 text-white py-2 rounded text-sm">Vô thời hạn</button>
+          </div>
+          <button onclick="resumeBot()" class="bg-emerald-500 hover:bg-emerald-600 text-white px-6 py-2 rounded">▶️ Bật lại bot</button>
+        </div>
+      </section>
+
+      <!-- FUNNEL TAB (admin only) -->
+      <section data-panel="funnel" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-2">🔻 Growth Funnel</h2>
+        <p class="text-sm text-slate-500 mb-4">Theo dõi từ pricing view → plan selected → bill submitted → approved.</p>
+        <div class="flex gap-2 mb-4">
+          <select id="funnel-days" class="border rounded px-3 py-2 text-sm">
+            <option value="7">7 ngày</option>
+            <option value="30" selected>30 ngày</option>
+            <option value="90">90 ngày</option>
+          </select>
+          <button onclick="loadFunnel()" class="bg-slate-200 px-3 py-1 rounded text-sm">🔄 Tải</button>
+        </div>
+        <div id="funnel-chart" class="bg-white rounded-xl shadow p-6 mb-6"></div>
+        <h3 class="font-bold mb-2">Top events</h3>
+        <div id="funnel-top" class="bg-white rounded-xl shadow overflow-hidden"></div>
       </section>
 
       <!-- SYSTEM CONFIG TAB (admin only) -->
