@@ -38,11 +38,14 @@ const PLAN_LIMITS: Record<string, any> = {
 router.post('/bank', async (req, res) => {
   try {
     const expectedSecret = getSetting('bank_webhook_secret');
+    if (!expectedSecret) {
+      return res.status(503).json({ error: 'bank webhook chưa được cấu hình (bank_webhook_secret)' });
+    }
     const provided = req.headers['authorization']?.toString().replace(/^Apikey\s+/i, '')
       || req.headers['x-webhook-secret']?.toString()
       || (req.query.secret as string)
       || '';
-    if (expectedSecret && provided !== expectedSecret) {
+    if (provided !== expectedSecret) {
       return res.status(401).json({ error: 'invalid secret' });
     }
 
