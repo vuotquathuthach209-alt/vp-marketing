@@ -10,7 +10,7 @@ const EMBED_MODEL = 'text-embedding-004';
 const EMBED_DIMS = 768;
 
 export function isEmbedderReady(): boolean {
-  return countKeys('google_api_key') > 0;
+  return countKeys('google_api_key', process.env.GOOGLE_API_KEY) > 0;
 }
 
 export function getEmbedderInfo() {
@@ -25,8 +25,8 @@ export async function embed(text: string): Promise<Float32Array | null> {
   const clean = text.trim().slice(0, 8000);
   if (!clean) return null;
 
-  const keys = getAllKeys('google_api_key');
-  const startKey = pickKey('google_api_key');
+  const keys = getAllKeys('google_api_key', process.env.GOOGLE_API_KEY);
+  const startKey = pickKey('google_api_key', process.env.GOOGLE_API_KEY);
   const startIdx = Math.max(0, keys.indexOf(startKey));
 
   let lastErr: any;
