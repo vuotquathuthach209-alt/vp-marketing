@@ -25,8 +25,12 @@ import { logUsage } from './costtrack';
  * - reply_complex   : reply inbox phức tạp (mặc định Claude Sonnet)
  */
 
-export type TaskType = 'caption' | 'image_prompt' | 'classify' | 'reply_simple' | 'reply_complex';
-export type Provider = 'anthropic' | 'google' | 'groq' | 'deepseek' | 'openai' | 'mistral';
+export type TaskType = 'caption' | 'image_prompt' | 'classify' | 'reply_simple' | 'reply_complex' | 'intent_gateway' | 'reply_qwen';
+export type Provider = 'anthropic' | 'google' | 'groq' | 'deepseek' | 'openai' | 'mistral' | 'ollama';
+
+// Ollama local (Qwen 2.5-7B on VPS) — free, no API key
+const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct-q4_K_M';
 
 interface RouteConfig {
   provider: Provider;
@@ -41,6 +45,9 @@ const DEFAULT_ROUTES: Record<TaskType, RouteConfig> = {
   classify:      { provider: 'groq',      model: 'gemma2-9b-it',           maxTokens: 100  },
   reply_simple:  { provider: 'groq',      model: 'gemma2-9b-it',           maxTokens: 400  },
   reply_complex: { provider: 'google',    model: 'gemini-2.5-flash',       maxTokens: 600  },
+  // v5 cascade:
+  intent_gateway:{ provider: 'google',    model: 'gemini-2.0-flash-exp',   maxTokens: 200  },
+  reply_qwen:    { provider: 'ollama',    model: OLLAMA_MODEL,              maxTokens: 500  },
 };
 
 /**
@@ -54,6 +61,7 @@ const FALLBACK: Record<Provider, Provider[]> = {
   deepseek:  ['deepseek', 'google', 'groq', 'anthropic', 'openai', 'mistral'],
   openai:    ['openai', 'anthropic', 'deepseek', 'google', 'groq', 'mistral'],
   mistral:   ['mistral', 'deepseek', 'google', 'openai', 'anthropic', 'groq'],
+  ollama:    ['ollama', 'groq', 'google', 'deepseek', 'anthropic', 'openai', 'mistral'],
 };
 
 function hasKey(provider: Provider): boolean {
@@ -63,8 +71,20 @@ function hasKey(provider: Provider): boolean {
   if (provider === 'deepseek') return countKeys('deepseek_api_key') > 0;
   if (provider === 'openai') return countKeys('openai_api_key') > 0;
   if (provider === 'mistral') return countKeys('mistral_api_key') > 0;
+  if (provider === 'ollama') return ollamaReady;
   return false;
 }
+
+// Ollama readiness — probed at startup + periodically; no key needed
+let ollamaReady = false;
+async function probeOllama(): Promise<void> {
+  try {
+    const r = await axios.get(`${OLLAMA_HOST}/api/tags`, { timeout: 3000 });
+    ollamaReady = Array.isArray(r.data?.models) && r.data.models.length > 0;
+  } catch { ollamaReady = false; }
+}
+probeOllama();
+setInterval(probeOllama, 60_000).unref();
 
 function resolveRoute(task: TaskType): RouteConfig {
   const route = { ...DEFAULT_ROUTES[task] };
@@ -94,6 +114,7 @@ function defaultModelFor(p: Provider, task: TaskType): string {
   if (p === 'deepseek') return task === 'caption' || task === 'reply_complex' ? 'deepseek-chat' : 'deepseek-chat';
   if (p === 'openai') return task === 'caption' || task === 'reply_complex' ? 'gpt-4o' : 'gpt-4o-mini';
   if (p === 'mistral') return task === 'caption' || task === 'reply_complex' ? 'mistral-large-latest' : 'mistral-small-latest';
+  if (p === 'ollama') return OLLAMA_MODEL;
   return '';
 }
 
@@ -130,6 +151,9 @@ export async function generate({ task, system, user }: GenInput): Promise<string
         break;
       case 'mistral':
         result = await callMistral(route, system, user);
+        break;
+      case 'ollama':
+        result = await callOllama(route, system, user);
         break;
     }
     logUsage({
@@ -307,6 +331,40 @@ async function callMistral(route: RouteConfig, system: string, user: string): Pr
   });
 }
 
+// ---------- Ollama local (Qwen / Llama / etc.) ----------
+async function callOllama(route: RouteConfig, system: string, user: string): Promise<CallResult> {
+  const t0 = Date.now();
+  try {
+    const resp = await axios.post(
+      `${OLLAMA_HOST}/api/chat`,
+      {
+        model: route.model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        stream: false,
+        options: {
+          num_predict: route.maxTokens,
+          temperature: 0.5,
+        },
+      },
+      { timeout: 90000, headers: { 'Content-Type': 'application/json' } }
+    );
+    const text = resp.data?.message?.content;
+    if (!text) throw new Error('Ollama: không có text trả về');
+    console.log(`[router/ollama] ${route.model} ${Date.now() - t0}ms`);
+    return {
+      text: String(text).trim(),
+      inTok: resp.data?.prompt_eval_count || 0,
+      outTok: resp.data?.eval_count || 0,
+    };
+  } catch (e: any) {
+    ollamaReady = false; // re-probe next cycle
+    throw e;
+  }
+}
+
 // ---------- Generic OpenAI-compatible caller ----------
 async function callOpenAICompatible(opts: {
   settingKey: string; baseUrl: string; route: RouteConfig;
@@ -360,7 +418,7 @@ async function callOpenAICompatible(opts: {
  * (sau khi xử lý fallback dựa trên key nào đang có).
  */
 export function getRouterStatus() {
-  const tasks: TaskType[] = ['caption', 'image_prompt', 'classify', 'reply_simple', 'reply_complex'];
+  const tasks: TaskType[] = ['caption', 'image_prompt', 'classify', 'reply_simple', 'reply_complex', 'intent_gateway', 'reply_qwen'];
   const status: Record<string, any> = {};
   for (const t of tasks) {
     try {
@@ -383,6 +441,7 @@ export function getRouterStatus() {
       deepseek:  { configured: hasKey('deepseek'),  count: countKeys('deepseek_api_key') },
       openai:    { configured: hasKey('openai'),     count: countKeys('openai_api_key') },
       mistral:   { configured: hasKey('mistral'),    count: countKeys('mistral_api_key') },
+      ollama:    { configured: hasKey('ollama'),     host: OLLAMA_HOST, model: OLLAMA_MODEL },
     },
   };
 }
