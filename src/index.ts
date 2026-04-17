@@ -23,6 +23,7 @@ import onboardingRouter from './routes/onboarding';
 import monitoringRouter from './routes/monitoring';
 import subscriptionRouter from './routes/subscription';
 import paymentRouter from './routes/payment';
+import feedbackRouter from './routes/feedback';
 
 const app = express();
 
@@ -59,6 +60,7 @@ app.use('/api/onboarding', onboardingRouter);
 app.use('/api/monitoring', monitoringRouter);
 app.use('/api/subscription', subscriptionRouter);
 app.use('/api/payment', paymentRouter);
+app.use('/api/feedback', feedbackRouter);
 
 app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 

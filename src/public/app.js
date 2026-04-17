@@ -2822,11 +2822,111 @@ async function loadStatusBanner() {
   }
 }
 
+// ====== FEEDBACK (staff cham bot) ======
+async function loadFeedbackList() {
+  const box = document.getElementById('feedback-list');
+  if (!box) return;
+  box.innerHTML = '<div class="text-slate-500">Dang tai...</div>';
+  try {
+    const [lst, st] = await Promise.all([
+      api('/api/feedback/recent-replies').then(r => r.json()),
+      api('/api/feedback/stats').then(r => r.json()),
+    ]);
+    document.getElementById('feedback-stats').textContent =
+      `Tong: ${st.total||0} · 👍 ${st.good||0} · 👎 ${st.bad||0} · Sua: ${st.corrected||0}`;
+    if (!lst.length) { box.innerHTML = '<div class="text-slate-500">Chua co tin nhan nao</div>'; return; }
+    box.innerHTML = lst.map(r => {
+      const d = new Date(r.created_at).toLocaleString('vi-VN');
+      const rated = r.existing_rating;
+      const goodCls = rated === 1 ? 'bg-green-600 text-white' : 'bg-white border';
+      const badCls  = rated === -1 ? 'bg-red-600 text-white' : 'bg-white border';
+      return `
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="text-xs text-slate-400">${d} · ${r.kind || ''} · fb_id: ${r.fb_id || '—'}</div>
+          <div class="mt-2"><b>Khach:</b> ${escapeHtml(r.user_message || '').slice(0, 300)}</div>
+          <div class="mt-1 text-blue-900"><b>Bot:</b> ${escapeHtml(r.bot_reply || '').slice(0, 500)}</div>
+          <div class="flex items-center gap-2 mt-3">
+            <button onclick="rateReply(${r.id}, 1, \`${encodeURIComponent(r.user_message||'')}\`, \`${encodeURIComponent(r.bot_reply||'')}\`)" class="${goodCls} px-3 py-1 rounded text-sm">👍 Dung</button>
+            <button onclick="openCorrect(${r.id}, \`${encodeURIComponent(r.user_message||'')}\`, \`${encodeURIComponent(r.bot_reply||'')}\`)" class="${badCls} px-3 py-1 rounded text-sm">👎 Sai / Sua</button>
+            <span class="text-xs text-slate-400">${rated === 1 ? '(da cham: dung)' : rated === -1 ? '(da cham: sai)' : ''}</span>
+          </div>
+        </div>`;
+    }).join('');
+  } catch(e) {
+    box.innerHTML = '<div class="text-red-600">Loi: ' + e.message + '</div>';
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+async function rateReply(msgId, rating, uq, ba) {
+  const r = await api('/api/feedback/rate', 'POST', {
+    message_id: msgId, rating,
+    user_question: decodeURIComponent(uq), bot_answer: decodeURIComponent(ba),
+  });
+  const d = await r.json();
+  if (d.ok) loadFeedbackList(); else alert(d.error || 'Loi');
+}
+
+async function openCorrect(msgId, uq, ba) {
+  const userQ = decodeURIComponent(uq);
+  const botA = decodeURIComponent(ba);
+  const corrected = prompt(`Cau tra loi DUNG cho: "${userQ.slice(0,100)}"\n\n(Bo trong de chi cham 👎 ma khong sua):`, '');
+  if (corrected === null) return;
+  const r = await api('/api/feedback/rate', 'POST', {
+    message_id: msgId, rating: -1,
+    user_question: userQ, bot_answer: botA,
+    corrected_answer: corrected.trim() || null,
+  });
+  const d = await r.json();
+  if (d.ok) {
+    alert(corrected.trim() ? '✅ Da luu. Bot se hoc cau dung cho lan sau.' : '✅ Da cham 👎');
+    loadFeedbackList();
+  }
+  else alert(d.error || 'Loi');
+}
+
+// ====== GUESTS (khach quen) ======
+async function loadGuests() {
+  const box = document.getElementById('guests-list');
+  if (!box) return;
+  box.innerHTML = '<div class="p-4 text-slate-500">Dang tai...</div>';
+  try {
+    const rows = await api('/api/feedback/guests').then(r => r.json());
+    if (!rows.length) { box.innerHTML = '<div class="p-4 text-slate-500">Chua co khach nao</div>'; return; }
+    box.innerHTML = `
+      <table class="w-full text-sm">
+        <thead class="bg-slate-100 text-xs uppercase"><tr>
+          <th class="p-3 text-left">Ten</th><th class="p-3 text-left">SDT</th>
+          <th class="p-3 text-right">Lan chat</th><th class="p-3 text-right">Da dat</th>
+          <th class="p-3 text-left">Lan cuoi</th><th class="p-3 text-left">So thich</th>
+        </tr></thead>
+        <tbody>${rows.map(g => {
+          let prefs = ''; try { prefs = Object.entries(JSON.parse(g.preferences||'{}')).map(([k,v])=>`${k}:${v}`).join(', '); } catch {}
+          return `<tr class="border-t">
+            <td class="p-3">${escapeHtml(g.name||'—')}</td>
+            <td class="p-3 font-mono text-xs">${escapeHtml(g.phone||'—')}</td>
+            <td class="p-3 text-right">${g.total_conversations}</td>
+            <td class="p-3 text-right">${g.booked_count}</td>
+            <td class="p-3 text-xs">${new Date(g.last_seen).toLocaleString('vi-VN')}</td>
+            <td class="p-3 text-xs text-slate-500">${escapeHtml(prefs)}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>`;
+  } catch(e) {
+    box.innerHTML = '<div class="p-4 text-red-600">Loi: ' + e.message + '</div>';
+  }
+}
+
 // ====== Tab hooks for new tabs ======
 document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     if (btn.dataset.tab === 'dashboard') { setTimeout(loadDashboard, 100); setTimeout(loadStatusBanner, 150); }
     if (btn.dataset.tab === 'sysconfig') { setTimeout(loadSubRequests, 200); }
+    if (btn.dataset.tab === 'feedback') { setTimeout(loadFeedbackList, 100); }
+    if (btn.dataset.tab === 'guests') { setTimeout(loadGuests, 100); }
   });
 });
 

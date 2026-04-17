@@ -68,6 +68,8 @@
         <button data-tab="autoreply" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">💬 Chatbot</button>
         <button data-tab="room-images" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">📸 Anh phong</button>
         <button data-tab="wiki" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">📚 Kien thuc AI</button>
+        <button data-tab="feedback" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">⭐ Cham bot</button>
+        <button data-tab="guests" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">👥 Khach quen</button>
 
         <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Bao cao</div>
         <button data-tab="analytics" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">📈 Thong ke</button>
@@ -1079,6 +1081,25 @@
             <div id="payment-history" class="text-sm space-y-2"></div>
           </div>
         </div>
+      </section>
+
+      <!-- FEEDBACK TAB — staff cham bot -->
+      <section data-panel="feedback" class="panel hidden">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-2xl font-bold">⭐ Cham diem bot</h2>
+          <div class="text-sm text-slate-500" id="feedback-stats">—</div>
+        </div>
+        <p class="text-sm text-slate-500 mb-4">Chon 👍/👎 cho cau tra loi cua bot. Neu 👎 → nhap cau dung → bot hoc ngay cho lan sau.</p>
+        <button onclick="loadFeedbackList()" class="bg-slate-200 px-3 py-1 rounded text-sm mb-4">🔄 Tai lai</button>
+        <div id="feedback-list" class="space-y-3 max-w-4xl"></div>
+      </section>
+
+      <!-- GUESTS TAB — lich su khach quen -->
+      <section data-panel="guests" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-4">👥 Khach quen</h2>
+        <p class="text-sm text-slate-500 mb-4">Bot tu nho khach qua nhieu phien chat. Du lieu duoc dung de ca nhan hoa loi chao / goi y.</p>
+        <button onclick="loadGuests()" class="bg-slate-200 px-3 py-1 rounded text-sm mb-4">🔄 Tai lai</button>
+        <div id="guests-list" class="bg-white rounded-xl shadow overflow-hidden max-w-5xl"></div>
       </section>
 
       <!-- SYSTEM CONFIG TAB (admin only) -->

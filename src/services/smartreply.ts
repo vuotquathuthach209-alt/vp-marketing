@@ -191,6 +191,12 @@ async function capturePhone(
       JSON.stringify(history.slice(-6)), Date.now(),
     );
 
+    // Persist phone vào guest profile
+    try {
+      const { upsertGuest } = require('./guest-memory');
+      upsertGuest(hotelId, senderId, { phone, name: senderName });
+    } catch {}
+
     const hotel = db.prepare(`SELECT name FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
     const hName = hotel?.name || 'Khach san';
     const msg = [
@@ -708,6 +714,7 @@ async function ragReply(
   message: string,
   history: Array<{ role: string; message: string }>,
   hotelId: number,
+  senderId?: string,
 ): Promise<string | null> {
   const [wikiCtx, otaCtx] = await Promise.all([buildContext(message, hotelId), buildOtaContext(hotelId)]);
 
@@ -718,7 +725,17 @@ async function ragReply(
     ? `--- LỊCH SỬ HỘI THOẠI ---\n${history.map(h => `${h.role === 'user' ? 'Khách' : 'Bot'}: ${h.message}`).join('\n')}\n--- HẾT ---`
     : '';
 
+  // Guest memory — "cá nhân hóa" khách quen
+  let guestCtx = '';
+  if (senderId) {
+    try {
+      const { getGuestMemorySnippet } = require('./guest-memory');
+      guestCtx = getGuestMemorySnippet(hotelId, senderId);
+    } catch {}
+  }
+
   const contextParts = [
+    guestCtx,
     convoCtx,
     wikiCtx ? `--- KIẾN THỨC ---\n${wikiCtx}\n--- HẾT ---` : '',
     otaCtx ? `--- DỮ LIỆU KHÁCH SẠN ---\n${otaCtx}\n--- HẾT ---` : '',
@@ -766,6 +783,14 @@ export async function smartReplyWithSender(
   const pid = pageId || 0;
 
   if (senderId) saveMessage(senderId, pid, 'user', msg);
+
+  // Upsert guest profile cho cá nhân hóa
+  if (senderId) {
+    try {
+      const { upsertGuest } = require('./guest-memory');
+      upsertGuest(hid, senderId, { name: senderName });
+    } catch {}
+  }
 
   // ─── Booking flow priority ───
   if (senderId) {
@@ -913,7 +938,7 @@ export async function smartReply(
 
   // ─── STEP 6: RAG AI (chỉ khi có context thực) ───
   try {
-    const aiReply = await ragReply(msg, history, hotelId);
+    const aiReply = await ragReply(msg, history, hotelId, senderId);
     if (aiReply) {
       if (senderId) saveMessage(senderId, pid, 'bot', aiReply, 'ai_rag');
       // Fire-and-forget: record for future learned cache
