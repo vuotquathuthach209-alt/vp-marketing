@@ -450,6 +450,23 @@ CREATE TABLE IF NOT EXISTS conversation_memory (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_convo_sender ON conversation_memory(sender_id, created_at);
+
+-- Learned Q-A cache: patterns promoted from real conversations.
+-- Runtime lookup happens BEFORE AI generation — cache hit skips LLM entirely.
+-- hits counter drives lazy promotion (hits >= 3 → trusted for serving).
+CREATE TABLE IF NOT EXISTS learned_qa_cache (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  question TEXT NOT NULL,
+  question_embedding BLOB,      -- 768-dim Float32Array
+  answer TEXT NOT NULL,
+  intent TEXT,
+  hits INTEGER NOT NULL DEFAULT 1,
+  last_hit_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_learned_hotel_hits ON learned_qa_cache(hotel_id, hits DESC);
+CREATE INDEX IF NOT EXISTS idx_learned_last_hit ON learned_qa_cache(last_hit_at);
 `);
 
 // 1.1 Migration: thêm hotel_id vào các bảng hiện tại (safe — chỉ ADD COLUMN nếu chưa có)

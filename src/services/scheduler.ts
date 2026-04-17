@@ -10,6 +10,7 @@ import { getSetting } from '../db';
 import { runAutopilotCycle, generateMorningReport, generateEveningReport, researchTopics, runAutopilotAllHotels } from './autopilot';
 import { runFullSync, runBookingSync } from './ota-sync';
 import { cleanupAiCache } from './ai-cache';
+import { pruneLearned } from './learning';
 import { checkAndAlert } from './email';
 import { runBackup } from './backup';
 
@@ -211,5 +212,15 @@ export function startScheduler() {
     runBackup();
   });
 
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h');
+  // ── Learned Q-A cache prune: 5h sáng mỗi ngày, xoá candidate >90 ngày không đạt MIN_HITS ──
+  cron.schedule('0 5 * * *', () => {
+    try {
+      const n = pruneLearned();
+      if (n > 0) console.log(`[scheduler] learned-cache prune: removed ${n} stale candidates`);
+    } catch (e) {
+      console.error('[scheduler] learned prune error:', e);
+    }
+  });
+
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h');
 }

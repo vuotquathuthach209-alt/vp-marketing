@@ -9,6 +9,7 @@ import {
 } from './bookingflow';
 import { getOtaDbConfig, getOtaRoomTypes, getOtaHotelStats } from './ota-db';
 import { notifyAll } from './telegram';
+import { lookupLearned, recordQA } from './learning';
 
 /**
  * Smart Reply Engine v4 — RAG + AI Intent Classification + Structured Output
@@ -28,7 +29,7 @@ import { notifyAll } from './telegram';
 
 export interface SmartReplyResult {
   reply: string;
-  tier: 'rules' | 'wiki' | 'ai' | 'ai_light' | 'phone_capture' | 'closing';
+  tier: 'rules' | 'wiki' | 'ai' | 'ai_light' | 'phone_capture' | 'closing' | 'learned';
   latency_ms: number;
   intent?: string;
   confidence?: number;
@@ -830,11 +831,33 @@ export async function smartReply(
     return { reply, tier: 'phone_capture', latency_ms: Date.now() - t0, intent: 'negative', confidence };
   }
 
+  // ─── STEP 5.5: LEARNED CACHE LOOKUP (fast path, no LLM) ───
+  try {
+    const learned = await lookupLearned(msg, hotelId);
+    if (learned) {
+      console.log(`[smartreply] learned cache hit sim=${learned.similarity.toFixed(3)} hits=${learned.hits}`);
+      if (senderId) saveMessage(senderId, pid, 'bot', learned.answer, 'learned');
+      return {
+        reply: learned.answer,
+        tier: 'learned',
+        latency_ms: Date.now() - t0,
+        intent: learned.intent || 'learned',
+        confidence: Math.min(0.99, learned.similarity),
+      };
+    }
+  } catch (e: any) {
+    console.warn('[smartreply] learned lookup failed:', e.message);
+  }
+
   // ─── STEP 6: RAG AI (chỉ khi có context thực) ───
   try {
     const aiReply = await ragReply(msg, history, hotelId);
     if (aiReply) {
       if (senderId) saveMessage(senderId, pid, 'bot', aiReply, 'ai_rag');
+      // Fire-and-forget: record for future learned cache
+      recordQA(msg, aiReply, 'ai_rag', hotelId).catch((e) =>
+        console.warn('[smartreply] recordQA failed:', e.message)
+      );
       return { reply: aiReply, tier: 'ai', latency_ms: Date.now() - t0, intent: 'ai', confidence };
     }
   } catch (e: any) {

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { db } from '../db';
 import { authMiddleware, AuthRequest, getHotelId, superadminOnly } from '../middleware/auth';
 import { getAiCacheStats } from '../services/ai-cache';
+import { getLearningStats, pruneLearned } from '../services/learning';
 
 const router = Router();
 router.use(authMiddleware);
@@ -153,6 +154,24 @@ router.get('/errors', (req: AuthRequest, res) => {
       ORDER BY id DESC LIMIT ?
     `).all(hotelId, limit);
     res.json(rows);
+  }
+});
+
+// Learning loop — learned Q-A cache stats + manual prune
+router.get('/learning', (req: AuthRequest, res) => {
+  try {
+    res.json(getLearningStats(getHotelId(req)));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/learning/prune', (_req, res) => {
+  try {
+    const deleted = pruneLearned();
+    res.json({ ok: true, deleted });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
   }
 });
 
