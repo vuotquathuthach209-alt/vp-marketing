@@ -345,7 +345,7 @@ async function classifyIntent(
   const userPrompt = `${histText ? `Lịch sử:\n${histText}\n\n` : ''}Tin nhắn hiện tại: "${message}"\n\nJSON:`;
 
   try {
-    const raw = await generate({ task: 'classify', system: INTENT_CLASSIFIER_SYSTEM, user: userPrompt });
+    const raw = await generate({ task: 'intent_gateway', system: INTENT_CLASSIFIER_SYSTEM, user: userPrompt });
     // Extract JSON
     const m = raw.match(/\{[\s\S]*\}/);
     if (!m) throw new Error('no json');
@@ -676,8 +676,10 @@ async function ragReply(
     otaCtx ? `--- DỮ LIỆU KHÁCH SẠN ---\n${otaCtx}\n--- HẾT ---` : '',
   ].filter(Boolean).join('\n\n');
 
+  // v5: Qwen local (Ollama) là main generator — free, ~7.5 tok/s trên VPS.
+  // Fallback tự động sang Gemini nếu Ollama offline (cấu hình trong FALLBACK chain).
   const raw = await generate({
-    task: 'reply_simple',
+    task: 'reply_qwen',
     system: RAG_SYSTEM,
     user: `${contextParts}\n\nKhách viết: "${message}"\n\nTrả lời ngắn, chỉ dựa trên ngữ cảnh trên:`,
   });

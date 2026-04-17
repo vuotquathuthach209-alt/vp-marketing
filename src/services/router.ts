@@ -46,7 +46,7 @@ const DEFAULT_ROUTES: Record<TaskType, RouteConfig> = {
   reply_simple:  { provider: 'groq',      model: 'gemma2-9b-it',           maxTokens: 400  },
   reply_complex: { provider: 'google',    model: 'gemini-2.5-flash',       maxTokens: 600  },
   // v5 cascade:
-  intent_gateway:{ provider: 'google',    model: 'gemini-2.0-flash-exp',   maxTokens: 200  },
+  intent_gateway:{ provider: 'google',    model: 'gemini-2.5-flash-lite',  maxTokens: 200  },
   reply_qwen:    { provider: 'ollama',    model: OLLAMA_MODEL,              maxTokens: 500  },
 };
 
@@ -54,14 +54,15 @@ const DEFAULT_ROUTES: Record<TaskType, RouteConfig> = {
  * Fallback chain: nếu provider chính không có key, tự chuyển sang provider khác.
  * Đảm bảo app vẫn chạy dù user chưa cấu hình Gemini/Groq.
  */
+// Gemini-first policy (user preference): Groq deprioritized
 const FALLBACK: Record<Provider, Provider[]> = {
-  google:    ['google', 'deepseek', 'anthropic', 'openai', 'groq', 'mistral'],
-  groq:      ['groq', 'deepseek', 'google', 'anthropic', 'openai', 'mistral'],
-  anthropic: ['anthropic', 'deepseek', 'google', 'openai', 'groq', 'mistral'],
-  deepseek:  ['deepseek', 'google', 'groq', 'anthropic', 'openai', 'mistral'],
-  openai:    ['openai', 'anthropic', 'deepseek', 'google', 'groq', 'mistral'],
-  mistral:   ['mistral', 'deepseek', 'google', 'openai', 'anthropic', 'groq'],
-  ollama:    ['ollama', 'groq', 'google', 'deepseek', 'anthropic', 'openai', 'mistral'],
+  google:    ['google', 'ollama', 'anthropic', 'deepseek', 'openai', 'groq', 'mistral'],
+  groq:      ['groq', 'google', 'ollama', 'deepseek', 'anthropic', 'openai', 'mistral'],
+  anthropic: ['anthropic', 'google', 'ollama', 'deepseek', 'openai', 'groq', 'mistral'],
+  deepseek:  ['deepseek', 'google', 'ollama', 'anthropic', 'openai', 'groq', 'mistral'],
+  openai:    ['openai', 'google', 'ollama', 'anthropic', 'deepseek', 'groq', 'mistral'],
+  mistral:   ['mistral', 'google', 'ollama', 'deepseek', 'openai', 'anthropic', 'groq'],
+  ollama:    ['ollama', 'google', 'anthropic', 'deepseek', 'openai', 'groq', 'mistral'],
 };
 
 function hasKey(provider: Provider): boolean {
