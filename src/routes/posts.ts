@@ -77,7 +77,14 @@ router.post('/:id/publish-now', async (req: AuthRequest, res) => {
     ).run(Date.now(), result.fbPostId, id);
     res.json({ ok: true, fb_post_id: result.fbPostId });
   } catch (e: any) {
-    const msg = e?.response?.data?.error?.message || e?.message;
+    const fbErr = e?.response?.data?.error;
+    const status = e?.response?.status;
+    const msg = fbErr
+      ? `[FB ${status || '?'}] ${fbErr.message}${fbErr.error_subcode ? ` (subcode ${fbErr.error_subcode})` : ''}${fbErr.code ? ` (code ${fbErr.code})` : ''}`
+      : (e?.message || 'Lỗi không xác định');
+    console.error('[publish-now] FAIL', {
+      postId: id, status, fbErr, message: e?.message,
+    });
     db.prepare(`UPDATE posts SET status = 'failed', error_message = ? WHERE id = ?`).run(msg, id);
     res.status(500).json({ error: msg });
   }
