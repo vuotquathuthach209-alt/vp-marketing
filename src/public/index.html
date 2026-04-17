@@ -9,6 +9,15 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css" />
+  <script>
+    // Apply theme ASAP to prevent flash
+    (function(){
+      try {
+        var t = localStorage.getItem('vp-theme') || 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch(e){}
+    })();
+  </script>
 </head>
 <body class="bg-slate-50 text-slate-800">
 
@@ -56,36 +65,55 @@
   <!-- Sidebar -->
   <div class="flex min-h-screen">
     <aside class="w-56 bg-slate-900 text-white p-4 flex flex-col">
-      <h1 class="text-lg font-bold mb-6 px-2">🏨 VP Marketing</h1>
+      <div class="brand-logo px-2 mb-6">
+        <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="lg1" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#10b981"/>
+            </linearGradient>
+          </defs>
+          <rect x="2" y="2" width="28" height="28" rx="8" fill="url(#lg1)"/>
+          <path d="M7 22 L13 14 L17 18 L25 9" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          <circle cx="25" cy="9" r="2" fill="white"/>
+        </svg>
+        <h1 class="text-lg font-bold">VP Marketing</h1>
+      </div>
       <nav class="space-y-0.5 flex-1">
-        <button data-tab="dashboard" class="nav-btn w-full text-left px-3 py-2.5 rounded-lg hover:bg-slate-800 text-sm font-medium">📊 Tong quan</button>
+        <button data-tab="dashboard" class="nav-btn w-full text-left px-3 py-2.5 rounded-lg hover:bg-slate-800 text-sm font-medium"><i data-lucide="layout-dashboard"></i><span>Tổng quan</span></button>
 
-        <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Noi dung</div>
-        <button data-tab="compose" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">✍️ Tao bai</button>
-        <button data-tab="autopilot" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">🤖 Autopilot</button>
-        <button data-tab="posts" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">📋 Danh sach</button>
-        <button data-tab="media" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">🖼️ Media</button>
+        <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Nội dung</div>
+        <button data-tab="compose" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="pen-line"></i><span>Tạo bài</span></button>
+        <button data-tab="autopilot" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="rocket"></i><span>Autopilot</span></button>
+        <button data-tab="posts" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="list"></i><span>Danh sách</span></button>
+        <button data-tab="media" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="image"></i><span>Media</span></button>
 
-        <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Tu dong</div>
-        <button data-tab="campaigns" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">🔁 Chien dich</button>
-        <button data-tab="autoreply" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">💬 Chatbot</button>
-        <button data-tab="room-images" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">📸 Anh phong</button>
-        <button data-tab="wiki" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">📚 Kien thuc AI</button>
-        <button data-tab="feedback" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">⭐ Cham bot</button>
-        <button data-tab="guests" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">👥 Khach quen</button>
-        <button data-tab="referral" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">🎁 Gioi thieu</button>
-        <button data-tab="appointments" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">📅 Lich hen</button>
-        <button data-tab="agent-audit" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">🤖 AI Agent</button>
-        <button data-tab="bot-control" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">⏸️ Tam dung bot</button>
-        <button data-tab="funnel" class="nav-btn nav-admin w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">🔻 Funnel (admin)</button>
+        <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Tự động</div>
+        <button data-tab="campaigns" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="repeat"></i><span>Chiến dịch</span></button>
+        <button data-tab="autoreply" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="message-circle"></i><span>Chatbot</span></button>
+        <button data-tab="room-images" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="camera"></i><span>Ảnh phòng</span></button>
+        <button data-tab="wiki" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="book-open"></i><span>Kiến thức AI</span></button>
+        <button data-tab="feedback" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="star"></i><span>Chấm bot</span></button>
+        <button data-tab="guests" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="users"></i><span>Khách quen</span></button>
+        <button data-tab="referral" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="gift"></i><span>Giới thiệu</span></button>
+        <button data-tab="appointments" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="calendar"></i><span>Lịch hẹn</span></button>
+        <button data-tab="agent-audit" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="bot"></i><span>AI Agent</span></button>
+        <button data-tab="bot-control" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="pause-circle"></i><span>Tạm dừng bot</span></button>
+        <button data-tab="funnel" class="nav-btn nav-admin w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="trending-down"></i><span>Funnel (admin)</span></button>
 
-        <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Bao cao</div>
-        <button data-tab="analytics" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">📈 Thong ke</button>
+        <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Báo cáo</div>
+        <button data-tab="analytics" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="bar-chart-3"></i><span>Thống kê</span></button>
 
-        <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Quan ly</div>
-        <button data-tab="settings" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm">⚙️ Cai dat</button>
+        <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Quản lý</div>
+        <button data-tab="settings" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="settings"></i><span>Cài đặt</span></button>
       </nav>
-      <button id="logout-btn" class="mt-4 text-xs text-slate-500 hover:text-white px-3 py-2">↩ Dang xuat</button>
+      <div class="mt-4 pt-3 border-t border-white/5 flex items-center gap-2">
+        <button id="theme-toggle" class="flex-1 text-xs text-slate-400 hover:text-white px-3 py-2 rounded-lg hover:bg-white/5 flex items-center gap-2" title="Đổi chế độ sáng/tối">
+          <i data-lucide="moon" id="theme-icon"></i><span id="theme-label">Tối</span>
+        </button>
+        <button id="logout-btn" class="text-xs text-slate-400 hover:text-red-400 px-3 py-2 rounded-lg hover:bg-white/5" title="Đăng xuất">
+          <i data-lucide="log-out"></i>
+        </button>
+      </div>
     </aside>
 
     <main class="flex-1 overflow-auto">
@@ -1331,6 +1359,29 @@
   </div>
 </div>
 
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 <script src="/app.js"></script>
+<script>
+  // Render Lucide icons after app.js mounts
+  if (window.lucide) window.lucide.createIcons();
+  // Theme toggle wiring
+  (function(){
+    const btn = document.getElementById('theme-toggle');
+    if (!btn) return;
+    const apply = (t) => {
+      document.documentElement.setAttribute('data-theme', t);
+      try { localStorage.setItem('vp-theme', t); } catch(e){}
+      const icon = document.getElementById('theme-icon');
+      const label = document.getElementById('theme-label');
+      if (icon) { icon.setAttribute('data-lucide', t === 'dark' ? 'sun' : 'moon'); if (window.lucide) window.lucide.createIcons(); }
+      if (label) label.textContent = t === 'dark' ? 'Sáng' : 'Tối';
+    };
+    btn.addEventListener('click', () => {
+      const cur = document.documentElement.getAttribute('data-theme') || 'light';
+      apply(cur === 'dark' ? 'light' : 'dark');
+    });
+    apply(document.documentElement.getAttribute('data-theme') || 'light');
+  })();
+</script>
 </body>
 </html>
