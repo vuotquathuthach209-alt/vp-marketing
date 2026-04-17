@@ -961,8 +961,22 @@ export async function smartReply(
 
   // ─── STEP 6: RAG AI (chỉ khi có context thực) ───
   try {
-    const aiReply = await ragReply(msg, history, hotelId, senderId);
+    let aiReply = await ragReply(msg, history, hotelId, senderId);
     if (aiReply) {
+      // ─── STEP 6.5: AGENT TOOLS (post-reply dispatch) ───
+      try {
+        const { runAgentTools, isToolsEnabled } = require('./agent-tools');
+        if (isToolsEnabled(hotelId)) {
+          const hotelRow = db.prepare(`SELECT industry FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
+          const industry = hotelRow?.industry || 'hotel';
+          const toolOut = await runAgentTools({
+            hotelId, senderId, senderName, industry,
+            message: msg, draftReply: aiReply, history,
+          });
+          if (toolOut.appended) aiReply = aiReply + toolOut.appended;
+        }
+      } catch (e: any) { console.warn('[smartreply] agent tools failed:', e?.message); }
+
       if (senderId) saveMessage(senderId, pid, 'bot', aiReply, 'ai_rag');
       // Fire-and-forget: record for future learned cache
       recordQA(msg, aiReply, 'ai_rag', hotelId).catch((e) =>
