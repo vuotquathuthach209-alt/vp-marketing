@@ -709,7 +709,7 @@ async function ragReply(
   history: Array<{ role: string; message: string }>,
   hotelId: number,
 ): Promise<string | null> {
-  const [wikiCtx, otaCtx] = await Promise.all([buildContext(message), buildOtaContext(hotelId)]);
+  const [wikiCtx, otaCtx] = await Promise.all([buildContext(message, hotelId), buildOtaContext(hotelId)]);
 
   // STRICT RAG: nếu không có context → không gọi AI
   if (!wikiCtx && !otaCtx) return null;
