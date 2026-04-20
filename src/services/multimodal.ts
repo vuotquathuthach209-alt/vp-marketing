@@ -74,7 +74,7 @@ CHỈ trả JSON, không giải thích.`;
 async function callGeminiMultimodal(
   prompt: string,
   input: AttachmentInput,
-  maxTokens = 400,
+  maxTokens = 600,
 ): Promise<string> {
   const key = pickKey('google_api_key', process.env.GOOGLE_API_KEY);
   if (!key) throw new Error('GOOGLE_API_KEY not configured');
@@ -92,7 +92,11 @@ async function callGeminiMultimodal(
           { text: prompt },
         ],
       }],
-      generationConfig: { maxOutputTokens: maxTokens, temperature: 0.3 },
+      generationConfig: {
+        maxOutputTokens: maxTokens,
+        temperature: 0.3,
+        responseMimeType: 'application/json', // force JSON output
+      },
     },
     { timeout: 30000, headers: { 'Content-Type': 'application/json' } },
   );
@@ -110,10 +114,13 @@ export async function analyzeAttachment(opts: {
 
   try {
     const raw = await callGeminiMultimodal(buildPrompt(type), { mimeType, data });
-    const cleaned = raw.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+    const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
     const s = cleaned.indexOf('{');
     const e = cleaned.lastIndexOf('}');
-    if (s < 0 || e < s) throw new Error('no JSON');
+    if (s < 0 || e < s) {
+      console.warn('[multimodal] raw output (no JSON):', raw.slice(0, 300));
+      throw new Error('no JSON');
+    }
     const parsed = JSON.parse(cleaned.slice(s, e + 1)) as Partial<MultimodalResult>;
     return {
       kind: (parsed.kind || 'other') as DetectedKind,
