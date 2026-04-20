@@ -115,6 +115,10 @@ interface ObjectionCtx {
   history: string[];
   /** Rẻ nhất trong room_types (nếu biết) */
   cheapest?: { name: string; price: number };
+  /** Tone directive từ tone-adapter */
+  toneDirective?: string;
+  /** Recall hint từ memory-recall */
+  recallHint?: string;
 }
 
 export async function handleObjection(ctx: ObjectionCtx): Promise<string> {
@@ -133,12 +137,15 @@ export async function handleObjection(ctx: ObjectionCtx): Promise<string> {
       : '4. Soft-close: hỏi ngân sách cụ thể để tư vấn chính xác.',
   ].join('\n');
 
+  const toneBlock = ctx.toneDirective ? `\n\n${ctx.toneDirective}` : '';
+  const recallBlock = ctx.recallHint ? `\n\n${ctx.recallHint}` : '';
+
   const system = `Bạn là trợ lý khách sạn Việt Nam, đang xử lý phản đối giá của khách.
 Phong cách: thân thiện, đồng cảm, chuyên nghiệp. KHÔNG bắt ép, KHÔNG sale cứng.
 Độ dài: 2-3 câu, ≤60 từ. KHÔNG dùng bullet hay markdown. KHÔNG lặp lại template "Mình cần thêm thông tin".
 
 Chiến lược bắt buộc áp dụng theo thứ tự:
-${strategyHint}`;
+${strategyHint}${toneBlock}${recallBlock}`;
 
   const user = `Khách nhắn: "${message}"
 

@@ -743,6 +743,15 @@ async function ragReply(
 
   // Industry-specific system prompt (unlock vertical expansion)
   let systemPrompt = RAG_SYSTEM;
+
+  // v6 Sprint 3: inject tone + recall hint từ dispatcher (nếu có)
+  if (senderId) {
+    const extra = _systemSuffixes.get(senderId);
+    if (extra) {
+      systemPrompt += '\n\n' + extra;
+      _systemSuffixes.delete(senderId);
+    }
+  }
   try {
     const hotelRow = db.prepare(`SELECT industry FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
     const industryId = hotelRow?.industry || 'hotel';
@@ -859,6 +868,15 @@ export async function smartReplyWithSender(
 }
 
 /**
+ * Sender-scoped system prompt injection (1-shot, consumed by ragReply).
+ * Dispatcher set trước khi gọi smartReply; ragReply đọc + xóa.
+ */
+const _systemSuffixes = new Map<string, string>();
+export function setSystemSuffix(senderId: string, _pageId: number, suffix: string) {
+  _systemSuffixes.set(senderId, suffix);
+}
+
+/**
  * v6 dispatcher — gọi intent-router → quyết định handler → generate reply.
  */
 async function dispatchV6(ctx: {
@@ -875,6 +893,12 @@ async function dispatchV6(ctx: {
   const { fastReply, handleObjection, handleHandoff, priceFilterReply } = require('./reply-handlers');
   const { pauseBooking, resumeBooking, getActiveBookingInfo } = require('./bookingflow');
   const { ensureDiverse } = require('./anti-repeat');
+  const { indexUserMessage, recall, formatRecallHint } = require('./memory-recall');
+  const { toneFor, hasComplaintHistory } = require('./tone-adapter');
+  const { updateAndCheck: updateHandoffTracker } = require('./auto-handoff');
+
+  // Index user message async (no await — background)
+  indexUserMessage({ senderId, pageId: pid, message: msg }).catch(() => {});
 
   // Fetch history 6 last turns
   const historyRows = db.prepare(
@@ -885,17 +909,26 @@ async function dispatchV6(ctx: {
 
   const bookingInfo = getActiveBookingInfo(senderId);
 
-  // [1] Classify intent
-  const router = await classifyTurn({
-    message: msg,
-    historyTail,
-    bookingState: bookingInfo?.status,
-  });
+  // [1] Classify intent + recall parallel
+  const [router, recallHit] = await Promise.all([
+    classifyTurn({ message: msg, historyTail, bookingState: bookingInfo?.status }),
+    recall({ senderId, pageId: pid, message: msg }),
+  ]);
 
   // [2] Decide handler
   const handler = decideHandler(router, !!bookingInfo);
 
-  console.log(`[v6] intent=${router.intent} conf=${router.confidence.toFixed(2)} handler=${handler} src=${router.source}${bookingInfo ? ' bk=' + bookingInfo.status : ''}`);
+  // [2.5] Auto-handoff safety net
+  const handoffDecision = updateHandoffTracker({
+    senderId, pageId: pid, ro: router, bookingCreated: !!bookingInfo,
+  });
+
+  // [2.6] Tone directive
+  const tone = toneFor(router.emotion, {
+    hasComplaintHistory: hasComplaintHistory(historyTail),
+  });
+
+  console.log(`[v6] intent=${router.intent} conf=${router.confidence.toFixed(2)} handler=${handler} src=${router.source} tone=${tone.label}${recallHit ? ' recall='+recallHit.similarity : ''}${handoffDecision.trigger ? ' AUTO_HANDOFF='+handoffDecision.reason : ''}${bookingInfo ? ' bk=' + bookingInfo.status : ''}`);
 
   // Log intent to events
   try {
@@ -906,10 +939,17 @@ async function dispatchV6(ctx: {
   // [3] Route
   let reply = '';
   let intentLabel = router.intent;
-
   let skipSave = false; // smartReply đã tự lưu rồi
 
-  if (handler === 'booking_fsm') {
+  // Auto-handoff ưu tiên cao — override handler trừ khi user đang đặt phòng active
+  if (handoffDecision.trigger && handler !== 'booking_fsm') {
+    try {
+      const { trackEvent } = require('./events');
+      trackEvent({ event: 'auto_handoff_triggered', hotelId: hid, meta: { reason: handoffDecision.reason, intent: router.intent } });
+    } catch {}
+    reply = await handleHandoff({ hotelId: hid, senderId, senderName, message: msg, history: historyTail });
+    intentLabel = 'auto_handoff';
+  } else if (handler === 'booking_fsm') {
     // Resume paused booking nếu cần
     if (bookingInfo?.status === 'paused') resumeBooking(senderId);
     const r = processBookingStep(senderId, msg, senderName);
@@ -918,6 +958,8 @@ async function dispatchV6(ctx: {
       intentLabel = 'booking';
     } else {
       // FSM nhường → fallback RAG (smartReply tự lưu)
+      const suffix = [tone.directive, recallHit ? formatRecallHint(recallHit) : ''].filter(Boolean).join('\n\n');
+      if (suffix) setSystemSuffix(senderId, pid, suffix);
       const out = await smartReply(msg, hid, senderId, senderName, pid);
       reply = out.reply;
       intentLabel = 'rag_fallback';
@@ -931,6 +973,8 @@ async function dispatchV6(ctx: {
       message: msg,
       hotelId: hid,
       history: historyTail,
+      toneDirective: tone.directive,
+      recallHint: recallHit ? formatRecallHint(recallHit) : undefined,
     });
     intentLabel = 'price_objection';
   } else if (handler === 'fast_reply') {
@@ -958,6 +1002,8 @@ async function dispatchV6(ctx: {
       } catch {}
     }
     if (!reply) {
+      const suffix = [tone.directive, recallHit ? formatRecallHint(recallHit) : ''].filter(Boolean).join('\n\n');
+      if (suffix) setSystemSuffix(senderId, pid, suffix);
       const out = await smartReply(msg, hid, senderId, senderName, pid);
       reply = out.reply;
       intentLabel = 'rag';
