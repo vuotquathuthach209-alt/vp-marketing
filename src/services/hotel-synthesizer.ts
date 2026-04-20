@@ -337,8 +337,20 @@ export async function synthesizeHotel(raw: OtaRawHotel): Promise<{
     return { ok: false, error: `JSON parse fail: ${e?.message}`, retried };
   }
 
-  const v = validate(parsed);
-  if (!v.valid) return { ok: false, error: `validation: ${v.reason}`, retried };
+  // v7.4: Funnel path only validates creative fields (name/rooms/amenities come from structured)
+  if (usingFunnel && structured) {
+    // Gemini may output only {ai_summary_vi, usp_top3, brand_voice}
+    if (!parsed.ai_summary_vi || parsed.ai_summary_vi.length < 20) {
+      return { ok: false, error: 'funnel: invalid ai_summary_vi', retried };
+    }
+    if (!Array.isArray(parsed.usp_top3)) parsed.usp_top3 = [];
+    // These will be overridden from structured below
+    parsed.rooms = parsed.rooms || [];
+    parsed.amenities = parsed.amenities || [];
+  } else {
+    const v = validate(parsed);
+    if (!v.valid) return { ok: false, error: `validation: ${v.reason}`, retried };
+  }
 
   // v7.4: MERGE structured (rule-based) INTO Gemini output — structured WINS
   if (usingFunnel && structured) {
