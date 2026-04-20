@@ -36,17 +36,26 @@ export async function upsertKnowledge(
 ): Promise<void> {
   const now = Date.now();
 
-  // 1. hotel_profile — auto-geocode nếu thiếu lat/lon
+  // 1. hotel_profile — auto-geocode nếu thiếu lat/lon (fallback chain)
   let lat = data.latitude, lon = data.longitude;
-  if ((!lat || !lon) && data.address) {
-    try {
-      const g = await geocode(`${data.address}, ${data.district || ''} ${data.city || ''} Vietnam`);
-      if (g) {
-        lat = g.latitude;
-        lon = g.longitude;
-        console.log(`[hotel_knowledge] geocoded #${hotelId}: ${lat},${lon}`);
-      }
-    } catch {}
+  if (!lat || !lon) {
+    const candidates = [
+      data.address ? `${data.address}, ${data.district || ''}, ${data.city || ''}, Vietnam` : null,
+      data.address ? `${data.address}, ${data.city || ''}, Vietnam` : null,
+      data.district && data.city ? `${data.district}, ${data.city}, Vietnam` : null,
+      data.city ? `${data.city}, Vietnam` : null,
+    ].filter(Boolean) as string[];
+    for (const q of candidates) {
+      try {
+        const g = await geocode(q);
+        if (g) {
+          lat = g.latitude;
+          lon = g.longitude;
+          console.log(`[hotel_knowledge] geocoded #${hotelId} via "${q.slice(0, 50)}": ${lat},${lon}`);
+          break;
+        }
+      } catch {}
+    }
   }
   const geohash = (lat && lon) ? geohashEncode(lat, lon, 6) : null;
 
