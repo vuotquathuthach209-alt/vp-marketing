@@ -643,6 +643,70 @@ CREATE TABLE IF NOT EXISTS qa_feedback (
 );
 CREATE INDEX IF NOT EXISTS idx_qa_fb_cache ON qa_feedback(qa_cache_id);
 CREATE INDEX IF NOT EXISTS idx_qa_fb_created ON qa_feedback(created_at DESC);
+
+-- v9 News Pipeline: ingest RSS → classify → angle → Sonder spin → admin review → publish
+CREATE TABLE IF NOT EXISTS news_articles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  url TEXT NOT NULL UNIQUE,
+  url_hash TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  source TEXT NOT NULL,
+  source_tier TEXT,                    -- 'AAA' | 'AA' | 'A' (credibility)
+  published_at INTEGER NOT NULL,
+  fetched_at INTEGER NOT NULL,
+  lang TEXT DEFAULT 'vi',
+  -- Classification (Phase N-2)
+  is_travel_relevant INTEGER DEFAULT 0,
+  relevance_score REAL DEFAULT 0,
+  impact_score REAL DEFAULT 0,
+  political_risk REAL DEFAULT 0,
+  region TEXT,
+  angle_hint TEXT,
+  title_embedding BLOB,                -- cho dedupe similarity (Phase N-2)
+  -- State machine
+  status TEXT DEFAULT 'ingested',
+    -- ingested | filtered_out | angle_generated | safety_failed
+    -- | pending_review | approved | rejected | published
+  status_note TEXT,
+  created_at INTEGER NOT NULL,
+  last_state_change_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_news_url_hash ON news_articles(url_hash);
+CREATE INDEX IF NOT EXISTS idx_news_published ON news_articles(published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_news_status ON news_articles(status);
+CREATE INDEX IF NOT EXISTS idx_news_source ON news_articles(source);
+
+CREATE TABLE IF NOT EXISTS news_post_drafts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  article_id INTEGER NOT NULL,
+  hotel_id INTEGER NOT NULL,
+  page_id INTEGER,
+  draft_angle TEXT NOT NULL,            -- từ Gemini
+  draft_post TEXT NOT NULL,             -- sau Sonder spin
+  edited_post TEXT,                     -- admin edit
+  image_url TEXT,
+  hashtags TEXT,                        -- JSON array
+  -- Safety (Phase N-4)
+  safety_flags TEXT,                    -- JSON {keyword_hits, tone, criticism, offensive, fact_source}
+  auto_rejected INTEGER DEFAULT 0,
+  rejection_reason TEXT,
+  -- Publish
+  status TEXT DEFAULT 'pending',
+    -- pending | approved | rejected | published | failed
+  scheduled_at INTEGER,
+  published_at INTEGER,
+  fb_post_id TEXT,
+  admin_user_id INTEGER,
+  admin_notes TEXT,
+  ai_provider TEXT,                     -- provider đã sinh angle
+  ai_tokens_used INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (article_id) REFERENCES news_articles(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_news_drafts_status_hotel ON news_post_drafts(status, hotel_id);
+CREATE INDEX IF NOT EXISTS idx_news_drafts_scheduled ON news_post_drafts(status, scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_news_drafts_article ON news_post_drafts(article_id);
 `);
 
 // v7: Hotel Knowledge Layer — AI-synthesized bot-ready data

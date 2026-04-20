@@ -292,5 +292,28 @@ export function startScheduler() {
     sendWeeklyReport().catch(e => console.error('[scheduler] weekly report error:', e));
   });
 
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h');
+  // ── News Pipeline v9 ───────────────────────────────────────────
+  // Ingest RSS mỗi 2 giờ (khung 6h-23h VN time, skip đêm)
+  cron.schedule('0 6-23/2 * * *', async () => {
+    try {
+      const { ingestAll } = require('./news-ingest');
+      const r = await ingestAll();
+      if (r.new > 0) console.log(`[scheduler] news-ingest: ${r.new} articles mới từ ${r.sources} nguồn`);
+    } catch (e: any) {
+      console.error('[scheduler] news-ingest error:', e?.message);
+    }
+  });
+
+  // Cleanup articles quá cũ: 3h sáng mỗi ngày
+  cron.schedule('0 3 * * *', () => {
+    try {
+      const { cleanupOldArticles } = require('./news-ingest');
+      const r = cleanupOldArticles();
+      if (r.deleted > 0) console.log(`[scheduler] news cleanup: deleted ${r.deleted} old articles`);
+    } catch (e: any) {
+      console.error('[scheduler] news cleanup error:', e?.message);
+    }
+  });
+
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h');
 }
