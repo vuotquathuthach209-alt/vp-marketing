@@ -896,6 +896,8 @@ async function dispatchV6(ctx: {
   const { indexUserMessage, recall, formatRecallHint } = require('./memory-recall');
   const { toneFor, hasComplaintHistory } = require('./tone-adapter');
   const { updateAndCheck: updateHandoffTracker } = require('./auto-handoff');
+  const { resolveUserLanguage, languageDirective, LANG_LABELS } = require('./language-detector');
+  const { classifyCustomer, tierDirective, tierOffer } = require('./customer-tier');
 
   // Index user message async (no await — background)
   indexUserMessage({ senderId, pageId: pid, message: msg }).catch(() => {});
@@ -928,7 +930,13 @@ async function dispatchV6(ctx: {
     hasComplaintHistory: hasComplaintHistory(historyTail),
   });
 
-  console.log(`[v6] intent=${router.intent} conf=${router.confidence.toFixed(2)} handler=${handler} src=${router.source} tone=${tone.label}${recallHit ? ' recall='+recallHit.similarity : ''}${handoffDecision.trigger ? ' AUTO_HANDOFF='+handoffDecision.reason : ''}${bookingInfo ? ' bk=' + bookingInfo.status : ''}`);
+  // [2.7] Language detection
+  const langInfo = resolveUserLanguage({ senderId, hotelId: hid, message: msg });
+
+  // [2.8] Customer tier classification
+  const tierInfo = classifyCustomer({ senderId, hotelId: hid });
+
+  console.log(`[v6] intent=${router.intent} conf=${router.confidence.toFixed(2)} handler=${handler} src=${router.source} tone=${tone.label} lang=${langInfo.lang} tier=${tierInfo?.tier || 'unknown'}${recallHit ? ' recall='+recallHit.similarity : ''}${handoffDecision.trigger ? ' AUTO_HANDOFF='+handoffDecision.reason : ''}${bookingInfo ? ' bk=' + bookingInfo.status : ''}`);
 
   // Log intent to events
   try {
@@ -958,7 +966,12 @@ async function dispatchV6(ctx: {
       intentLabel = 'booking';
     } else {
       // FSM nhường → fallback RAG (smartReply tự lưu)
-      const suffix = [tone.directive, recallHit ? formatRecallHint(recallHit) : ''].filter(Boolean).join('\n\n');
+      const suffix = [
+        tone.directive,
+        recallHit ? formatRecallHint(recallHit) : '',
+        languageDirective(langInfo.lang),
+        tierInfo ? tierDirective(tierInfo, senderName) : '',
+      ].filter(Boolean).join('\n\n');
       if (suffix) setSystemSuffix(senderId, pid, suffix);
       const out = await smartReply(msg, hid, senderId, senderName, pid);
       reply = out.reply;
@@ -968,18 +981,25 @@ async function dispatchV6(ctx: {
   } else if (handler === 'objection_handler') {
     // Pause booking nếu đang active
     if (bookingInfo && bookingInfo.status !== 'paused') pauseBooking(senderId);
+    const tierOfferHint = tierInfo ? tierOffer(tierInfo) : null;
+    const objToneDirective = [
+      tone.directive,
+      languageDirective(langInfo.lang),
+      tierInfo ? tierDirective(tierInfo, senderName) : '',
+      tierOfferHint ? `ƯU ĐÃI CÓ THỂ ÁP DỤNG: ${tierOfferHint}` : '',
+    ].filter(Boolean).join('\n\n');
     reply = await handleObjection({
       ro: router,
       message: msg,
       hotelId: hid,
       history: historyTail,
-      toneDirective: tone.directive,
+      toneDirective: objToneDirective,
       recallHint: recallHit ? formatRecallHint(recallHit) : undefined,
     });
     intentLabel = 'price_objection';
   } else if (handler === 'fast_reply') {
     if (bookingInfo && bookingInfo.status !== 'paused') pauseBooking(senderId);
-    reply = fastReply(router, msg);
+    reply = fastReply(router, msg, langInfo.lang);
     intentLabel = router.intent;
   } else if (handler === 'handoff') {
     if (bookingInfo && bookingInfo.status !== 'paused') pauseBooking(senderId);
@@ -1002,7 +1022,12 @@ async function dispatchV6(ctx: {
       } catch {}
     }
     if (!reply) {
-      const suffix = [tone.directive, recallHit ? formatRecallHint(recallHit) : ''].filter(Boolean).join('\n\n');
+      const suffix = [
+        tone.directive,
+        recallHit ? formatRecallHint(recallHit) : '',
+        languageDirective(langInfo.lang),
+        tierInfo ? tierDirective(tierInfo, senderName) : '',
+      ].filter(Boolean).join('\n\n');
       if (suffix) setSystemSuffix(senderId, pid, suffix);
       const out = await smartReply(msg, hid, senderId, senderName, pid);
       reply = out.reply;

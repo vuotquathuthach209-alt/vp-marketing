@@ -85,22 +85,74 @@ const SMALL_TALK_REPLIES: Record<string, string[]> = {
 
 function pickRandom<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
 
-export function fastReply(ro: RouterOutput, message: string): string {
-  const m = message.toLowerCase().trim();
-  if (ro.intent === 'goodbye') return pickRandom(GOODBYE_REPLIES);
+// Multi-lingual fast replies (greeting/goodbye/small_talk)
+const LANG_FAST_REPLIES: Record<string, { greeting: string[]; goodbye: string[]; thanks: string[]; alo: string[] }> = {
+  en: {
+    greeting: [
+      'Hi there! 😊 How can I help you today?',
+      'Hello! Welcome — are you looking for a room?',
+      'Hi! Happy to help. What can I do for you?',
+    ],
+    goodbye: [
+      'Thank you! Feel free to message me anytime 🙌',
+      'Have a wonderful day! See you soon 🌸',
+    ],
+    thanks: [
+      "You're welcome! Let me know if you need anything else 🤗",
+      'My pleasure! Happy to help anytime.',
+    ],
+    alo: ['Yes, I\'m here! 😊 How can I assist you?'],
+  },
+  ko: {
+    greeting: ['안녕하세요! 😊 어떻게 도와드릴까요?', '안녕하세요! 객실 예약 도와드릴까요?'],
+    goodbye: ['감사합니다! 언제든 편하게 연락 주세요 🙌'],
+    thanks: ['천만에요! 필요하신 게 있으면 언제든 말씀해 주세요 🤗'],
+    alo: ['네, 말씀하세요! 😊'],
+  },
+  zh: {
+    greeting: ['您好! 😊 有什么可以帮您的吗?', '您好! 欢迎咨询,想看房间吗?'],
+    goodbye: ['谢谢! 有需要随时联系我 🙌'],
+    thanks: ['不客气! 有其他问题随时问我 🤗'],
+    alo: ['是的,我在这里! 😊'],
+  },
+  ja: {
+    greeting: ['こんにちは! 😊 どのようなご用件でしょうか?', 'いらっしゃいませ! お部屋のご予約ですか?'],
+    goodbye: ['ありがとうございました! またいつでもご連絡ください 🙌'],
+    thanks: ['どういたしまして! 他にご質問があればお気軽に 🤗'],
+    alo: ['はい、こちらにおります! 😊'],
+  },
+  ru: {
+    greeting: ['Здравствуйте! 😊 Чем могу помочь?'],
+    goodbye: ['Спасибо! Пишите в любое время 🙌'],
+    thanks: ['Пожалуйста! Обращайтесь в любое время 🤗'],
+    alo: ['Да, я здесь! 😊'],
+  },
+  th: {
+    greeting: ['สวัสดีค่ะ! 😊 มีอะไรให้ช่วยไหมคะ?'],
+    goodbye: ['ขอบคุณค่ะ! แชทเมื่อไหร่ก็ได้นะคะ 🙌'],
+    thanks: ['ยินดีค่ะ! มีอะไรสอบถามได้ตลอดนะคะ 🤗'],
+    alo: ['ค่ะ, ฟังอยู่ค่ะ 😊'],
+  },
+};
 
-  if (/\b(cảm ơn|c[aả]m ơn|thanks?|thank you|tks)\b/i.test(m)) {
-    return pickRandom(SMALL_TALK_REPLIES.thanks);
+export function fastReply(ro: RouterOutput, message: string, lang?: string): string {
+  const m = message.toLowerCase().trim();
+  const L = lang && LANG_FAST_REPLIES[lang] ? LANG_FAST_REPLIES[lang] : null;
+
+  if (ro.intent === 'goodbye') return L ? pickRandom(L.goodbye) : pickRandom(GOODBYE_REPLIES);
+
+  if (/\b(cảm ơn|c[aả]m ơn|thanks?|thank you|tks|gracias|감사|谢谢|ありがとう|спасибо|ขอบคุณ)\b/i.test(m)) {
+    return L ? pickRandom(L.thanks) : pickRandom(SMALL_TALK_REPLIES.thanks);
   }
   if (/\b(ngủ dậy|sáng nay|khỏe|how.*are.*you|có khỏe)\b/i.test(m)) {
     return pickRandom(SMALL_TALK_REPLIES.how_are_you);
   }
-  if (/^(alo|a lô|hello)/i.test(m)) {
-    return pickRandom(SMALL_TALK_REPLIES.alo);
+  if (/^(alo|a lô|hello|hi|hey|안녕|你好|こんにちは|привет|สวัสดี)/i.test(m)) {
+    return L ? pickRandom(L.alo.concat(L.greeting)) : pickRandom(SMALL_TALK_REPLIES.alo);
   }
   // Default greeting / tiny message
-  if (m.length <= 10) return pickRandom(GREETING_REPLIES);
-  return pickRandom(SMALL_TALK_REPLIES.default);
+  if (m.length <= 10) return L ? pickRandom(L.greeting) : pickRandom(GREETING_REPLIES);
+  return L ? pickRandom(L.greeting) : pickRandom(SMALL_TALK_REPLIES.default);
 }
 
 // ──────────────────────────────────────────────────────────────
