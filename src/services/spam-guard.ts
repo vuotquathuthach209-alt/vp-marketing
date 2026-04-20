@@ -34,13 +34,13 @@ CREATE TABLE IF NOT EXISTS sender_rate (
 );
 `);
 
-// Keyword blocklist — mở rộng theo thời gian từ false positives
+// Keyword blocklist — dùng regex không có \b để hoạt động với Unicode (tiếng Việt)
 const SPAM_KEYWORDS: RegExp[] = [
-  /\b(cá độ|cá cược|baccarat|nổ hũ|đánh bạc online|casino online)\b/i,
-  /\b(vay nóng|tín dụng đen|cho vay không thế chấp|vay không chứng minh)\b/i,
-  /\b(xxx|porn|sex cam|escort service|call.?girl|massage k[ií]ch d[uụ]c)\b/i,
-  /\b(bán acc|bán tk|bán account facebook|mua acc)\b/i,
-  /\b(hack.?account|hack.?facebook|hack page)\b/i,
+  /(cá ?độ|cá ?cược|baccarat|nổ hũ|đánh bạc online|casino online|xổ số online)/i,
+  /(vay nóng|tín dụng đen|cho vay không thế chấp|vay không chứng minh)/i,
+  /(xxx|porn|sex cam|escort service|call.?girl|massage k[ií]ch d[uụ]c)/i,
+  /(bán acc(ount)?|bán tk|bán account facebook|mua acc(ount)?)/i,
+  /(hack.?account|hack.?facebook|hack page|unlock page)/i,
 ];
 
 const SUSPICIOUS_URL_PATTERNS: RegExp[] = [
