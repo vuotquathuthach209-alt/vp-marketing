@@ -223,6 +223,16 @@ export function startScheduler() {
     }
   });
 
+  // ── v6 Sprint 4: QA promoter — 5:30 sáng, sau prune ──
+  cron.schedule('30 5 * * *', async () => {
+    try {
+      const { runDailyPromotion } = require('./qa-promoter');
+      await runDailyPromotion();
+    } catch (e: any) {
+      console.error('[scheduler] qa-promoter error:', e?.message);
+    }
+  });
+
   // ── Billing renewal reminders: 9h sáng mỗi ngày ──
   cron.schedule('0 9 * * *', async () => {
     try {

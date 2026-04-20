@@ -1028,6 +1028,14 @@ async function dispatchV6(ctx: {
     } catch {}
   }
 
+  // ─── Next-step planner: chủ động gắn CTA (trừ booking/handoff/auto_handoff) ───
+  if (reply && !['booking', 'booking_info', 'booking_action', 'handoff', 'auto_handoff', 'bot_paused', 'transfer'].includes(intentLabel)) {
+    try {
+      const { appendNextStep } = require('./next-step-planner');
+      reply = appendNextStep({ reply, ro: router, bookingState: bookingInfo?.status, historyTail });
+    } catch {}
+  }
+
   if (reply && !skipSave) saveMessage(senderId, pid, 'bot', reply, intentLabel);
   return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: intentLabel };
 }

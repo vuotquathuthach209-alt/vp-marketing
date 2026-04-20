@@ -349,4 +349,15 @@ router.get('/events/top', (req: AuthRequest, res) => {
   res.json({ days, top: topEvents(sinceMs, 30) });
 });
 
+// v6 Sprint 4: Manual QA promotion trigger (admin only)
+router.post('/qa-promote', async (_req: AuthRequest, res) => {
+  try {
+    const { runDailyPromotion } = require('../services/qa-promoter');
+    const stats = await runDailyPromotion();
+    res.json({ ok: true, stats });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;
