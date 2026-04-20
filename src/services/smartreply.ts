@@ -454,18 +454,20 @@ async function handleDeterministic(
   // v7 Phase 3: Ưu tiên hotel_knowledge (AI-synthesized) nếu có
   let kbUsed = false;
   let propertyTypeLabel = '';
+  let rentalUnit: 'tháng' | 'đêm' = 'đêm';  // default
+  let productGroup: 'monthly_apartment' | 'nightly_stay' = 'nightly_stay';
   try {
     const { hasKnowledge, getProfile, getRooms } = require('./hotel-knowledge');
+    const { classifyProduct } = require('./product-taxonomy');
     if (hasKnowledge(hotelId)) {
       const prof = getProfile(hotelId);
       const kbRooms = getRooms(hotelId);
       if (prof?.name_canonical) hotelName = prof.name_canonical;
       if (prof?.property_type) {
-        try {
-          const { getMeta } = require('./property-type-meta');
-          const meta = getMeta(prof.property_type);
-          propertyTypeLabel = meta?.label_vi || prof.property_type;
-        } catch {}
+        const classification = classifyProduct(prof.property_type);
+        propertyTypeLabel = classification.label_vi;
+        rentalUnit = classification.rental_unit;
+        productGroup = classification.group;
       }
       if (kbRooms && kbRooms.length > 0) {
         rooms = kbRooms.map((r: any) => ({
@@ -479,8 +481,7 @@ async function handleDeterministic(
       }
     }
   } catch {}
-  if (kbUsed) console.log(`[smartreply] using hotel_knowledge for #${hotelId}: ${rooms.length} rooms, type=${propertyTypeLabel || '-'}`);
-  // Prepend property type vào hotelName cho template
+  if (kbUsed) console.log(`[smartreply] using kb #${hotelId}: ${rooms.length} rooms, group=${productGroup}, unit=/${rentalUnit}`);
   const hotelNameWithType = propertyTypeLabel ? `${propertyTypeLabel} ${hotelName}` : hotelName;
 
   switch (intent) {
@@ -548,23 +549,31 @@ async function handleDeterministic(
 
     case 'price': {
       if (rooms.length > 0) {
+        const unit = rentalUnit;
         const roomList = rooms.map((r: any) => {
-          let line = `💰 ${r.name} — ${r.base_price?.toLocaleString('vi-VN')}₫/đêm`;
-          if (r.hourly_price) line += ` | Giờ: ${r.hourly_price.toLocaleString('vi-VN')}₫`;
+          let line = `💰 ${r.name} — ${r.base_price?.toLocaleString('vi-VN')}₫/${unit}`;
+          if (r.hourly_price && productGroup === 'nightly_stay') line += ` | Giờ: ${r.hourly_price.toLocaleString('vi-VN')}₫`;
           if (r.max_guests) line += ` | ${r.max_guests} khách`;
           const avail = r.available_count ?? r.room_count;
           if (avail !== undefined && avail > 0) line += ` | Còn ${avail} phòng`;
           return line;
         }).join('\n');
-        return { reply: `💰 Bảng giá ${hotelName}:\n\n${roomList}\n\n✅ Giá tốt nhất khi đặt trực tiếp!\nBạn muốn đặt phòng nào ạ?`, intent: 'price' };
+        const header = productGroup === 'monthly_apartment'
+          ? `💰 Bảng giá thuê tháng ${hotelNameWithType}`
+          : `💰 Bảng giá ${hotelName}`;
+        const note = productGroup === 'monthly_apartment'
+          ? `\n\n📦 Đã bao gồm: bếp riêng, máy giặt, điện nước, wifi`
+          : '\n\n✅ Giá tốt nhất khi đặt trực tiếp!';
+        return { reply: `${header}:\n\n${roomList}${note}\nAnh/chị cần tư vấn thêm gì không ạ?`, intent: 'price' };
       }
       return null;
     }
 
     case 'rooms': {
       if (rooms.length > 0) {
+        const unit = rentalUnit;
         const roomList = rooms.map((r: any) => {
-          let line = `🏨 ${r.name} — ${r.base_price?.toLocaleString('vi-VN')}₫/đêm | ${r.max_guests} khách`;
+          let line = `🏨 ${r.name} — ${r.base_price?.toLocaleString('vi-VN')}₫/${unit} | ${r.max_guests} khách`;
           if (r.bed_type) line += ` | ${r.bed_type}`;
           return line;
         }).join('\n');
@@ -925,19 +934,49 @@ export async function smartReplyWithSender(
     useNewRouter = !!f.new_router;
   } catch {}
 
-  // v7.2: Monthly rental query guard — user hỏi thuê tháng nhưng ta chỉ có thuê đêm
+  // v7.3: Smart rental intent matching (thuê tháng vs đêm)
+  // Bot biết hotel này thuộc nhóm gì → reply phù hợp
   try {
-    const { isMonthlyRentalQuery, getMeta } = require('./property-type-meta');
-    if (isMonthlyRentalQuery(msg)) {
-      const { getProfile } = require('./hotel-knowledge');
-      const prof = getProfile(hid);
-      const meta = prof?.property_type ? getMeta(prof.property_type) : null;
-      const typeLabel = meta?.label_vi || 'cơ sở lưu trú';
-      const reply = `Dạ bên em là **${typeLabel}** cho thuê **theo đêm** (giống khách sạn), không có gói thuê dài hạn theo tháng ạ 🙏\n\nNếu anh/chị cần ở từ 1 tuần trở lên, em có thể tư vấn giá ưu đãi cho stay dài ngày. Anh/chị cần ở bao nhiêu ngày ạ?`;
-      if (senderId) saveMessage(senderId, pid, 'bot', reply, 'monthly_decline');
-      return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'monthly_decline' };
+    const { detectRentalIntent, classifyProduct, formatPriceWithUnit } = require('./product-taxonomy');
+    const { getProfile, getRooms } = require('./hotel-knowledge');
+    const userIntent = detectRentalIntent(msg);
+    const prof = getProfile(hid);
+
+    if (userIntent !== 'unknown' && prof?.property_type) {
+      const classification = classifyProduct(prof.property_type);
+      const rooms = getRooms(hid);
+      const minPrice = rooms.length > 0 ? Math.min(...rooms.map((r: any) => r.price_weekday || Infinity).filter((p: any) => p !== Infinity)) : 0;
+
+      // User wants MONTHLY + hotel is monthly_apartment → match!
+      if (userIntent === 'monthly' && classification.group === 'monthly_apartment') {
+        const priceStr = minPrice ? formatPriceWithUnit(minPrice, classification) : 'giá liên hệ';
+        const services = (classification.included_services || []).join(' + ');
+        const reply = `Dạ đúng rồi ạ! Bên em là **${classification.label_vi} ${prof.name_canonical}** thuê theo THÁNG 😊\n\n` +
+          `💰 Giá từ: **${priceStr}**\n` +
+          `📦 Đã bao gồm: ${services}\n` +
+          `📍 ${[prof.address, prof.district, prof.city].filter(Boolean).join(', ')}\n\n` +
+          `Anh/chị cần thuê từ tháng nào và bao nhiêu tháng ạ?`;
+        if (senderId) saveMessage(senderId, pid, 'bot', reply, 'monthly_match');
+        return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'monthly_match' };
+      }
+
+      // User wants MONTHLY + hotel is nightly_stay → honest mismatch
+      if (userIntent === 'monthly' && classification.group === 'nightly_stay') {
+        const reply = `Dạ bên em là **${classification.label_vi} ${prof.name_canonical}** thuê theo ĐÊM (giống khách sạn), không có gói thuê tháng ạ 🙏\n\n` +
+          `Nếu anh/chị cần căn hộ thuê tháng, em có thể giới thiệu hệ thống **Căn hộ dịch vụ** của bên em — có bếp, máy giặt, điện nước bao trọn. Anh/chị muốn tham khảo không ạ?`;
+        if (senderId) saveMessage(senderId, pid, 'bot', reply, 'mismatch_monthly');
+        return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'mismatch_monthly' };
+      }
+
+      // User wants NIGHTLY + hotel is monthly_apartment → honest mismatch
+      if (userIntent === 'nightly' && classification.group === 'monthly_apartment') {
+        const reply = `Dạ bên em là **${classification.label_vi} ${prof.name_canonical}** cho thuê theo THÁNG (1 tháng trở lên), không phải thuê đêm ạ 🙏\n\n` +
+          `Nếu anh/chị cần khách sạn thuê đêm, em có thể giới thiệu hệ thống **Khách sạn/Homestay** của bên em. Anh/chị muốn tham khảo không ạ?`;
+        if (senderId) saveMessage(senderId, pid, 'bot', reply, 'mismatch_nightly');
+        return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'mismatch_nightly' };
+      }
     }
-  } catch {}
+  } catch (e) { console.warn('[taxonomy] fail:', (e as any)?.message); }
 
   if (useNewRouter && senderId) {
     return await dispatchV6({ msg, hid, pid, senderId, senderName, t0 });

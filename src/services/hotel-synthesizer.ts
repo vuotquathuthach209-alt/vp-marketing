@@ -110,11 +110,27 @@ YÊU CẦU OUTPUT:
 - Giá: nếu raw có price thì dùng, không thì 0.
 - Không bịa thông tin. Nếu thiếu → để undefined.
 
-VỀ property_type và rental_type:
-- property_type: chọn loại hình lưu trú thực sự của cơ sở
-- rental_type: đa số "per_night" (thuê đêm, giống khách sạn). "per_hour" khi hotel chấp nhận thuê giờ. "per_month" RẤT HIẾM — chỉ khi có giá tháng rõ ràng. "mixed" khi có cả đêm + giờ.
-- NẾU property_type="apartment" VÀ có checkIn/checkOut time + giá theo đêm → đây là **Căn hộ dịch vụ (Serviced Apartment)** thuê NGẮN HẠN, rental_type="per_night", KHÔNG PHẢI căn hộ thuê tháng.
-- Trong ai_summary_vi, nếu là apartment thuê đêm: nói RÕ "căn hộ dịch vụ thuê theo đêm" để tránh hiểu lầm căn hộ thuê tháng.
+VỀ property_type và rental_type (QUAN TRỌNG — theo model KD Sonder):
+
+Sonder có 2 NHÓM SẢN PHẨM KHÁC BIỆT:
+1. **property_type="apartment"** = **Căn hộ dịch vụ thuê THÁNG** (long-term rental)
+   - Đặc điểm: full bếp, máy giặt riêng, điện nước bao trọn
+   - Target: expat, freelancer, người chuyển công tác
+   - rental_type = "per_month"
+   - Giá thường 3-10 triệu/tháng
+   - URL: /homestay trên website
+   - ai_summary_vi PHẢI nói: "căn hộ dịch vụ cho thuê theo THÁNG"
+
+2. **property_type="homestay" | "hotel" | "villa" | "resort" | "guesthouse"** = **Thuê theo ĐÊM** (short-term)
+   - Target: khách du lịch
+   - rental_type = "per_night"
+   - Giá thường 400k-2M/đêm
+   - URL: /khach-san
+   - ai_summary_vi PHẢI nói: "thuê theo đêm"
+
+KHÔNG NHẦM: Sonder "apartment" KHÔNG phải serviced short-term hotel. Là căn hộ cho thuê dài hạn theo tháng (kèm bếp, giặt, điện nước).
+
+Luôn PRESERVE property_type theo input. Suy luận rental_type từ property_type.
 
 SCHEMA JSON output:
 {
@@ -292,9 +308,12 @@ export async function synthesizeHotel(raw: OtaRawHotel): Promise<{
   if (raw.property_type && typeof raw.property_type === 'string') {
     parsed.property_type = raw.property_type.toLowerCase();
   }
-  // Nếu có property_type nhưng Gemini không set rental_type, infer theo type
-  if (parsed.property_type && !parsed.rental_type) {
-    parsed.rental_type = 'per_night';
+  // v7.3: rental_type infer theo product-taxonomy (KHÔNG để Gemini tự chọn)
+  // apartment = thuê THÁNG, others = thuê ĐÊM
+  if (parsed.property_type) {
+    const { classifyProduct } = require('./product-taxonomy');
+    const c = classifyProduct(parsed.property_type);
+    parsed.rental_type = c.rental_type;
   }
 
   return { ok: true, data: parsed as SynthesizedHotel, retried };
