@@ -98,44 +98,37 @@ export interface ClassifierResult {
   reasoning?: string;        // debug
 }
 
-const CLASSIFIER_SYSTEM = `Bạn là biên tập viên phân loại tin cho ngành du lịch & khách sạn Việt Nam.
+const CLASSIFIER_SYSTEM = `Bạn phân loại tin cho ngành du lịch/khách sạn VN. Trả JSON CÓ ĐÚNG 5 TRƯỜNG, KHÔNG THIẾU TRƯỜNG NÀO.
 
-Nhiệm vụ: đọc 1 tin tức → phân loại theo 5 tiêu chí, TRẢ JSON CHÍNH XÁC.
+Bắt buộc output đủ 5 trường: relevant, impact, political_risk, region, angle_hint.
 
-Tiêu chí:
-1. relevant: tin này có tác động đến HÀNH VI ĐẶT PHÒNG / DU LỊCH / HÀNG KHÔNG không?
-   (ví dụ: biến động giá vé, huỷ chuyến, thiên tai, dịch bệnh, xu hướng du khách, chính sách visa, v.v.)
-2. impact: 0..1, mức độ tác động tới quyết định đặt phòng (0=không, 1=rất lớn).
-3. political_risk: 0..1, mức độ CHÍNH TRỊ/NHẠY CẢM của tin.
-   - 0-0.2: thuần factual (thời tiết, xu hướng, số liệu)
-   - 0.3-0.4: có yếu tố bối cảnh nhưng vẫn trung lập (ví dụ "chiến tranh X → khách chuyển sang Y")
-   - 0.5+: đi sâu vào chính trị, cáo buộc, tên đảng phái/lãnh đạo
-4. region: khu vực bị ảnh hưởng (ngắn, tiếng Việt, ví dụ "Đông Nam Á", "Trung Đông", "Việt Nam").
-5. angle_hint: góc nhìn KHÁCH SẠN có thể viết (≤ 20 từ, tập trung vào hành vi du khách).
+Ý nghĩa:
+- relevant (true/false): tin có tác động tới ĐẶT PHÒNG / DU LỊCH / HÀNG KHÔNG?
+- impact (0..1): mức độ tác động.
+- political_risk (0..1): 0-0.2 thuần factual, 0.3-0.4 trung lập có bối cảnh, ≥0.5 chính trị.
+- region: khu vực (VN ngắn, ví dụ "Trung Đông", "Đông Nam Á", "Việt Nam").
+- angle_hint: góc nhìn khách sạn ≤ 20 từ.
 
-CẤM: đưa quan điểm cá nhân, chỉ trích, phân tích chính trị.
-Chỉ trả đúng JSON, không markdown, không text khác.`;
+LUÔN trả CẢ 5 trường dù relevant=false.
+CẤM: markdown, text ngoài JSON, bình luận chính trị.`;
 
 export async function classifyWithGemini(title: string, body: string | null): Promise<ClassifierResult | null> {
-  const user = `Tiêu đề: ${title}
+  const user = `Phân loại tin sau, trả JSON đúng 5 trường:
+
+Tiêu đề: ${title}
 ${body ? 'Nội dung: ' + body.slice(0, 800) : ''}
 
-Trả JSON schema:
-{
-  "relevant": boolean,
-  "impact": number,
-  "political_risk": number,
-  "region": string,
-  "angle_hint": string
-}`;
+Output JSON (không markdown, không text thêm):
+{"relevant":true,"impact":0.7,"political_risk":0.2,"region":"Trung Đông","angle_hint":"..."}`;
 
   try {
     const result = await smartCascade({
       system: CLASSIFIER_SYSTEM,
       user,
-      maxTokens: 800,         // tăng để tránh truncate mid-JSON
+      maxTokens: 400,
       temperature: 0.1,
-      json: true,
+      // KHÔNG dùng json:true — Gemini JSON mode đôi khi truncate giữa field.
+      // Prompt-based JSON vẫn đủ, cộng với tolerant parser bên dưới.
     });
     // Gemini đôi khi trả prose prefix / markdown fence. Extract JSON block.
     let jsonText = result.text.trim();
@@ -182,9 +175,8 @@ Trả JSON schema:
     const result = await smartCascade({
       system: CLASSIFIER_SYSTEM,
       user,
-      maxTokens: 800,
+      maxTokens: 400,
       temperature: 0.1,
-      json: true,
     });
     const raw = result.text;
     let jsonText = raw.trim();
