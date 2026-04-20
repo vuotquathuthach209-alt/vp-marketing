@@ -572,6 +572,21 @@ safeAddColumn('hotel_profile', 'property_type', 'TEXT');
 // v7.2: rental_type (per_night | per_hour | per_month | mixed)
 safeAddColumn('hotel_profile', 'rental_type', 'TEXT', `'per_night'`);
 
+// v7.3: Sonder Business structure
+safeAddColumn('hotel_profile', 'product_group', 'TEXT'); // 'short_stay' | 'long_term_apartment'
+safeAddColumn('hotel_profile', 'scraped_data', 'TEXT');  // JSON blob for extra SSR fields
+// Apartment-specific fields
+safeAddColumn('hotel_profile', 'monthly_price_from', 'INTEGER');
+safeAddColumn('hotel_profile', 'monthly_price_to', 'INTEGER');
+safeAddColumn('hotel_profile', 'min_stay_months', 'INTEGER');
+safeAddColumn('hotel_profile', 'deposit_months', 'INTEGER');
+safeAddColumn('hotel_profile', 'utilities_included', 'INTEGER');
+safeAddColumn('hotel_profile', 'full_kitchen', 'INTEGER');
+safeAddColumn('hotel_profile', 'washing_machine', 'INTEGER');
+// Scraper freshness tracking
+safeAddColumn('hotel_profile', 'scraped_at', 'INTEGER');
+safeAddColumn('hotel_profile', 'data_source', 'TEXT'); // 'scraper' | 'api' | 'manual'
+
 // v7: Hotel Knowledge Layer — AI-synthesized bot-ready data
 db.exec(`
 CREATE TABLE IF NOT EXISTS hotel_profile (

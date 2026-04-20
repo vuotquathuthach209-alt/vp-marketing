@@ -70,26 +70,41 @@ async function realQuery<T = any>(sql: string, params: any[] = []): Promise<T[]>
 }
 
 /**
- * Main entry — đọc OTA hotels qua public API (HTTP GET only).
- *
- * Strategy (theo thứ tự):
- *   1. Real OTA API nếu available (https://103.153.73.97/api/hotels)
- *   2. DB direct nếu có executor (chưa dùng, giữ để tương lai)
- *   3. Mock data từ mkt_hotels_cache (dev/fallback)
+ * Main entry — đọc OTA hotels, source of truth priority:
+ *   1. Web SSR scraper (sondervn.com) — phản ánh đúng DB với FULL fields (monthly price, services)
+ *   2. Public API /api/hotels — fallback nếu scraper fail
+ *   3. DB direct (future)
+ *   4. Mock data (dev only)
  */
 export async function readOtaHotels(opts: { limit?: number; since?: number } = {}): Promise<OtaRawHotel[]> {
-  // Phase 2: REAL API-based (preferred)
+  // Phase 2.1 (NEW): Web SSR scraper — source of truth
+  try {
+    const { scrapeAllHotels, healthCheck } = require('./sondervn-scraper');
+    const h = await healthCheck();
+    if (h.ok) {
+      console.log(`[ota-reader] scraper: ${h.apartments} apartments + ${h.hotels} hotels`);
+      const all = await scrapeAllHotels();
+      const limited = opts.limit ? all.slice(0, opts.limit) : all;
+      return limited;
+    } else {
+      console.warn('[ota-reader] scraper unhealthy:', h.error);
+    }
+  } catch (e: any) {
+    console.warn('[ota-reader] scraper fail:', e?.message);
+  }
+
+  // Phase 2: Fallback to public API
   try {
     const { listAllHotels, toOtaRawHotel, checkOtaApi } = require('./ota-api-client');
     const health = await checkOtaApi();
     if (health.ok) {
       const apiHotels = await listAllHotels({ perPage: opts.limit ? Math.min(opts.limit, 50) : 50 });
-      console.log(`[ota-reader] API returned ${apiHotels.length} hotels (total: ${health.hotels_total})`);
+      console.log(`[ota-reader] API fallback returned ${apiHotels.length} hotels`);
       const limited = opts.limit ? apiHotels.slice(0, opts.limit) : apiHotels;
       return limited.map(toOtaRawHotel);
     }
   } catch (e: any) {
-    console.warn('[ota-reader] API fail, fallback to mock/DB:', e?.message);
+    console.warn('[ota-reader] API fail:', e?.message);
   }
 
   // Phase 2b: DB direct query (future — khi có SSH/VPN access)

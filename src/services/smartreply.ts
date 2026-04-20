@@ -548,16 +548,39 @@ async function handleDeterministic(
     }
 
     case 'price': {
+      // v7.3: Ưu tiên scraped monthly price từ web SSR
+      try {
+        const { getProfile } = require('./hotel-knowledge');
+        const prof = getProfile(hotelId);
+        if (prof && productGroup === 'monthly_apartment' && prof.monthly_price_from) {
+          const priceRange = prof.monthly_price_to
+            ? `${prof.monthly_price_from.toLocaleString('vi-VN')}đ - ${prof.monthly_price_to.toLocaleString('vi-VN')}đ/tháng`
+            : `từ ${prof.monthly_price_from.toLocaleString('vi-VN')}đ/tháng`;
+
+          const services: string[] = [];
+          if (prof.full_kitchen) services.push('bếp đầy đủ');
+          if (prof.washing_machine) services.push('máy giặt riêng');
+          if (prof.utilities_included) services.push('điện nước bao trọn');
+          services.push('wifi');
+
+          const stay = prof.min_stay_months ? `📅 Tối thiểu ${prof.min_stay_months} tháng` : '';
+          const dep = prof.deposit_months ? `💳 Cọc ${prof.deposit_months} tháng` : '';
+          const extras = [stay, dep].filter(Boolean).join(' · ');
+
+          return {
+            reply: `💰 Giá thuê tháng **${hotelNameWithType}**:\n\n💰 ${priceRange}\n\n📦 Đã bao gồm: ${services.join(', ')}${extras ? '\n' + extras : ''}\n\nAnh/chị cần thuê từ tháng nào ạ?`,
+            intent: 'price',
+          };
+        }
+      } catch {}
+
+      // Fallback to room-based pricing
       if (rooms.length > 0) {
         const unit = rentalUnit;
         const roomList = rooms.map((r: any) => {
-          // Apartment monthly: estimate từ giá ngày × 8 (Sonder business rule)
           let priceStr: string;
           if (productGroup === 'monthly_apartment' && r.base_price < 1_000_000) {
-            const est = r.base_price * 8;
-            const low = (est / 1_000_000).toFixed(1);
-            const high = (est * 1.2 / 1_000_000).toFixed(1);
-            priceStr = `~${low}-${high} triệu/tháng`;
+            priceStr = `~${(r.base_price * 8 / 1_000_000).toFixed(1)} triệu/tháng (liên hệ báo giá)`;
           } else {
             priceStr = `${r.base_price?.toLocaleString('vi-VN')}₫/${unit}`;
           }
@@ -569,10 +592,7 @@ async function handleDeterministic(
         const header = productGroup === 'monthly_apartment'
           ? `💰 Bảng giá thuê tháng ${hotelNameWithType}`
           : `💰 Bảng giá ${hotelName}`;
-        const note = productGroup === 'monthly_apartment'
-          ? `\n\n📦 Đã bao gồm: bếp riêng, máy giặt, điện nước, wifi, dọn phòng định kỳ\n💡 Giá thực tế có thể thay đổi theo tháng thuê, inbox em báo chính xác nhé ạ.`
-          : '\n\n✅ Giá tốt nhất khi đặt trực tiếp!';
-        return { reply: `${header}:\n\n${roomList}${note}\n\nAnh/chị cần thuê từ tháng nào ạ?`, intent: 'price' };
+        return { reply: `${header}:\n\n${roomList}\n\nAnh/chị cần tư vấn thêm gì không ạ?`, intent: 'price' };
       }
       return null;
     }
@@ -974,22 +994,38 @@ export async function smartReplyWithSender(
 
       // User wants MONTHLY + hotel is monthly_apartment → match!
       if (userIntent === 'monthly' && classification.group === 'monthly_apartment') {
-        // minPrice < 1M → nghi ngờ là giá /đêm của OTA, ước lượng giá tháng qua scale (×8 theo website Sonder)
+        // Priority: scraped monthly_price_from/to (real from web SSR)
         let priceDisplay: string;
-        if (!minPrice || minPrice < 1_000_000) {
-          const estimated = minPrice > 0 ? minPrice * 8 : 0;
-          priceDisplay = estimated
-            ? `**~${Math.round(estimated / 100_000) / 10}-${Math.round(estimated * 1.2 / 100_000) / 10} triệu/tháng** (vui lòng inbox để báo giá chính xác)`
-            : 'Vui lòng inbox để em báo giá chính xác ạ';
+        if (prof.monthly_price_from && prof.monthly_price_to) {
+          priceDisplay = `**${prof.monthly_price_from.toLocaleString('vi-VN')}đ - ${prof.monthly_price_to.toLocaleString('vi-VN')}đ/tháng**`;
+        } else if (prof.monthly_price_from) {
+          priceDisplay = `**từ ${prof.monthly_price_from.toLocaleString('vi-VN')}đ/tháng**`;
+        } else if (minPrice && minPrice < 1_000_000) {
+          // Fallback estimation x8 (if scraper missed)
+          const est = minPrice * 8;
+          priceDisplay = `~${(est / 1_000_000).toFixed(1)} triệu/tháng (liên hệ báo giá chính xác)`;
         } else {
-          priceDisplay = `**${minPrice.toLocaleString('vi-VN')}₫/tháng**`;
+          priceDisplay = 'Vui lòng inbox để em báo giá chính xác';
         }
-        const services = (classification.included_services || []).join(' + ');
+
+        // Use scraped services if available
+        const scrapedServices: string[] = [];
+        if (prof.full_kitchen) scrapedServices.push('Bếp đầy đủ');
+        if (prof.washing_machine) scrapedServices.push('Máy giặt riêng');
+        if (prof.utilities_included) scrapedServices.push('Điện nước bao trọn');
+        if (prof.scraped_data?.accepts_sonder_escrow) scrapedServices.push('Chấp nhận Sonder Escrow');
+        const services = scrapedServices.length > 0
+          ? scrapedServices.join(' + ')
+          : (classification.included_services || []).join(' + ');
+
+        const stay = prof.min_stay_months ? `\n📅 Thuê tối thiểu: ${prof.min_stay_months} tháng` : '';
+        const deposit = prof.deposit_months ? `\n💳 Cọc: ${prof.deposit_months} tháng` : '';
+
         const reply = `Dạ đúng rồi ạ! Bên em là **${classification.label_vi} ${prof.name_canonical}** thuê theo THÁNG 😊\n\n` +
-          `💰 Giá từ: ${priceDisplay}\n` +
-          `📦 Đã bao gồm: ${services}\n` +
+          `💰 Giá: ${priceDisplay}\n` +
+          `📦 Đã bao gồm: ${services}${stay}${deposit}\n` +
           `📍 ${[prof.address, prof.district, prof.city].filter(Boolean).join(', ')}\n\n` +
-          `Anh/chị cần thuê từ tháng nào và bao nhiêu tháng ạ?`;
+          `Anh/chị cần thuê từ tháng nào ạ?`;
         if (senderId) saveMessage(senderId, pid, 'bot', reply, 'monthly_match');
         return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'monthly_match' };
       }

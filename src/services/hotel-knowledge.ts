@@ -130,6 +130,38 @@ export async function upsertKnowledge(
       .run(lat, lon, geohash, hotelId);
   }
 
+  // v7.3: Save scraped fields (product_group, monthly pricing, services)
+  const scraped = (data as any)._scraped;
+  if (scraped) {
+    db.prepare(
+      `UPDATE hotel_profile SET
+        product_group = ?,
+        monthly_price_from = ?,
+        monthly_price_to = ?,
+        min_stay_months = ?,
+        deposit_months = ?,
+        utilities_included = ?,
+        full_kitchen = ?,
+        washing_machine = ?,
+        scraped_data = ?,
+        scraped_at = ?,
+        data_source = 'scraper'
+       WHERE hotel_id = ?`
+    ).run(
+      scraped.product_group || null,
+      scraped.monthly_price_from || null,
+      scraped.monthly_price_to || null,
+      scraped.min_stay_months || null,
+      scraped.deposit_months || null,
+      scraped.utilities_included ? 1 : 0,
+      scraped.full_kitchen ? 1 : 0,
+      scraped.washing_machine ? 1 : 0,
+      JSON.stringify(scraped),
+      Date.now(),
+      hotelId,
+    );
+  }
+
   // 2. rooms — replace all for this hotel
   db.prepare(`DELETE FROM hotel_room_catalog WHERE hotel_id = ?`).run(hotelId);
   const roomInsert = db.prepare(
@@ -240,6 +272,10 @@ export function getProfile(mktHotelId: number): any {
   if (!row) return null;
   try { row.usp_top3 = JSON.parse(row.usp_top3 || '[]'); } catch { row.usp_top3 = []; }
   try { row.nearby_landmarks = row.nearby_landmarks ? JSON.parse(row.nearby_landmarks) : {}; } catch { row.nearby_landmarks = {}; }
+  try { row.scraped_data = row.scraped_data ? JSON.parse(row.scraped_data) : {}; } catch { row.scraped_data = {}; }
+  row.utilities_included = !!row.utilities_included;
+  row.full_kitchen = !!row.full_kitchen;
+  row.washing_machine = !!row.washing_machine;
   return row;
 }
 
