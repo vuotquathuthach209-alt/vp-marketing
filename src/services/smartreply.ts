@@ -752,6 +752,25 @@ async function ragReply(
       _systemSuffixes.delete(senderId);
     }
   }
+  // v7: inject Hotel Knowledge summary nếu đã synthesize
+  try {
+    const { hasKnowledge, getProfile, getRooms, getAmenities } = require('./hotel-knowledge');
+    if (hasKnowledge(hotelId)) {
+      const prof = getProfile(hotelId);
+      const rooms = getRooms(hotelId);
+      const amenities = getAmenities(hotelId);
+      const kbChunk = [
+        `--- HOTEL KNOWLEDGE (AI-synthesized) ---`,
+        `Tên: ${prof.name_canonical} | ${prof.city || ''} ${prof.district || ''}`,
+        prof.ai_summary_vi ? `Tóm tắt: ${prof.ai_summary_vi}` : '',
+        prof.usp_top3?.length ? `USP: ${prof.usp_top3.join(' | ')}` : '',
+        rooms.length ? `Phòng: ${rooms.map((r: any) => `${r.display_name_vi} — ${r.price_weekday.toLocaleString('vi-VN')}đ/đêm`).join('; ')}` : '',
+        amenities.length ? `Tiện nghi: ${amenities.map((a: any) => a.name_vi).join(', ')}` : '',
+        `--- HẾT ---`,
+      ].filter(Boolean).join('\n');
+      systemPrompt += '\n\n' + kbChunk;
+    }
+  } catch {}
   try {
     const hotelRow = db.prepare(`SELECT industry FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
     const industryId = hotelRow?.industry || 'hotel';
@@ -1021,8 +1040,20 @@ async function dispatchV6(ctx: {
     // Price-limit filter shortcut: khi intent=price_q + có price_limit, trả lời nhanh từ DB
     if (router.intent === 'price_q' && router.slots.price_limit) {
       try {
-        const { rooms } = getHotelCache(hid);
-        const shortcut = priceFilterReply(router.slots.price_limit, rooms as any);
+        // v7: Ưu tiên hotel_knowledge (AI-synthesized), fallback mkt_rooms_cache
+        const { hasKnowledge, getRooms } = require('./hotel-knowledge');
+        let rooms: any[];
+        if (hasKnowledge(hid)) {
+          const kbRooms = getRooms(hid);
+          rooms = kbRooms.map((r: any) => ({
+            name: r.display_name_vi,
+            base_price: r.price_weekday,
+            hourly_price: r.price_hourly,
+          }));
+        } else {
+          rooms = getHotelCache(hid).rooms as any;
+        }
+        const shortcut = priceFilterReply(router.slots.price_limit, rooms);
         if (shortcut) {
           reply = shortcut;
           intentLabel = 'price_filter';
