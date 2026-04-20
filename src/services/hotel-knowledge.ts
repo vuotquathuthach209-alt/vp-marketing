@@ -74,10 +74,10 @@ export async function upsertKnowledge(
   db.prepare(
     `INSERT INTO hotel_profile (
       hotel_id, ota_hotel_id, name_canonical, name_en, city, district, address,
-      latitude, longitude, geohash, phone, star_rating, target_segment, property_type, brand_voice,
+      latitude, longitude, geohash, phone, star_rating, target_segment, property_type, rental_type, brand_voice,
       ai_summary_vi, ai_summary_en, usp_top3, nearby_landmarks,
       manual_override, synthesized_at, synthesized_by, version, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
     ON CONFLICT(hotel_id) DO UPDATE SET
       ota_hotel_id = excluded.ota_hotel_id,
       name_canonical = excluded.name_canonical,
@@ -92,6 +92,7 @@ export async function upsertKnowledge(
       star_rating = excluded.star_rating,
       target_segment = excluded.target_segment,
       property_type = excluded.property_type,
+      rental_type = excluded.rental_type,
       brand_voice = excluded.brand_voice,
       ai_summary_vi = excluded.ai_summary_vi,
       ai_summary_en = excluded.ai_summary_en,
@@ -115,6 +116,7 @@ export async function upsertKnowledge(
     data.star_rating || null,
     data.target_segment || null,
     data.property_type || null,
+    data.rental_type || 'per_night',
     data.brand_voice || null,
     data.ai_summary_vi,
     data.ai_summary_en || null,

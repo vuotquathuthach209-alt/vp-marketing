@@ -569,6 +569,8 @@ safeAddColumn('conversation_memory', 'embedding', 'BLOB');
 
 // v7.1: property_type (apartment | homestay | hotel | resort | villa | guesthouse)
 safeAddColumn('hotel_profile', 'property_type', 'TEXT');
+// v7.2: rental_type (per_night | per_hour | per_month | mixed)
+safeAddColumn('hotel_profile', 'rental_type', 'TEXT', `'per_night'`);
 
 // v7: Hotel Knowledge Layer — AI-synthesized bot-ready data
 db.exec(`

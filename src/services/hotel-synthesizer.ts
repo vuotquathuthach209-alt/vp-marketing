@@ -57,6 +57,7 @@ export interface SynthesizedHotel {
   star_rating?: number;
   target_segment?: string;        // 'family'|'couple'|'business'|'backpacker'|'mixed'
   property_type?: string;         // 'apartment'|'homestay'|'hotel'|'resort'|'villa'|'guesthouse'|'hostel'
+  rental_type?: string;           // 'per_night'|'per_hour'|'per_month'|'mixed'
   brand_voice?: string;           // 'formal'|'friendly'|'luxury'|'casual'
   usp_top3: string[];             // ["Gần sân bay 1.5km", "Bếp trong phòng", ...]
   nearby_landmarks?: {
@@ -109,6 +110,12 @@ YÊU CẦU OUTPUT:
 - Giá: nếu raw có price thì dùng, không thì 0.
 - Không bịa thông tin. Nếu thiếu → để undefined.
 
+VỀ property_type và rental_type:
+- property_type: chọn loại hình lưu trú thực sự của cơ sở
+- rental_type: đa số "per_night" (thuê đêm, giống khách sạn). "per_hour" khi hotel chấp nhận thuê giờ. "per_month" RẤT HIẾM — chỉ khi có giá tháng rõ ràng. "mixed" khi có cả đêm + giờ.
+- NẾU property_type="apartment" VÀ có checkIn/checkOut time + giá theo đêm → đây là **Căn hộ dịch vụ (Serviced Apartment)** thuê NGẮN HẠN, rental_type="per_night", KHÔNG PHẢI căn hộ thuê tháng.
+- Trong ai_summary_vi, nếu là apartment thuê đêm: nói RÕ "căn hộ dịch vụ thuê theo đêm" để tránh hiểu lầm căn hộ thuê tháng.
+
 SCHEMA JSON output:
 {
   "name_canonical": "<tên chuẩn>",
@@ -125,6 +132,7 @@ SCHEMA JSON output:
   "target_segment": "family|couple|business|backpacker|mixed",
   "property_type": "apartment|homestay|hotel|resort|villa|guesthouse|hostel",
   "brand_voice": "formal|friendly|luxury|casual",
+  "rental_type": "per_night|per_hour|per_month|mixed",
   "usp_top3": ["...", "...", "..."],
   "nearby_landmarks": { "airport_km": <num>, "beach_km": <num>, "center_km": <num> },
   "rooms": [

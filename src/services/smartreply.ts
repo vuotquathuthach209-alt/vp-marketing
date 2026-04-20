@@ -461,11 +461,11 @@ async function handleDeterministic(
       const kbRooms = getRooms(hotelId);
       if (prof?.name_canonical) hotelName = prof.name_canonical;
       if (prof?.property_type) {
-        const PT_VI: Record<string, string> = {
-          apartment: 'Căn hộ dịch vụ', homestay: 'Homestay', hotel: 'Khách sạn',
-          resort: 'Resort', villa: 'Villa', guesthouse: 'Nhà nghỉ', hostel: 'Hostel',
-        };
-        propertyTypeLabel = PT_VI[prof.property_type] || prof.property_type;
+        try {
+          const { getMeta } = require('./property-type-meta');
+          const meta = getMeta(prof.property_type);
+          propertyTypeLabel = meta?.label_vi || prof.property_type;
+        } catch {}
       }
       if (kbRooms && kbRooms.length > 0) {
         rooms = kbRooms.map((r: any) => ({
@@ -923,6 +923,20 @@ export async function smartReplyWithSender(
     const row = db.prepare(`SELECT features FROM mkt_hotels WHERE id = ?`).get(hid) as any;
     const f = row?.features ? JSON.parse(row.features || '{}') : {};
     useNewRouter = !!f.new_router;
+  } catch {}
+
+  // v7.2: Monthly rental query guard — user hỏi thuê tháng nhưng ta chỉ có thuê đêm
+  try {
+    const { isMonthlyRentalQuery, getMeta } = require('./property-type-meta');
+    if (isMonthlyRentalQuery(msg)) {
+      const { getProfile } = require('./hotel-knowledge');
+      const prof = getProfile(hid);
+      const meta = prof?.property_type ? getMeta(prof.property_type) : null;
+      const typeLabel = meta?.label_vi || 'cơ sở lưu trú';
+      const reply = `Dạ bên em là **${typeLabel}** cho thuê **theo đêm** (giống khách sạn), không có gói thuê dài hạn theo tháng ạ 🙏\n\nNếu anh/chị cần ở từ 1 tuần trở lên, em có thể tư vấn giá ưu đãi cho stay dài ngày. Anh/chị cần ở bao nhiêu ngày ạ?`;
+      if (senderId) saveMessage(senderId, pid, 'bot', reply, 'monthly_decline');
+      return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'monthly_decline' };
+    }
   } catch {}
 
   if (useNewRouter && senderId) {
