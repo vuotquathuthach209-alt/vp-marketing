@@ -97,6 +97,27 @@ export interface SynthesizedHotel {
   };
 }
 
+// v7.4: Compact prompt — data đã được phễu classify sạch, Gemini chỉ làm creative
+const CREATIVE_ONLY_PROMPT = `Bạn viết nội dung marketing tiếng Việt cho chatbot khách sạn.
+
+Tôi đã phân loại + chuẩn hóa data rồi. BẠN CHỈ CẦN viết:
+1. ai_summary_vi: 2-3 câu tiếng Việt tự nhiên, nêu điểm nổi bật + phù hợp ai.
+2. ai_summary_en: 2-3 câu English equivalent.
+3. usp_top3: 3 điểm bán hàng nổi bật (mỗi dòng ngắn gọn, không dài).
+4. room_display_names: array optional, đổi tên phòng kỹ thuật → tên VN thân thiện.
+5. brand_voice: formal | friendly | luxury | casual
+
+INPUT JSON đã được phễu xử lý sạch (property_type, pricing, services, tier, segment đã xác định).
+BẠN KHÔNG CẦN phán đoán property_type, giá, hay dịch vụ — DÙNG Y NGUYÊN.
+
+OUTPUT JSON strict:
+{
+  "ai_summary_vi": "...",
+  "ai_summary_en": "...",
+  "usp_top3": ["...", "...", "..."],
+  "brand_voice": "friendly"
+}`;
+
 const SYSTEM_PROMPT = `Bạn là AI chuyên tổng hợp dữ liệu khách sạn từ OTA thành structured data cho chatbot.
 
 NHIỆM VỤ: Đọc dữ liệu thô từ OTA (JSON bất kỳ schema), trích xuất và chuẩn hóa theo schema bên dưới.
@@ -262,15 +283,30 @@ export async function synthesizeHotel(raw: OtaRawHotel): Promise<{
   error?: string;
   retried?: boolean;
 }> {
-  const user = buildPrompt(raw);
+  // v7.4: Qua phễu trước — structured input sạch, Gemini chỉ làm creative
+  let usingFunnel = false;
+  let structured: any = null;
+  let user: string;
+  let system: string;
+  try {
+    const { runFunnel, buildGeminiPromptFromStructured } = require('./data-funnel');
+    structured = runFunnel(raw);
+    if (structured._issues?.length > 0) {
+      console.log(`[funnel] #${structured.id} issues: ${structured._issues.join(', ')}`);
+    }
+    user = `${buildGeminiPromptFromStructured(structured)}\n\nViết creative text (JSON strict, no markdown):`;
+    system = CREATIVE_ONLY_PROMPT;
+    usingFunnel = true;
+  } catch (e: any) {
+    console.warn('[funnel] fail, fallback to full Gemini prompt:', e?.message);
+    user = buildPrompt(raw);
+    system = SYSTEM_PROMPT;
+  }
   let raw_text: string;
   let retried = false;
 
   try {
-    // PRIMARY: Gemini via router (task='etl_synthesize')
-    // Router config: provider=google model=gemini-2.5-flash
-    // Nếu Gemini 429/timeout, router tự fallback sang ollama (Qwen 2.5-7B) per FALLBACK_BY_TIER
-    raw_text = await generate({ task: 'etl_synthesize', system: SYSTEM_PROMPT, user });
+    raw_text = await generate({ task: 'etl_synthesize', system, user });
   } catch (e: any) {
     return { ok: false, error: `generate fail: ${e?.message || e}` };
   }
@@ -304,27 +340,105 @@ export async function synthesizeHotel(raw: OtaRawHotel): Promise<{
   const v = validate(parsed);
   if (!v.valid) return { ok: false, error: `validation: ${v.reason}`, retried };
 
-  // PRESERVE OTA authoritative fields — không để Gemini hallucinate override
-  if (raw.property_type && typeof raw.property_type === 'string') {
-    parsed.property_type = raw.property_type.toLowerCase();
-  }
-  // v7.3: rental_type infer theo product-taxonomy (KHÔNG để Gemini tự chọn)
-  if (parsed.property_type) {
-    const { classifyProduct } = require('./product-taxonomy');
-    const c = classifyProduct(parsed.property_type);
-    parsed.rental_type = c.rental_type;
-  }
+  // v7.4: MERGE structured (rule-based) INTO Gemini output — structured WINS
+  if (usingFunnel && structured) {
+    // Gemini only contributed: ai_summary_vi/en, usp_top3, brand_voice, room_display_names
+    parsed.name_canonical = structured.name;
+    parsed.property_type = structured.property_type;
+    parsed.rental_type = structured.rental_type;
+    parsed.target_segment = structured.target_segment_hint;
+    parsed.address = structured.address;
+    parsed.city = structured.city;
+    parsed.district = structured.district;
+    parsed.latitude = structured.latitude;
+    parsed.longitude = structured.longitude;
+    parsed.phone = structured.phone;
+    parsed.star_rating = structured.star_rating;
 
-  // v7.3: CARRY THROUGH _scraped fields từ raw (không bị Gemini drop)
-  if ((raw as any)._scraped) {
-    (parsed as any)._scraped = (raw as any)._scraped;
+    // Rooms derived from pricing (apartment) or raw rooms (short stay)
+    parsed.rooms = [];
+    if (structured.product_group === 'long_term_apartment' && structured.pricing.monthly) {
+      parsed.rooms = [
+        {
+          room_key: `${structured.id}_monthly`,
+          display_name_vi: `Phòng thuê tháng ${structured.name}`,
+          display_name_en: `Monthly apartment ${structured.name}`,
+          price_weekday: structured.pricing.monthly.min,
+          price_weekend: structured.pricing.monthly.max,
+          max_guests: 2,
+          description_vi: `Căn hộ dịch vụ cho thuê tháng. ${structured.included_services.join(', ')}.`,
+        },
+      ];
+    } else if (structured.pricing.daily) {
+      const rawRooms = (structured._raw?.rooms || []);
+      parsed.rooms = rawRooms.length > 0
+        ? rawRooms.map((r: any) => ({
+            room_key: String(r.id || r.name || Math.random()),
+            display_name_vi: r.name || 'Phòng',
+            price_weekday: r.price || structured.pricing.daily!.min,
+            price_weekend: r.price_weekend || r.price || structured.pricing.daily!.min,
+            price_hourly: r.price_hourly,
+            max_guests: r.max_guests || 2,
+            bed_config: r.bed_type,
+          }))
+        : [
+            {
+              room_key: `${structured.id}_default`,
+              display_name_vi: `Phòng ${structured.name}`,
+              price_weekday: structured.pricing.daily.min,
+              price_weekend: structured.pricing.daily.max || structured.pricing.daily.min,
+              max_guests: 2,
+            },
+          ];
+    }
+
+    // Amenities from structured.included_services + flags
+    parsed.amenities = structured.included_services.map((s: string) => ({
+      category: 'general',
+      name_vi: s,
+      free: true,
+    }));
+
+    // Policies from rules
+    parsed.policies = {
+      checkin_time: structured.rules.checkin_time,
+      checkout_time: structured.rules.checkout_time,
+      deposit_percent: structured.rules.deposit_months ? 100 : undefined,
+    };
+
+    // Keep _scraped for legacy code paths
+    (parsed as any)._scraped = {
+      product_group: structured.product_group,
+      monthly_price_from: structured.pricing.monthly?.min,
+      monthly_price_to: structured.pricing.monthly?.max,
+      daily_price: structured.pricing.daily?.min,
+      min_stay_months: structured.rules.min_stay_months,
+      deposit_months: structured.rules.deposit_months,
+      utilities_included: structured.flags.utilities_included,
+      full_kitchen: structured.flags.has_kitchen,
+      washing_machine: structured.flags.has_laundry,
+      accepts_sonder_escrow: structured.flags.accepts_escrow,
+      included_services: structured.included_services,
+      property_tier: structured.property_tier,
+      issues: structured._issues,
+    };
+  } else {
+    // Fallback: old logic
+    if (raw.property_type && typeof raw.property_type === 'string') {
+      parsed.property_type = raw.property_type.toLowerCase();
+    }
+    if (parsed.property_type) {
+      const { classifyProduct } = require('./product-taxonomy');
+      const c = classifyProduct(parsed.property_type);
+      parsed.rental_type = c.rental_type;
+    }
+    if ((raw as any)._scraped) (parsed as any)._scraped = (raw as any)._scraped;
+    if (raw.address) parsed.address = raw.address;
+    if (raw.city) parsed.city = raw.city;
+    if (raw.district) parsed.district = raw.district;
+    if (raw.latitude) parsed.latitude = raw.latitude;
+    if (raw.longitude) parsed.longitude = raw.longitude;
   }
-  // Preserve authoritative address
-  if (raw.address) parsed.address = raw.address;
-  if (raw.city) parsed.city = raw.city;
-  if (raw.district) parsed.district = raw.district;
-  if (raw.latitude) parsed.latitude = raw.latitude;
-  if (raw.longitude) parsed.longitude = raw.longitude;
 
   return { ok: true, data: parsed as SynthesizedHotel, retried };
 }

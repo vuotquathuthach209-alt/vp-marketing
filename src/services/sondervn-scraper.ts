@@ -138,24 +138,77 @@ function extractJsonArray(html: string, key: string): any[] | null {
   }
 }
 
-export async function scrapeApartments(): Promise<ScrapedApartment[]> {
-  const html = await fetchHtml('/homestay');
-  const arr = extractJsonArray(html, 'initialApartments');
-  if (!arr) {
-    console.warn('[scraper] initialApartments not found in /homestay');
-    return [];
+// Pagination config
+const MAX_PAGES = 50;              // safety cap: 50 pages × 20/page = 1000 hotels
+const RATE_LIMIT_MS = 1000;        // 1 request/second
+const DEFAULT_PER_PAGE = 20;
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+/**
+ * Scrape paginated list. Next.js SSR sẽ trả khác nhau cho mỗi page
+ * khi có nhiều hotels (> 1 page).
+ *
+ * Strategy: scrape page=1, check có pagination không, loop đến page cuối.
+ * Deduplicate theo ID phòng khi page=N trả cùng data (1-hotel edge case).
+ */
+async function scrapePaginated<T extends { id: string }>(
+  pathBase: string,
+  jsonKey: string,
+  onPage?: (page: number, items: T[]) => void,
+): Promise<T[]> {
+  const seenIds = new Set<string>();
+  const all: T[] = [];
+
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const url = `${pathBase}?page=${page}`;
+    let items: T[] = [];
+    try {
+      const html = await fetchHtml(url);
+      const arr = extractJsonArray(html, jsonKey) as T[] | null;
+      items = arr || [];
+    } catch (e: any) {
+      console.warn(`[scraper] page ${page} ${pathBase} fail:`, e?.message);
+      break;
+    }
+
+    // Deduplicate by ID
+    let newCount = 0;
+    for (const item of items) {
+      if (item.id && !seenIds.has(String(item.id))) {
+        seenIds.add(String(item.id));
+        all.push(item);
+        newCount++;
+      }
+    }
+
+    if (onPage) onPage(page, items);
+
+    // Stop conditions:
+    // - Page trả empty array
+    // - Page trả data nhưng KHÔNG có ID mới (chỉ duplicate)
+    //   → nghĩa là web không thực sự paginate hoặc đã hết
+    if (items.length === 0 || newCount === 0) {
+      break;
+    }
+
+    // Rate limit
+    if (page < MAX_PAGES) await sleep(RATE_LIMIT_MS);
   }
-  return arr as ScrapedApartment[];
+
+  return all;
+}
+
+export async function scrapeApartments(): Promise<ScrapedApartment[]> {
+  return scrapePaginated<ScrapedApartment>('/homestay', 'initialApartments',
+    (p, items) => console.log(`[scraper] /homestay page ${p}: ${items.length} apartments`));
 }
 
 export async function scrapeHotels(): Promise<ScrapedHotel[]> {
-  const html = await fetchHtml('/khach-san');
-  const arr = extractJsonArray(html, 'initialHotels');
-  if (!arr) {
-    console.warn('[scraper] initialHotels not found in /khach-san');
-    return [];
-  }
-  return arr as ScrapedHotel[];
+  return scrapePaginated<ScrapedHotel>('/khach-san', 'initialHotels',
+    (p, items) => console.log(`[scraper] /khach-san page ${p}: ${items.length} hotels`));
 }
 
 /** Combined scrape — merge both into OtaRawHotel format for synthesizer */
