@@ -233,6 +233,26 @@ export function startScheduler() {
     }
   });
 
+  // ── v6 Sprint 8: Stalled-lead re-engagement — mỗi 30 phút ──
+  cron.schedule('*/30 * * * *', async () => {
+    try {
+      const { runReengagement } = require('./stalled-lead');
+      await runReengagement();
+    } catch (e: any) {
+      console.error('[scheduler] stalled-lead error:', e?.message);
+    }
+  });
+
+  // ── v6 Sprint 8: Bot health check — 8 sáng hàng ngày ──
+  cron.schedule('0 8 * * *', async () => {
+    try {
+      const { runDailyHealthCheck } = require('./bot-health');
+      await runDailyHealthCheck();
+    } catch (e: any) {
+      console.error('[scheduler] bot-health error:', e?.message);
+    }
+  });
+
   // ── Billing renewal reminders: 9h sáng mỗi ngày ──
   cron.schedule('0 9 * * *', async () => {
     try {

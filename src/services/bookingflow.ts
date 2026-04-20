@@ -341,11 +341,38 @@ export function processBookingStep(senderId: string, message: string, senderName
           trackFunnelStage({
             stage: 'booking_created',
             senderId: booking.fb_sender_id,
-            hotelId: 1, // bookingflow is per-hotel=1 scope; multi-hotel refactor later
+            hotelId: 1,
             bookingId: booking.id,
             revenue: total,
             deposit,
           });
+        } catch {}
+
+        // v6 Sprint 8: Smart Upsell — detect + format add-on suggestions
+        let upsellLine = '';
+        try {
+          const { detectUpsells, formatUpsellLine } = require('./upsell-detector');
+          const { classifyCustomer } = require('./customer-tier');
+          const historyRows = db.prepare(
+            `SELECT role, message FROM conversation_memory
+             WHERE sender_id = ? ORDER BY id DESC LIMIT 10`
+          ).all(booking.fb_sender_id) as any[];
+          const history = historyRows.map(r => `${r.role}: ${r.message}`).reverse();
+          const tierInfo = classifyCustomer({ senderId: booking.fb_sender_id, hotelId: 1 });
+          const opps = detectUpsells({
+            senderId: booking.fb_sender_id,
+            history,
+            nights,
+            guests: b.guests,
+            room_type: b.room_type || null,
+            customer_tier: tierInfo?.tier,
+            booking_total_vnd: total,
+            hotelId: 1,
+          });
+          upsellLine = formatUpsellLine(opps);
+          if (opps.length > 0) {
+            console.log(`[upsell] booking #${booking.id}: ${opps.map((o: any) => o.kind).join(',')}`);
+          }
         } catch {}
 
         return `📋 *BÁO GIÁ ĐẶT PHÒNG*\n\n` +
@@ -359,7 +386,8 @@ export function processBookingStep(senderId: string, message: string, senderName
           `💰 Tổng: ${formatPrice(total)}\n` +
           `💳 Cọc ${config.deposit_percent}%: ${formatPrice(deposit)}\n\n` +
           `${config.cancellation_policy}\n\n` +
-          `Bạn đồng ý đặt phòng? Nhắn "ok" hoặc "đặt" để xác nhận.`;
+          `Bạn đồng ý đặt phòng? Nhắn "ok" hoặc "đặt" để xác nhận.` +
+          upsellLine;
       }
 
       // Ask for missing info

@@ -360,4 +360,27 @@ router.post('/qa-promote', async (_req: AuthRequest, res) => {
   }
 });
 
+// v6 Sprint 8: Stalled-lead re-engagement manual trigger
+router.post('/stalled-reengage', async (_req: AuthRequest, res) => {
+  try {
+    const { runReengagement } = require('../services/stalled-lead');
+    const stats = await runReengagement();
+    res.json({ ok: true, stats });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// v6 Sprint 8: Bot health report on demand
+router.get('/health-report', async (req: AuthRequest, res) => {
+  try {
+    const { computeHealthReport } = require('../services/bot-health');
+    const hours = Math.max(1, Math.min(168, parseInt(String(req.query.hours || '24'), 10) || 24));
+    const report = computeHealthReport(hours);
+    res.json(report);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;
