@@ -25,6 +25,7 @@ export interface OtaRawHotel {
   star_rating?: number;
   description?: string;
   amenities?: any;                // array hoặc object tùy schema OTA
+  property_type?: string;         // apartment | homestay | hotel | resort | villa | ...
   rooms?: Array<{
     id?: string | number;
     name: string;
@@ -55,6 +56,7 @@ export interface SynthesizedHotel {
   phone?: string;
   star_rating?: number;
   target_segment?: string;        // 'family'|'couple'|'business'|'backpacker'|'mixed'
+  property_type?: string;         // 'apartment'|'homestay'|'hotel'|'resort'|'villa'|'guesthouse'|'hostel'
   brand_voice?: string;           // 'formal'|'friendly'|'luxury'|'casual'
   usp_top3: string[];             // ["Gần sân bay 1.5km", "Bếp trong phòng", ...]
   nearby_landmarks?: {
@@ -121,6 +123,7 @@ SCHEMA JSON output:
   "phone": "<sđt>",
   "star_rating": <1-5>,
   "target_segment": "family|couple|business|backpacker|mixed",
+  "property_type": "apartment|homestay|hotel|resort|villa|guesthouse|hostel",
   "brand_voice": "formal|friendly|luxury|casual",
   "usp_top3": ["...", "...", "..."],
   "nearby_landmarks": { "airport_km": <num>, "beach_km": <num>, "center_km": <num> },

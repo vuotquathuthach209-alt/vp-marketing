@@ -452,14 +452,21 @@ async function handleDeterministic(
   }
 
   // v7 Phase 3: Ưu tiên hotel_knowledge (AI-synthesized) nếu có
-  // Chỉ override khi hotel_knowledge cho hotel_id này TỒN TẠI
   let kbUsed = false;
+  let propertyTypeLabel = '';
   try {
     const { hasKnowledge, getProfile, getRooms } = require('./hotel-knowledge');
     if (hasKnowledge(hotelId)) {
       const prof = getProfile(hotelId);
       const kbRooms = getRooms(hotelId);
       if (prof?.name_canonical) hotelName = prof.name_canonical;
+      if (prof?.property_type) {
+        const PT_VI: Record<string, string> = {
+          apartment: 'Căn hộ dịch vụ', homestay: 'Homestay', hotel: 'Khách sạn',
+          resort: 'Resort', villa: 'Villa', guesthouse: 'Nhà nghỉ', hostel: 'Hostel',
+        };
+        propertyTypeLabel = PT_VI[prof.property_type] || prof.property_type;
+      }
       if (kbRooms && kbRooms.length > 0) {
         rooms = kbRooms.map((r: any) => ({
           name: r.display_name_vi,
@@ -472,7 +479,9 @@ async function handleDeterministic(
       }
     }
   } catch {}
-  if (kbUsed) console.log(`[smartreply] using hotel_knowledge for #${hotelId}: ${rooms.length} rooms`);
+  if (kbUsed) console.log(`[smartreply] using hotel_knowledge for #${hotelId}: ${rooms.length} rooms, type=${propertyTypeLabel || '-'}`);
+  // Prepend property type vào hotelName cho template
+  const hotelNameWithType = propertyTypeLabel ? `${propertyTypeLabel} ${hotelName}` : hotelName;
 
   switch (intent) {
     case 'greeting':
@@ -559,7 +568,7 @@ async function handleDeterministic(
           if (r.bed_type) line += ` | ${r.bed_type}`;
           return line;
         }).join('\n');
-        return { reply: `🏨 Các loại phòng tại ${hotelName}:\n\n${roomList}\n\nGõ "giá" xem chi tiết hoặc "hình" xem ảnh phòng!`, intent: 'rooms' };
+        return { reply: `🏨 Các loại phòng tại ${hotelNameWithType}:\n\n${roomList}\n\nGõ "giá" xem chi tiết hoặc "hình" xem ảnh phòng!`, intent: 'rooms' };
       }
       return null;
     }

@@ -25,6 +25,35 @@ const VN_CITY_KEYWORDS: Record<string, string> = {
   'hạ long': 'Ha Long', 'phan thiết': 'Phan Thiet',
 };
 
+const PROPERTY_TYPE_KEYWORDS: Record<string, string> = {
+  'homestay': 'homestay',
+  'home stay': 'homestay',
+  'nhà dân': 'homestay',
+  'căn hộ': 'apartment',
+  'can ho': 'apartment',
+  'apartment': 'apartment',
+  'service apartment': 'apartment',
+  'khách sạn': 'hotel',
+  'khach san': 'hotel',
+  'hotel': 'hotel',
+  'resort': 'resort',
+  'villa': 'villa',
+  'biệt thự': 'villa',
+  'nhà nghỉ': 'guesthouse',
+  'guesthouse': 'guesthouse',
+  'hostel': 'hostel',
+};
+
+const PROPERTY_TYPE_VI: Record<string, string> = {
+  apartment: 'Căn hộ dịch vụ',
+  homestay: 'Homestay',
+  hotel: 'Khách sạn',
+  resort: 'Resort',
+  villa: 'Villa',
+  guesthouse: 'Nhà nghỉ',
+  hostel: 'Hostel',
+};
+
 const DISTRICT_KEYWORDS = [
   'quận 1', 'q1', 'quận 3', 'q3', 'quận 5', 'q5', 'quận 7', 'q7',
   'bình thạnh', 'tân bình', 'gò vấp', 'phú nhuận', 'thủ đức',
@@ -44,6 +73,16 @@ function extractDistrict(msg: string): string | null {
   const lower = msg.toLowerCase();
   for (const d of DISTRICT_KEYWORDS) {
     if (lower.includes(d)) return d;
+  }
+  return null;
+}
+
+function extractPropertyType(msg: string): string | null {
+  const lower = msg.toLowerCase();
+  // Ưu tiên keyword dài trước (vd "căn hộ" trước "hộ")
+  const sorted = Object.entries(PROPERTY_TYPE_KEYWORDS).sort((a, b) => b[0].length - a[0].length);
+  for (const [kw, type] of sorted) {
+    if (lower.includes(kw)) return type;
   }
   return null;
 }
@@ -90,6 +129,7 @@ export function recommend(ctx: RecommendContext): RecommendResult | null {
   const landmark = findLandmark(msg);
   const city = extractCity(msg) || (landmark ? landmark.city : null);
   const district = extractDistrict(msg);
+  const propertyType = extractPropertyType(msg);
   const priceLimit = ctx.slots.price_limit;
   const minGuests = ctx.slots.guests;
 
@@ -105,6 +145,7 @@ export function recommend(ctx: RecommendContext): RecommendResult | null {
       limit: 3,
       max_price: priceLimit,
       min_guests: minGuests,
+      property_type: propertyType || undefined,
     });
     searchType = 'nearby';
   }
@@ -117,12 +158,24 @@ export function recommend(ctx: RecommendContext): RecommendResult | null {
       limit: 3,
       max_price: priceLimit,
       min_guests: minGuests,
+      property_type: propertyType || undefined,
     });
     searchType = 'byArea';
   }
 
-  // No location signal → let RAG handle
-  if (!landmark && !city && !district) return null;
+  // Strategy 3: property type only (user hỏi chung "có homestay nào không")
+  if (hotels.length === 0 && propertyType) {
+    hotels = searchByArea({
+      property_type: propertyType,
+      limit: 5,
+      max_price: priceLimit,
+      min_guests: minGuests,
+    });
+    searchType = 'byArea';
+  }
+
+  // No search signal → let RAG handle
+  if (!landmark && !city && !district && !propertyType) return null;
 
   // Found match
   if (hotels.length > 0) {
@@ -132,13 +185,17 @@ export function recommend(ctx: RecommendContext): RecommendResult | null {
         : `${h.district ? h.district + ', ' : ''}${h.city}`;
       const price = h.min_price > 0 ? `từ ${formatPrice(h.min_price)}đ/đêm` : 'giá liên hệ';
       const star = formatStar(h.star_rating);
+      const typeLabel = h.property_type ? `[${PROPERTY_TYPE_VI[h.property_type] || h.property_type}] ` : '';
       const usp = h.usp_top3[0] ? ` — ${h.usp_top3[0]}` : '';
-      return `${i + 1}. 🏨 **${h.name}**${star} (${loc}) — ${price}${usp}`;
+      return `${i + 1}. ${typeLabel}🏨 **${h.name}**${star} (${loc}) — ${price}${usp}`;
     }).join('\n');
 
+    const typeFilter = propertyType ? `${PROPERTY_TYPE_VI[propertyType]}` : 'lựa chọn';
     const intro = landmark
-      ? `Dạ em tìm thấy ${hotels.length} lựa chọn gần ${landmark.landmark} ạ 😊`
-      : `Dạ em có ${hotels.length} gợi ý tại ${district ? district + ', ' : ''}${city || 'khu vực bạn hỏi'} ạ`;
+      ? `Dạ em tìm thấy ${hotels.length} ${typeFilter} gần ${landmark.landmark} ạ 😊`
+      : propertyType
+        ? `Dạ bên em có ${hotels.length} ${typeFilter}${district ? ' tại ' + district : city ? ' tại ' + city : ''} ạ`
+        : `Dạ em có ${hotels.length} gợi ý tại ${district ? district + ', ' : ''}${city || 'khu vực bạn hỏi'} ạ`;
 
     const outro = hotels.length > 1
       ? '\n\nAnh/chị thấy hợp với option nào thì em tư vấn kỹ hơn nhé ạ.'

@@ -567,6 +567,9 @@ safeAddColumn('mkt_hotels', 'ota_hotel_id', 'INTEGER');
 // v6 Sprint 3: Memory recall — embed user messages for semantic search
 safeAddColumn('conversation_memory', 'embedding', 'BLOB');
 
+// v7.1: property_type (apartment | homestay | hotel | resort | villa | guesthouse)
+safeAddColumn('hotel_profile', 'property_type', 'TEXT');
+
 // v7: Hotel Knowledge Layer — AI-synthesized bot-ready data
 db.exec(`
 CREATE TABLE IF NOT EXISTS hotel_profile (

@@ -74,10 +74,10 @@ export async function upsertKnowledge(
   db.prepare(
     `INSERT INTO hotel_profile (
       hotel_id, ota_hotel_id, name_canonical, name_en, city, district, address,
-      latitude, longitude, geohash, phone, star_rating, target_segment, brand_voice,
+      latitude, longitude, geohash, phone, star_rating, target_segment, property_type, brand_voice,
       ai_summary_vi, ai_summary_en, usp_top3, nearby_landmarks,
       manual_override, synthesized_at, synthesized_by, version, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
     ON CONFLICT(hotel_id) DO UPDATE SET
       ota_hotel_id = excluded.ota_hotel_id,
       name_canonical = excluded.name_canonical,
@@ -91,6 +91,7 @@ export async function upsertKnowledge(
       phone = excluded.phone,
       star_rating = excluded.star_rating,
       target_segment = excluded.target_segment,
+      property_type = excluded.property_type,
       brand_voice = excluded.brand_voice,
       ai_summary_vi = excluded.ai_summary_vi,
       ai_summary_en = excluded.ai_summary_en,
@@ -113,6 +114,7 @@ export async function upsertKnowledge(
     data.phone || null,
     data.star_rating || null,
     data.target_segment || null,
+    data.property_type || null,
     data.brand_voice || null,
     data.ai_summary_vi,
     data.ai_summary_en || null,
@@ -306,6 +308,7 @@ export interface HotelSearchResult {
   distance_km: number;
   min_price: number;
   star_rating: number | null;
+  property_type: string | null;
   ai_summary_vi: string;
   usp_top3: string[];
 }
@@ -318,19 +321,22 @@ export function searchNearby(opts: {
   min_guests?: number;
   max_price?: number;
   city?: string;
+  property_type?: string;      // 'apartment'|'homestay'|'hotel'|...
 }): HotelSearchResult[] {
   const radius = opts.radius_km || 10;
   const limit = opts.limit || 5;
 
   const cityFilter = opts.city ? `AND LOWER(city) = LOWER(?)` : '';
+  const typeFilter = opts.property_type ? `AND LOWER(property_type) = LOWER(?)` : '';
   const params: any[] = [];
   if (opts.city) params.push(opts.city);
+  if (opts.property_type) params.push(opts.property_type);
 
   const profiles = db.prepare(
     `SELECT hotel_id, name_canonical, city, district, latitude, longitude, star_rating,
-            ai_summary_vi, usp_top3
+            property_type, ai_summary_vi, usp_top3
      FROM hotel_profile
-     WHERE latitude IS NOT NULL AND longitude IS NOT NULL ${cityFilter}`
+     WHERE latitude IS NOT NULL AND longitude IS NOT NULL ${cityFilter} ${typeFilter}`
   ).all(...params) as any[];
 
   const results: HotelSearchResult[] = [];
@@ -338,7 +344,6 @@ export function searchNearby(opts: {
     const dist = haversineKm(opts.lat, opts.lon, p.latitude, p.longitude);
     if (dist > radius) continue;
 
-    // Lookup cheapest room, optionally filter by price/guests
     let roomSql = `SELECT MIN(price_weekday) AS min_price FROM hotel_room_catalog WHERE hotel_id = ?`;
     const roomParams: any[] = [p.hotel_id];
     if (opts.min_guests) {
@@ -360,6 +365,7 @@ export function searchNearby(opts: {
       distance_km: +dist.toFixed(1),
       min_price: minPrice,
       star_rating: p.star_rating,
+      property_type: p.property_type,
       ai_summary_vi: p.ai_summary_vi || '',
       usp_top3: usps,
     });
@@ -372,15 +378,16 @@ export function searchNearby(opts: {
 /**
  * Search hotels by city + district (fallback nếu không có lat/lon).
  */
-export function searchByArea(opts: { city?: string; district?: string; limit?: number; max_price?: number; min_guests?: number }): HotelSearchResult[] {
+export function searchByArea(opts: { city?: string; district?: string; limit?: number; max_price?: number; min_guests?: number; property_type?: string }): HotelSearchResult[] {
   const limit = opts.limit || 5;
   const conds: string[] = [];
   const params: any[] = [];
   if (opts.city) { conds.push(`LOWER(city) LIKE LOWER(?)`); params.push(`%${opts.city}%`); }
   if (opts.district) { conds.push(`LOWER(district) LIKE LOWER(?)`); params.push(`%${opts.district}%`); }
+  if (opts.property_type) { conds.push(`LOWER(property_type) = LOWER(?)`); params.push(opts.property_type); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const profiles = db.prepare(
-    `SELECT hotel_id, name_canonical, city, district, star_rating, ai_summary_vi, usp_top3
+    `SELECT hotel_id, name_canonical, city, district, star_rating, property_type, ai_summary_vi, usp_top3
      FROM hotel_profile ${where} LIMIT ?`
   ).all(...params, limit) as any[];
 
@@ -406,6 +413,7 @@ export function searchByArea(opts: { city?: string; district?: string; limit?: n
       distance_km: 0,
       min_price: minPrice,
       star_rating: p.star_rating,
+      property_type: p.property_type,
       ai_summary_vi: p.ai_summary_vi || '',
       usp_top3: usps,
     });

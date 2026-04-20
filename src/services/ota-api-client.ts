@@ -147,6 +147,7 @@ export function toOtaRawHotel(h: OtaApiHotel): OtaRawHotel {
     star_rating: h.starRating,
     description: h.description,
     amenities: h.amenities,
+    property_type: h.propertyType,
     rooms: (h.rooms && Array.isArray(h.rooms))
       ? h.rooms.map((r: any) => ({
           id: r.id,
