@@ -35,6 +35,9 @@ export const config = {
   get fbAppId() { return cfg('fb_app_id', 'FB_APP_ID'); },
   get fbAppSecret() { return cfg('fb_app_secret', 'FB_APP_SECRET'); },
 
+  // Public base URL (for callback URLs, email links, FB data-deletion status page)
+  get publicUrl() { return cfg('public_url', 'PUBLIC_URL', 'https://mkt.sondervn.com'); },
+
   // VNPay
   get vnpTmnCode() { return cfg('vnp_tmn_code', 'VNP_TMN_CODE'); },
   get vnpHashSecret() { return cfg('vnp_hash_secret', 'VNP_HASH_SECRET'); },

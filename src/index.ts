@@ -28,6 +28,7 @@ import referralRouter from './routes/referral';
 import zaloRouter, { zaloWebhookRouter } from './routes/zalo';
 import bankWebhookRouter from './routes/bank-webhook';
 import agentRouter from './routes/agent';
+import dataDeletionRouter from './routes/data-deletion';
 import './services/agent-tools'; // init table + register tools
 import rateLimit from 'express-rate-limit';
 
@@ -97,6 +98,8 @@ app.use('/api/feedback', feedbackRouter);
 app.use('/api/referral', referralRouter);
 app.use('/api/zalo', zaloRouter);
 app.use('/api/agent', agentRouter);
+app.use('/api/data-deletion', dataDeletionRouter);
+app.use('/data-deletion', dataDeletionRouter); // also accept /data-deletion/status (URL returned to FB)
 app.use('/', zaloWebhookRouter); // POST /webhook/zalo
 app.use('/webhook', bankWebhookRouter); // POST /webhook/bank
 
