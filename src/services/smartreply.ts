@@ -826,13 +826,18 @@ export async function smartReplyWithSender(
     }
     if (hasActiveBooking(senderId)) {
       const reply = processBookingStep(senderId, msg, senderName);
-      saveMessage(senderId, pid, 'bot', reply, 'booking');
-      return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'booking' };
+      if (reply) {
+        saveMessage(senderId, pid, 'bot', reply, 'booking');
+        return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'booking' };
+      }
+      // reply == null → booking flow đã "nhường" cho RAG/AI xử lý (objection, small talk)
     }
     if (isBookingIntent(msg)) {
       const reply = processBookingStep(senderId, msg, senderName);
-      saveMessage(senderId, pid, 'bot', reply, 'booking');
-      return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'booking' };
+      if (reply) {
+        saveMessage(senderId, pid, 'bot', reply, 'booking');
+        return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'booking' };
+      }
     }
   }
 

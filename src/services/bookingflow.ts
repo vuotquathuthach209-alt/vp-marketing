@@ -245,13 +245,47 @@ function formatPrice(n: number): string {
 
 // ---------- Process booking step ----------
 
-export function processBookingStep(senderId: string, message: string, senderName?: string): string {
+// Tin nhắn KHÔNG phải booking info — cần để RAG/AI trả lời tự nhiên
+// Khớp: than đắt ("mắc", "đắt"), hỏi giảm giá, chào hỏi ngắn, câu hỏi khác
+const NON_BOOKING_PATTERNS: RegExp[] = [
+  /\b(mắc|đắt|ma('|'|)c|dat)\s*(quá|thế|v[aậ]y)?\b/i,
+  /\b(giảm giá|bớt|discount|khuyến mãi|voucher|sale|rẻ hơn)\b/i,
+  /\b(ok|oke|uhm|um|ừ|ờ|vâng|dạ)\s*(thôi|đó|vậy|nhé|nha)?\s*$/i,
+  /^(alo|a lô|hello|hi|hey|chào|xin chào|hellu|hi c[aả])$/i,
+  /\b(còn phòng|hỏi|cho hỏi|xem|thôi không|không đặt nữa|để sau|tính sau|cảm ơn|c[aả]m ơn)\b/i,
+  /\b(ở đâu|địa chỉ|đường|map|bản đồ|check.?in|checkout|giờ|mấy giờ|có (gì|chỗ|chi))\b/i,
+  /\?$/, // kết thúc bằng dấu ?
+];
+
+function looksLikeBookingInfo(msg: string, config: BookingConfig): boolean {
+  // Có ít nhất 1 trong: số (ngày/tháng), từ khóa phòng, đơn vị ngày đêm
+  if (/\d{1,2}\s*[\/\-]\s*\d{1,2}/.test(msg)) return true;   // 20/4
+  if (/\b(ngày|hôm|mai|kia|tuần sau|cuối tuần)\b/i.test(msg)) return true;
+  if (/\b(\d+)\s*(đêm|ngày|night|đ[eê]m)\b/i.test(msg)) return true;
+  if (/\b(\d+)\s*(khách|người|guest|ng)\b/i.test(msg)) return true;
+  const roomType = parseRoomType(msg, config);
+  if (roomType) return true;
+  return false;
+}
+
+export function processBookingStep(senderId: string, message: string, senderName?: string): string | null {
   const config = getBookingConfig();
   const booking = getOrCreateBooking(senderId, senderName);
   const msg = message.trim();
 
   switch (booking.status) {
     case 'collecting': {
+      // ───── ESCAPE HATCH ─────
+      // Nếu tin nhắn không chứa booking info thực sự VÀ khớp pattern non-booking,
+      // để RAG/AI xử lý tự nhiên thay vì lặp template.
+      const isBookingLike = looksLikeBookingInfo(msg, config);
+      const looksNonBooking = NON_BOOKING_PATTERNS.some(p => p.test(msg));
+      if (!isBookingLike && looksNonBooking) {
+        // Tạm hoãn booking flow — không xoá booking (để quay lại được),
+        // nhưng return null để smartReply fallback sang RAG.
+        return null;
+      }
+
       // Parse info from message
       const dates = parseDates(msg);
       const nightsVal = parseNights(msg);
