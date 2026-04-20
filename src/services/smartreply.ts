@@ -815,22 +815,36 @@ export async function smartReplyWithSender(
     } catch {}
   }
 
-  // ─── Booking flow priority ───
-  if (senderId) {
-    if (hasImage) {
-      const result = markTransferReceived(senderId);
-      if (result) {
-        saveMessage(senderId, pid, 'bot', result.reply, 'transfer');
-        return { reply: result.reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'transfer' };
-      }
+  // Transfer proof image luôn ưu tiên tuyệt đối
+  if (senderId && hasImage) {
+    const result = markTransferReceived(senderId);
+    if (result) {
+      saveMessage(senderId, pid, 'bot', result.reply, 'transfer');
+      return { reply: result.reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'transfer' };
     }
+  }
+
+  // ─── v6: Intent-First Orchestrator (behind feature flag) ───
+  // Flag: mkt_hotels.features.new_router = true
+  let useNewRouter = false;
+  try {
+    const row = db.prepare(`SELECT features FROM mkt_hotels WHERE id = ?`).get(hid) as any;
+    const f = row?.features ? JSON.parse(row.features || '{}') : {};
+    useNewRouter = !!f.new_router;
+  } catch {}
+
+  if (useNewRouter && senderId) {
+    return await dispatchV6({ msg, hid, pid, senderId, senderName, t0 });
+  }
+
+  // ─── Legacy path (booking flow priority) ───
+  if (senderId) {
     if (hasActiveBooking(senderId)) {
       const reply = processBookingStep(senderId, msg, senderName);
       if (reply) {
         saveMessage(senderId, pid, 'bot', reply, 'booking');
         return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'booking' };
       }
-      // reply == null → booking flow đã "nhường" cho RAG/AI xử lý (objection, small talk)
     }
     if (isBookingIntent(msg)) {
       const reply = processBookingStep(senderId, msg, senderName);
@@ -842,6 +856,103 @@ export async function smartReplyWithSender(
   }
 
   return smartReply(msg, hid, senderId, senderName, pid);
+}
+
+/**
+ * v6 dispatcher — gọi intent-router → quyết định handler → generate reply.
+ */
+async function dispatchV6(ctx: {
+  msg: string;
+  hid: number;
+  pid: number;
+  senderId: string;
+  senderName?: string;
+  t0: number;
+}): Promise<SmartReplyResult> {
+  const { msg, hid, pid, senderId, senderName, t0 } = ctx;
+
+  const { classifyTurn, decideHandler } = require('./intent-router');
+  const { fastReply, handleObjection, handleHandoff } = require('./reply-handlers');
+  const { pauseBooking, resumeBooking, getActiveBookingInfo } = require('./bookingflow');
+
+  // Fetch history 6 last turns
+  const historyRows = db.prepare(
+    `SELECT role, message FROM conversation_memory
+     WHERE sender_id = ? AND page_id = ? ORDER BY id DESC LIMIT 6`
+  ).all(senderId, pid) as any[];
+  const historyTail = historyRows.reverse().map(r => `${r.role === 'user' ? 'Khách' : 'Bot'}: ${r.message}`);
+
+  const bookingInfo = getActiveBookingInfo(senderId);
+
+  // [1] Classify intent
+  const router = await classifyTurn({
+    message: msg,
+    historyTail,
+    bookingState: bookingInfo?.status,
+  });
+
+  // [2] Decide handler
+  const handler = decideHandler(router, !!bookingInfo);
+
+  console.log(`[v6] intent=${router.intent} conf=${router.confidence.toFixed(2)} handler=${handler} src=${router.source}${bookingInfo ? ' bk=' + bookingInfo.status : ''}`);
+
+  // Log intent to events
+  try {
+    const { trackEvent } = require('./events');
+    trackEvent({ event: 'intent_classified', hotelId: hid, meta: { intent: router.intent, handler, confidence: router.confidence, source: router.source } });
+  } catch {}
+
+  // [3] Route
+  let reply = '';
+  let intentLabel = router.intent;
+
+  let skipSave = false; // smartReply đã tự lưu rồi
+
+  if (handler === 'booking_fsm') {
+    // Resume paused booking nếu cần
+    if (bookingInfo?.status === 'paused') resumeBooking(senderId);
+    const r = processBookingStep(senderId, msg, senderName);
+    if (r) {
+      reply = r;
+      intentLabel = 'booking';
+    } else {
+      // FSM nhường → fallback RAG (smartReply tự lưu)
+      const out = await smartReply(msg, hid, senderId, senderName, pid);
+      reply = out.reply;
+      intentLabel = 'rag_fallback';
+      skipSave = true;
+    }
+  } else if (handler === 'objection_handler') {
+    // Pause booking nếu đang active
+    if (bookingInfo && bookingInfo.status !== 'paused') pauseBooking(senderId);
+    reply = await handleObjection({
+      ro: router,
+      message: msg,
+      hotelId: hid,
+      history: historyTail,
+    });
+    intentLabel = 'price_objection';
+  } else if (handler === 'fast_reply') {
+    if (bookingInfo && bookingInfo.status !== 'paused') pauseBooking(senderId);
+    reply = fastReply(router, msg);
+    intentLabel = router.intent;
+  } else if (handler === 'handoff') {
+    if (bookingInfo && bookingInfo.status !== 'paused') pauseBooking(senderId);
+    reply = await handleHandoff({ hotelId: hid, senderId, senderName, message: msg, history: historyTail });
+    intentLabel = 'handoff';
+  } else {
+    // rag_pipeline (default)
+    if (bookingInfo && bookingInfo.status !== 'paused' && router.intent !== 'booking_action' && router.intent !== 'booking_info') {
+      pauseBooking(senderId);
+    }
+    const out = await smartReply(msg, hid, senderId, senderName, pid);
+    reply = out.reply;
+    intentLabel = 'rag';
+    skipSave = true;
+  }
+
+  if (reply && !skipSave) saveMessage(senderId, pid, 'bot', reply, intentLabel);
+  return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: intentLabel };
 }
 
 export async function smartReply(

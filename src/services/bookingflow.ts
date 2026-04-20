@@ -504,8 +504,53 @@ export function isBookingIntent(message: string): boolean {
 export function hasActiveBooking(senderId: string): boolean {
   const row = db.prepare(
     `SELECT id FROM pending_bookings
-     WHERE fb_sender_id = ? AND status NOT IN ('confirmed','rejected','cancelled')
+     WHERE fb_sender_id = ? AND status NOT IN ('confirmed','rejected','cancelled','paused')
      LIMIT 1`
   ).get(senderId);
   return !!row;
+}
+
+/**
+ * Trả về booking hiện tại (kể cả paused) — dùng cho context của intent-router.
+ * Không trigger flow.
+ */
+export function getActiveBookingInfo(senderId: string): { status: string; slots: Record<string, unknown> } | null {
+  const row = db.prepare(
+    `SELECT status, checkin_date, room_type, nights, guests FROM pending_bookings
+     WHERE fb_sender_id = ? AND status NOT IN ('confirmed','rejected','cancelled')
+     ORDER BY id DESC LIMIT 1`
+  ).get(senderId) as any;
+  if (!row) return null;
+  return {
+    status: row.status,
+    slots: {
+      date: row.checkin_date,
+      room_type: row.room_type,
+      nights: row.nights,
+      guests: row.guests,
+    },
+  };
+}
+
+/**
+ * Pause booking flow — user rẽ nhánh sang hỏi chuyện khác.
+ * State được giữ, nhưng các lượt tiếp theo sẽ KHÔNG tự động vào FSM
+ * trừ khi intent-router quyết định resume (is_continuation=true + slot mới).
+ */
+export function pauseBooking(senderId: string): void {
+  db.prepare(
+    `UPDATE pending_bookings SET status='paused', updated_at=?
+     WHERE fb_sender_id=? AND status IN ('collecting','quoting')`
+  ).run(Date.now(), senderId);
+}
+
+/**
+ * Resume paused booking — khi user quay lại cung cấp booking info mới.
+ */
+export function resumeBooking(senderId: string): boolean {
+  const r = db.prepare(
+    `UPDATE pending_bookings SET status='collecting', updated_at=?
+     WHERE fb_sender_id=? AND status='paused'`
+  ).run(Date.now(), senderId);
+  return r.changes > 0;
 }
