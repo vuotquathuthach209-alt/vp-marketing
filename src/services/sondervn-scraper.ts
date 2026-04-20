@@ -228,10 +228,9 @@ export async function scrapeAllHotels(): Promise<OtaRawHotel[]> {
     if (a.utilitiesIncluded) services.push('Điện nước bao trọn');
     if (a.amenities?.includes('wifi')) services.push('Wifi');
 
-    // Apartment listing không expose address → fallback city/district
-    const address = a.address && a.address !== 'undefined'
-      ? a.address
-      : [a.district, a.city].filter(Boolean).join(', ') || undefined;
+    // Apartment listing không expose address → không gán fallback
+    // (để bot hiển thị chỉ district + city, tránh lặp)
+    const address = a.address && a.address !== 'undefined' ? a.address : undefined;
 
     result.push({
       id: a.id,

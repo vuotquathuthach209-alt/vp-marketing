@@ -1039,7 +1039,7 @@ export async function smartReplyWithSender(
         const reply = `Dạ đúng rồi ạ! Bên em là **${classification.label_vi} ${prof.name_canonical}** thuê theo THÁNG 😊\n\n` +
           `💰 Giá: ${priceDisplay}\n` +
           `📦 Đã bao gồm: ${services}${stay}${deposit}\n` +
-          `📍 ${[prof.address, prof.district, prof.city].filter(Boolean).join(', ')}\n\n` +
+          `📍 ${[prof.address, prof.district, prof.city].filter(Boolean).filter((v: any, i: number, a: any[]) => a.indexOf(v) === i).join(', ')}\n\n` +
           `Anh/chị cần thuê từ tháng nào ạ?`;
         if (senderId) saveMessage(senderId, pid, 'bot', reply, 'monthly_match');
         return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'monthly_match' };
