@@ -288,5 +288,14 @@ export async function synthesizeHotel(raw: OtaRawHotel): Promise<{
   const v = validate(parsed);
   if (!v.valid) return { ok: false, error: `validation: ${v.reason}`, retried };
 
+  // PRESERVE OTA authoritative fields — không để Gemini hallucinate override
+  if (raw.property_type && typeof raw.property_type === 'string') {
+    parsed.property_type = raw.property_type.toLowerCase();
+  }
+  // Nếu có property_type nhưng Gemini không set rental_type, infer theo type
+  if (parsed.property_type && !parsed.rental_type) {
+    parsed.rental_type = 'per_night';
+  }
+
   return { ok: true, data: parsed as SynthesizedHotel, retried };
 }
