@@ -70,54 +70,54 @@ async function realQuery<T = any>(sql: string, params: any[] = []): Promise<T[]>
 }
 
 /**
- * Main entry — đọc OTA hotels (mock hoặc real tùy connection status).
+ * Main entry — đọc OTA hotels qua public API (HTTP GET only).
+ *
+ * Strategy (theo thứ tự):
+ *   1. Real OTA API nếu available (https://103.153.73.97/api/hotels)
+ *   2. DB direct nếu có executor (chưa dùng, giữ để tương lai)
+ *   3. Mock data từ mkt_hotels_cache (dev/fallback)
  */
 export async function readOtaHotels(opts: { limit?: number; since?: number } = {}): Promise<OtaRawHotel[]> {
-  if (!isOtaConnected()) {
-    // Phase 1: use mock data
-    const mocks = readMockHotels();
-    if (opts.limit) return mocks.slice(0, opts.limit);
-    return mocks;
+  // Phase 2: REAL API-based (preferred)
+  try {
+    const { listAllHotels, toOtaRawHotel, checkOtaApi } = require('./ota-api-client');
+    const health = await checkOtaApi();
+    if (health.ok) {
+      const apiHotels = await listAllHotels({ perPage: opts.limit ? Math.min(opts.limit, 50) : 50 });
+      console.log(`[ota-reader] API returned ${apiHotels.length} hotels (total: ${health.hotels_total})`);
+      const limited = opts.limit ? apiHotels.slice(0, opts.limit) : apiHotels;
+      return limited.map(toOtaRawHotel);
+    }
+  } catch (e: any) {
+    console.warn('[ota-reader] API fail, fallback to mock/DB:', e?.message);
   }
 
-  // Phase 2: real OTA query (chỉ SELECT, guard enforce)
-  // TODO: template SQL sẽ điều chỉnh khi biết schema OTA thật
-  const sinceClause = opts.since
-    ? `WHERE updated_at > ${Math.floor(opts.since / 1000)}`
-    : '';
-  const limitClause = opts.limit ? `LIMIT ${Math.max(1, Math.min(5000, opts.limit))}` : 'LIMIT 500';
-
-  const sql = `SELECT * FROM hotels ${sinceClause} ${limitClause}`;
-
-  // Guard validates before executor runs
-  assertReadOnly(sql);
-  const hotels = await realQuery<any>(sql);
-
-  // Fetch rooms for each hotel (also read-only)
-  const result: OtaRawHotel[] = [];
-  for (const h of hotels) {
-    const rooms = await realQuery<any>(`SELECT * FROM rooms WHERE hotel_id = ?`, [h.id]);
-    result.push({
-      id: h.id,
-      name: h.name,
-      address: h.address,
-      city: h.city,
-      district: h.district,
-      latitude: h.latitude,
-      longitude: h.longitude,
-      phone: h.phone,
-      star_rating: h.star_rating,
-      description: h.description,
-      rooms: rooms.map((r: any) => ({
-        id: r.id,
-        name: r.name,
-        price: r.price,
-        price_hourly: r.hourly_price,
-        max_guests: r.max_guests,
-        bed_type: r.bed_type,
-      })),
-    });
+  // Phase 2b: DB direct query (future — khi có SSH/VPN access)
+  if (isOtaConnected()) {
+    const sinceClause = opts.since ? `WHERE updated_at > ${Math.floor(opts.since / 1000)}` : '';
+    const limitClause = opts.limit ? `LIMIT ${Math.max(1, Math.min(5000, opts.limit))}` : 'LIMIT 500';
+    const sql = `SELECT * FROM hotels ${sinceClause} ${limitClause}`;
+    assertReadOnly(sql);
+    const hotels = await realQuery<any>(sql);
+    const result: OtaRawHotel[] = [];
+    for (const h of hotels) {
+      const rooms = await realQuery<any>(`SELECT * FROM rooms WHERE hotel_id = ?`, [h.id]);
+      result.push({
+        id: h.id, name: h.name, address: h.address, city: h.city, district: h.district,
+        latitude: h.latitude, longitude: h.longitude, phone: h.phone,
+        star_rating: h.star_rating, description: h.description,
+        rooms: rooms.map((r: any) => ({
+          id: r.id, name: r.name, price: r.price, price_hourly: r.hourly_price,
+          max_guests: r.max_guests, bed_type: r.bed_type,
+        })),
+      });
+    }
+    return result;
   }
 
-  return result;
+  // Phase 1 fallback: mock data
+  console.log('[ota-reader] Using mock data (no API/DB connection)');
+  const mocks = readMockHotels();
+  if (opts.limit) return mocks.slice(0, opts.limit);
+  return mocks;
 }
