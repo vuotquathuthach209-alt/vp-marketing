@@ -254,11 +254,55 @@ table tbody tr + tr td { border-top: 1px solid var(--ink-100); }
 }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 
-/* Small screens: sidebar slightly narrower */
+/* ── Mobile responsive (Sprint 6) ─────────────────────────── */
 @media (max-width: 900px) {
   aside { width: 14rem !important; }
   main { padding: 20px !important; }
 }
+
+@media (max-width: 768px) {
+  /* Hamburger toggle + drawer sidebar */
+  aside {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    z-index: 40;
+    transform: translateX(-100%);
+    transition: transform .25s ease;
+    width: 260px !important;
+    box-shadow: 4px 0 24px rgba(0,0,0,0.4);
+  }
+  body[data-sidebar="open"] aside { transform: translateX(0); }
+  body[data-sidebar="open"]::after {
+    content: ''; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.45); z-index: 30;
+  }
+  #app-view > div.flex { flex-direction: column; }
+  main { margin-left: 0 !important; padding: 12px !important; }
+  .app-topbar { padding: 10px 14px; }
+  .app-topbar .trust-chip, #topbar-plan { display: none; }
+
+  /* Hamburger button */
+  #mobile-menu-btn { display: inline-flex !important; }
+
+  /* Tables become card list */
+  table { font-size: 12px; }
+  table thead { display: none; }
+  .stack-mobile tbody, .stack-mobile tr, .stack-mobile td { display: block; width: 100%; }
+  .stack-mobile tr { border: 1px solid var(--ink-100); border-radius: 10px; padding: 8px; margin-bottom: 8px; background: #fff; }
+
+  /* Grids collapse */
+  .grid.grid-cols-2, .grid.grid-cols-3, .grid.grid-cols-4,
+  .grid.md\:grid-cols-4 { grid-template-columns: 1fr !important; }
+  .grid.md\:grid-cols-2 { grid-template-columns: 1fr !important; }
+
+  /* Panel padding tighter */
+  .panel > h2:first-child { font-size: 1.2rem; padding-bottom: 10px; margin-bottom: 14px !important; }
+  .bg-white.rounded-xl, .bg-white.rounded-2xl { padding: 14px !important; }
+
+  /* Input size up for easier tap */
+  input, textarea, select, button { min-height: 42px; font-size: 14px; }
+}
+#mobile-menu-btn { display: none; }
 
 /* Selection color */
 ::selection { background: rgba(99,102,241,0.25); color: var(--ink-900); }

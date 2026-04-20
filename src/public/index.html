@@ -119,7 +119,12 @@
 
     <main class="flex-1 overflow-auto">
       <div class="app-topbar">
-        <div class="brand-mark"><span class="dot"></span><span>VP Marketing — Dashboard</span></div>
+        <div class="brand-mark">
+          <button id="mobile-menu-btn" class="mr-2 text-slate-600" aria-label="Menu" style="align-items:center;padding:6px;border-radius:6px;">
+            <i data-lucide="menu"></i>
+          </button>
+          <span class="dot"></span><span>VP Marketing — Dashboard</span>
+        </div>
         <div class="flex items-center gap-3">
           <span class="trust-chip">Hệ thống hoạt động</span>
           <span id="topbar-plan" class="pill pill-info hidden"></span>
@@ -1408,6 +1413,30 @@
       apply(cur === 'dark' ? 'light' : 'dark');
     });
     apply(document.documentElement.getAttribute('data-theme') || 'light');
+  })();
+  // Mobile sidebar drawer toggle
+  (function(){
+    const btn = document.getElementById('mobile-menu-btn');
+    if (!btn) return;
+    const toggle = () => {
+      const open = document.body.getAttribute('data-sidebar') === 'open';
+      document.body.setAttribute('data-sidebar', open ? '' : 'open');
+    };
+    btn.addEventListener('click', toggle);
+    // Close drawer on nav click (mobile)
+    document.querySelectorAll('.nav-btn').forEach(n =>
+      n.addEventListener('click', () => {
+        if (window.innerWidth <= 768) document.body.setAttribute('data-sidebar', '');
+      })
+    );
+    // Click outside closes
+    document.body.addEventListener('click', (e) => {
+      if (document.body.getAttribute('data-sidebar') !== 'open') return;
+      const target = e.target;
+      if (!target.closest('aside') && !target.closest('#mobile-menu-btn')) {
+        document.body.setAttribute('data-sidebar', '');
+      }
+    }, true);
   })();
 </script>
 </body>

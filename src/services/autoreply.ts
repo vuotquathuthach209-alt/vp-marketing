@@ -85,19 +85,24 @@ async function replyToMessages(page: any) {
       const exists = db.prepare(`SELECT id FROM auto_reply_log WHERE fb_id = ?`).get(latest.id);
       if (exists) continue;
 
-      // Detect image attachments
+      // Detect image/audio/video attachments
       const attachments = latest.attachments?.data || [];
       const imageAttach = attachments.find((a: any) =>
         a.mime_type?.startsWith('image/') || a.type === 'image'
       );
+      const audioAttach = attachments.find((a: any) =>
+        a.mime_type?.startsWith('audio/') || a.type === 'audio'
+      );
       const hasImage = !!imageAttach;
+      const hasAudio = !!audioAttach;
       const imageUrl = imageAttach?.image_data?.url || imageAttach?.url || null;
+      const audioUrl = audioAttach?.url || audioAttach?.file_url || null;
       const messageText = latest.message || '';
       const senderId = latest.from?.id;
       const senderName = latest.from?.name;
 
-      // If no text and no image, skip
-      if (!messageText && !hasImage) continue;
+      // If no text and no attachments, skip
+      if (!messageText && !hasImage && !hasAudio) continue;
 
       try {
         // If image + awaiting transfer → handle transfer
@@ -127,8 +132,32 @@ async function replyToMessages(page: any) {
           }
         }
 
+        // ─── v6 Sprint 6: Multimodal ingestion ───
+        // Nếu có image/audio không phải transfer proof → phân tích nội dung
+        // để dispatcher text có ngữ cảnh tốt.
+        let effectiveMessage = messageText;
+        let multimodalKind: string | null = null;
+        if ((hasImage && imageUrl) || (hasAudio && audioUrl)) {
+          try {
+            const { downloadFbAttachment, mimeToAttachmentType } = require('./fb-attachment');
+            const { analyzeAttachment } = require('./multimodal');
+            const url = audioUrl || imageUrl;
+            const dl = await downloadFbAttachment(url);
+            const attType = mimeToAttachmentType(dl.mimeType) || (hasImage ? 'image' : 'audio');
+            const result = await analyzeAttachment({ type: attType, mimeType: dl.mimeType, data: dl.data });
+            multimodalKind = result.kind;
+            console.log(`[multimodal] ${attType} kind=${result.kind} conf=${result.confidence.toFixed(2)} msg="${result.synthesized_message.slice(0, 60)}"`);
+            // payment_proof → không override, để transfer flow xử lý
+            if (result.kind !== 'payment_proof') {
+              effectiveMessage = (messageText ? messageText + ' ' : '') + result.synthesized_message;
+            }
+          } catch (e: any) {
+            console.warn('[multimodal] fail:', e?.message);
+          }
+        }
+
         const { reply, images } = await smartReplyWithSender(
-          messageText || '(ảnh)',
+          effectiveMessage || '(ảnh)',
           senderId,
           senderName,
           hasImage,
