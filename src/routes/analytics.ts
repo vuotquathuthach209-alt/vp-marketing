@@ -126,4 +126,79 @@ router.get('/smart-slot', (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// Intent analytics (v6 Intent-First Orchestrator)
+// ═══════════════════════════════════════════════════════════════
+import { db as _db } from '../db';
+
+router.get('/intents', (req, res) => {
+  const days = Math.max(1, Math.min(90, parseInt(String(req.query.days || '7'), 10) || 7));
+  const since = Date.now() - days * 24 * 3600_000;
+  try {
+    const rows = _db.prepare(
+      `SELECT meta, ts FROM events
+       WHERE event_name = 'intent_classified' AND ts >= ?
+       ORDER BY ts DESC LIMIT 5000`
+    ).all(since) as any[];
+
+    const intentCounts: Record<string, number> = {};
+    const handlerCounts: Record<string, number> = {};
+    const confBuckets = { high: 0, mid: 0, low: 0 }; // >=0.75 / 0.4-0.75 / <0.4
+    const sourceCounts: Record<string, number> = {};
+    let total = 0;
+    let confSum = 0;
+
+    for (const r of rows) {
+      let m: any = {};
+      try { m = JSON.parse(r.meta || '{}'); } catch {}
+      if (!m.intent) continue;
+      total++;
+      intentCounts[m.intent] = (intentCounts[m.intent] || 0) + 1;
+      if (m.handler) handlerCounts[m.handler] = (handlerCounts[m.handler] || 0) + 1;
+      if (m.source) sourceCounts[m.source] = (sourceCounts[m.source] || 0) + 1;
+      const c = Number(m.confidence) || 0;
+      confSum += c;
+      if (c >= 0.75) confBuckets.high++;
+      else if (c >= 0.4) confBuckets.mid++;
+      else confBuckets.low++;
+    }
+
+    res.json({
+      days,
+      total,
+      avg_confidence: total > 0 ? +(confSum / total).toFixed(3) : 0,
+      intents: Object.entries(intentCounts).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ intent: k, count: v, pct: +((v / total) * 100).toFixed(1) })),
+      handlers: Object.entries(handlerCounts).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ handler: k, count: v })),
+      confidence_buckets: confBuckets,
+      sources: sourceCounts,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/router-health', (_req, res) => {
+  // Health check cho new router — % events là rule fallback (cao = LLM có vấn đề)
+  const since = Date.now() - 24 * 3600_000;
+  const rows = _db.prepare(
+    `SELECT meta FROM events WHERE event_name = 'intent_classified' AND ts >= ?`
+  ).all(since) as any[];
+  let total = 0, ruleFallback = 0, lowConf = 0;
+  for (const r of rows) {
+    try {
+      const m = JSON.parse(r.meta || '{}');
+      if (!m.intent) continue;
+      total++;
+      if (m.source === 'rule') ruleFallback++;
+      if ((Number(m.confidence) || 0) < 0.4) lowConf++;
+    } catch {}
+  }
+  res.json({
+    total,
+    rule_fallback_pct: total > 0 ? +((ruleFallback / total) * 100).toFixed(1) : 0,
+    low_confidence_pct: total > 0 ? +((lowConf / total) * 100).toFixed(1) : 0,
+    status: total === 0 ? 'no-data' : ruleFallback / Math.max(1, total) > 0.3 ? 'degraded' : 'healthy',
+  });
+});
+
 export default router;

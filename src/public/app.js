@@ -124,6 +124,7 @@ function switchTab(tab) {
   if (tab === 'agent-audit') { loadAgentAudit(); loadAgentToggle(); }
   if (tab === 'bot-control') loadBotStatus();
   if (tab === 'funnel') loadFunnel();
+  if (tab === 'intents') loadIntents();
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
   b.addEventListener('click', () => switchTab(b.dataset.tab));
@@ -3285,6 +3286,72 @@ async function loadFunnel() {
 }
 document.getElementById('funnel-days')?.addEventListener('change', loadFunnel);
 document.getElementById('funnel-refresh')?.addEventListener('click', loadFunnel);
+
+// ── Intent Router analytics ──
+const INTENT_LABELS = {
+  booking_action: '📝 Đặt phòng', booking_info: '📋 Cung cấp info',
+  price_objection: '💰 Than đắt', price_q: '💵 Hỏi giá',
+  location_q: '📍 Hỏi vị trí', amenity_q: '🛋️ Hỏi tiện nghi',
+  policy_q: '📜 Hỏi chính sách', small_talk: '💬 Nói chuyện',
+  complaint: '😤 Phàn nàn', goodbye: '👋 Tạm biệt',
+  handoff_request: '🆘 Gặp NV', unclear: '❓ Không rõ',
+};
+async function loadIntents() {
+  const days = parseInt(document.getElementById('intents-days')?.value || '7', 10);
+  const kpi = document.getElementById('intents-kpis');
+  const chart = document.getElementById('intents-chart');
+  const handlers = document.getElementById('intents-handlers');
+  const healthEl = document.getElementById('intents-health');
+  if (!chart) return;
+  chart.innerHTML = 'Đang tải...';
+  handlers.innerHTML = '';
+  try {
+    const [r, h] = await Promise.all([
+      api('/analytics/intents?days=' + days),
+      api('/analytics/router-health'),
+    ]);
+    kpi.innerHTML = [
+      { label: 'Tổng lượt', val: r.total, sub: `${days} ngày` },
+      { label: 'Avg Confidence', val: (r.avg_confidence * 100).toFixed(0) + '%', sub: r.avg_confidence >= 0.7 ? '✅ Tốt' : '⚠️ Thấp' },
+      { label: 'LLM vs Rule', val: `${r.sources?.llm || 0} / ${r.sources?.rule || 0}`, sub: 'LLM / fallback' },
+      { label: 'High confidence', val: r.confidence_buckets?.high || 0, sub: `>= 75%` },
+    ].map(k => `<div class="bg-white rounded-xl shadow p-4">
+      <div class="text-xs text-slate-500">${k.label}</div>
+      <div class="text-2xl font-bold mt-1">${k.val}</div>
+      <div class="text-xs text-slate-400 mt-1">${k.sub}</div>
+    </div>`).join('');
+
+    const maxCount = Math.max(1, ...r.intents.map(i => i.count));
+    chart.innerHTML = r.intents.length === 0 ? '<div class="text-slate-500 text-sm">Chưa có dữ liệu intent.</div>'
+      : r.intents.map(i => {
+        const label = INTENT_LABELS[i.intent] || i.intent;
+        const w = Math.round(i.count / maxCount * 100);
+        return `<div class="mb-2">
+          <div class="flex justify-between text-xs mb-1">
+            <span>${label}</span>
+            <span class="font-mono">${i.count} <span class="text-slate-400">(${i.pct}%)</span></span>
+          </div>
+          <div class="h-5 bg-slate-100 rounded overflow-hidden"><div class="h-full bg-indigo-500" style="width:${w}%"></div></div>
+        </div>`;
+      }).join('');
+
+    handlers.innerHTML = r.handlers.length === 0 ? '<div class="text-slate-500 text-sm">Chưa có dữ liệu.</div>'
+      : `<table class="w-full text-sm">
+        <thead><tr class="text-xs text-slate-500 border-b"><th class="text-left py-2">Handler</th><th class="text-right py-2">Lượt</th></tr></thead>
+        <tbody>${r.handlers.map(x => `<tr class="border-b"><td class="py-2 font-mono">${x.handler}</td><td class="py-2 text-right font-semibold">${x.count}</td></tr>`).join('')}</tbody>
+      </table>`;
+
+    if (healthEl) {
+      const st = h.status || 'no-data';
+      const color = st === 'healthy' ? 'bg-green-100 text-green-700' : st === 'degraded' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500';
+      healthEl.innerHTML = `<span class="px-3 py-1 rounded-full text-xs font-semibold ${color}">${st === 'healthy' ? '✅ Healthy' : st === 'degraded' ? '⚠️ Degraded' : '· No data'} (rule=${h.rule_fallback_pct}%, lowConf=${h.low_confidence_pct}%)</span>`;
+    }
+  } catch (e) {
+    chart.innerHTML = `<div class="text-red-600 text-sm">Lỗi: ${_esc(e.message)}</div>`;
+  }
+}
+document.getElementById('intents-days')?.addEventListener('change', loadIntents);
+document.getElementById('intents-refresh')?.addEventListener('click', loadIntents);
 
 // ====== Init ======
 checkAuth();

@@ -872,8 +872,9 @@ async function dispatchV6(ctx: {
   const { msg, hid, pid, senderId, senderName, t0 } = ctx;
 
   const { classifyTurn, decideHandler } = require('./intent-router');
-  const { fastReply, handleObjection, handleHandoff } = require('./reply-handlers');
+  const { fastReply, handleObjection, handleHandoff, priceFilterReply } = require('./reply-handlers');
   const { pauseBooking, resumeBooking, getActiveBookingInfo } = require('./bookingflow');
+  const { ensureDiverse } = require('./anti-repeat');
 
   // Fetch history 6 last turns
   const historyRows = db.prepare(
@@ -945,10 +946,40 @@ async function dispatchV6(ctx: {
     if (bookingInfo && bookingInfo.status !== 'paused' && router.intent !== 'booking_action' && router.intent !== 'booking_info') {
       pauseBooking(senderId);
     }
-    const out = await smartReply(msg, hid, senderId, senderName, pid);
-    reply = out.reply;
-    intentLabel = 'rag';
-    skipSave = true;
+    // Price-limit filter shortcut: khi intent=price_q + có price_limit, trả lời nhanh từ DB
+    if (router.intent === 'price_q' && router.slots.price_limit) {
+      try {
+        const { rooms } = getHotelCache(hid);
+        const shortcut = priceFilterReply(router.slots.price_limit, rooms as any);
+        if (shortcut) {
+          reply = shortcut;
+          intentLabel = 'price_filter';
+        }
+      } catch {}
+    }
+    if (!reply) {
+      const out = await smartReply(msg, hid, senderId, senderName, pid);
+      reply = out.reply;
+      intentLabel = 'rag';
+      skipSave = true;
+    }
+  }
+
+  // ─── Anti-repetition filter (trừ booking/handoff/empty) ───
+  if (reply && senderId && !['booking', 'handoff', 'bot_paused'].includes(intentLabel)) {
+    try {
+      const diverse = await ensureDiverse({
+        reply,
+        senderId,
+        pageId: pid,
+        intent: intentLabel,
+        userMessage: msg,
+      });
+      if (diverse.wasRephrased) {
+        console.log(`[v6] anti-repeat: rephrased (sim=${diverse.similarity?.toFixed(2)})`);
+        reply = diverse.reply;
+      }
+    } catch {}
   }
 
   if (reply && !skipSave) saveMessage(senderId, pid, 'bot', reply, intentLabel);

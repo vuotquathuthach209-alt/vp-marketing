@@ -10,6 +10,43 @@ import { notifyAdmin } from './telegram';
 import { db } from '../db';
 
 // ──────────────────────────────────────────────────────────────
+// 0. Price-limit response — dùng khi user hỏi "phòng dưới Xk"
+//    Tra cứu rooms thực tế, nói thẳng có/không trong ngân sách.
+// ──────────────────────────────────────────────────────────────
+
+interface RoomInfo { name: string; base_price: number; hourly_price?: number; }
+
+function formatVnd(n: number): string {
+  return n.toLocaleString('vi-VN') + 'đ';
+}
+
+export function priceFilterReply(priceLimit: number, rooms: RoomInfo[]): string | null {
+  if (!rooms || rooms.length === 0) return null;
+
+  const withinBudget = rooms.filter(r => r.base_price && r.base_price <= priceLimit);
+  const cheapest = [...rooms].filter(r => r.base_price).sort((a, b) => a.base_price - b.base_price)[0];
+
+  if (withinBudget.length > 0) {
+    const top = withinBudget.slice(0, 3);
+    const list = top.map(r => `• ${r.name}: ${formatVnd(r.base_price)}/đêm`).join('\n');
+    return `Dạ trong tầm ${formatVnd(priceLimit)} bên em có ${withinBudget.length} phòng ạ 😊\n\n${list}\n\nAnh/chị muốn xem kỹ phòng nào ạ?`;
+  }
+
+  // Không có phòng trong budget — nói thẳng, đề xuất phòng rẻ nhất
+  if (cheapest) {
+    const gap = cheapest.base_price - priceLimit;
+    const gapStr = gap > 100000 ? `cao hơn ngân sách của anh/chị khoảng ${formatVnd(gap)}` : 'chênh lệch không nhiều';
+    let note = '';
+    if (cheapest.hourly_price && cheapest.hourly_price < priceLimit) {
+      note = `\n\n💡 Nếu cần ở theo giờ, phòng ${cheapest.name} có giá ${formatVnd(cheapest.hourly_price)}/giờ ạ.`;
+    }
+    return `Dạ hiện bên em phòng rẻ nhất là ${cheapest.name} — ${formatVnd(cheapest.base_price)}/đêm, ${gapStr} ạ. Anh/chị có cân nhắc được không ạ?${note}`;
+  }
+
+  return null;
+}
+
+// ──────────────────────────────────────────────────────────────
 // A. Fast Reply — greeting / goodbye / small_talk
 //    Không gọi LLM (tiết kiệm latency + cost), lấy template có sẵn.
 // ──────────────────────────────────────────────────────────────

@@ -187,7 +187,7 @@ export async function generate({ task, system, user }: GenInput): Promise<string
         result = await callMistral(route, system, user);
         break;
       case 'ollama':
-        result = await callOllama(route, system, user);
+        result = await callOllama(route, system, user, task);
         break;
     }
     logUsage({
@@ -366,8 +366,11 @@ async function callMistral(route: RouteConfig, system: string, user: string): Pr
 }
 
 // ---------- Ollama local (Qwen / Llama / etc.) ----------
-async function callOllama(route: RouteConfig, system: string, user: string): Promise<CallResult> {
+async function callOllama(route: RouteConfig, system: string, user: string, task?: TaskType): Promise<CallResult> {
   const t0 = Date.now();
+  // Task-aware timeout: user-facing chat cần nhanh, background có thể chờ lâu.
+  // reply_qwen = hội thoại realtime → 12s. Hết timeout thì throw để fallback sang Gemini.
+  const timeoutMs = task === 'reply_qwen' ? 12000 : 60000;
   try {
     const resp = await axios.post(
       `${OLLAMA_HOST}/api/chat`,
@@ -383,7 +386,7 @@ async function callOllama(route: RouteConfig, system: string, user: string): Pro
           temperature: 0.5,
         },
       },
-      { timeout: 90000, headers: { 'Content-Type': 'application/json' } }
+      { timeout: timeoutMs, headers: { 'Content-Type': 'application/json' } }
     );
     const text = resp.data?.message?.content;
     if (!text) throw new Error('Ollama: không có text trả về');

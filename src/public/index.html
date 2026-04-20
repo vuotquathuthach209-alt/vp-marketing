@@ -99,6 +99,7 @@
         <button data-tab="agent-audit" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="bot"></i><span>AI Agent</span></button>
         <button data-tab="bot-control" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="pause-circle"></i><span>Tạm dừng bot</span></button>
         <button data-tab="funnel" class="nav-btn nav-admin w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="trending-down"></i><span>Funnel (admin)</span></button>
+        <button data-tab="intents" class="nav-btn nav-admin w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="brain-circuit"></i><span>Intent Router</span></button>
 
         <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Báo cáo</div>
         <button data-tab="analytics" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="bar-chart-3"></i><span>Thống kê</span></button>
@@ -1243,6 +1244,32 @@
         <div id="funnel-chart" class="bg-white rounded-xl shadow p-6 mb-6"></div>
         <h3 class="font-bold mb-2">Top events</h3>
         <div id="funnel-top" class="bg-white rounded-xl shadow overflow-hidden"></div>
+      </section>
+
+      <!-- INTENT ROUTER ANALYTICS (admin only) -->
+      <section data-panel="intents" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-2">🧠 Intent Router v6</h2>
+        <p class="text-sm text-slate-500 mb-4">Phân tích quyết định của orchestrator — tỷ lệ intent, confidence, handler, LLM vs rule fallback.</p>
+        <div class="flex gap-2 mb-4 items-center">
+          <select id="intents-days" class="border rounded px-3 py-2 text-sm">
+            <option value="1">24h</option>
+            <option value="7" selected>7 ngày</option>
+            <option value="30">30 ngày</option>
+          </select>
+          <button id="intents-refresh" class="bg-slate-200 px-3 py-1 rounded text-sm">🔄 Tải</button>
+          <span id="intents-health" class="ml-auto text-xs"></span>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4" id="intents-kpis"></div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="bg-white rounded-xl shadow p-5">
+            <h3 class="font-bold mb-3">Phân bố Intent</h3>
+            <div id="intents-chart"></div>
+          </div>
+          <div class="bg-white rounded-xl shadow p-5">
+            <h3 class="font-bold mb-3">Handler được chọn</h3>
+            <div id="intents-handlers"></div>
+          </div>
+        </div>
       </section>
 
       <!-- SYSTEM CONFIG TAB (admin only) -->
