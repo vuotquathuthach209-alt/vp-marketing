@@ -444,12 +444,35 @@ async function handleDeterministic(
   const msgL = msg.toLowerCase().trim();
   const msgNorm = removeDiacritics(msgL);
   const { hotel, rooms: cachedRooms, hotelCache } = getHotelCache(hotelId);
-  const hotelName = hotel?.name || 'Khách sạn';
+  let hotelName = hotel?.name || 'Khách sạn';
 
   let rooms = cachedRooms;
   if (rooms.length === 0 && ['price', 'rooms', 'room_images', 'branch_select', 'hourly', 'check_dates'].includes(intent)) {
     rooms = await fetchRoomsRealtime(hotelId);
   }
+
+  // v7 Phase 3: Ưu tiên hotel_knowledge (AI-synthesized) nếu có
+  // Chỉ override khi hotel_knowledge cho hotel_id này TỒN TẠI
+  let kbUsed = false;
+  try {
+    const { hasKnowledge, getProfile, getRooms } = require('./hotel-knowledge');
+    if (hasKnowledge(hotelId)) {
+      const prof = getProfile(hotelId);
+      const kbRooms = getRooms(hotelId);
+      if (prof?.name_canonical) hotelName = prof.name_canonical;
+      if (kbRooms && kbRooms.length > 0) {
+        rooms = kbRooms.map((r: any) => ({
+          name: r.display_name_vi,
+          base_price: r.price_weekday,
+          hourly_price: r.price_hourly,
+          max_guests: r.max_guests,
+          bed_type: r.bed_config,
+        }));
+        kbUsed = true;
+      }
+    }
+  } catch {}
+  if (kbUsed) console.log(`[smartreply] using hotel_knowledge for #${hotelId}: ${rooms.length} rooms`);
 
   switch (intent) {
     case 'greeting':
@@ -542,8 +565,14 @@ async function handleDeterministic(
     }
 
     case 'checkin': {
-      const checkIn = hotelCache?.check_in_time || '14:00';
-      const checkOut = hotelCache?.check_out_time || '12:00';
+      let checkIn = hotelCache?.check_in_time || '14:00';
+      let checkOut = hotelCache?.check_out_time || '12:00';
+      try {
+        const { getPolicies } = require('./hotel-knowledge');
+        const p = getPolicies(hotelId);
+        if (p?.checkin_time) checkIn = p.checkin_time;
+        if (p?.checkout_time) checkOut = p.checkout_time;
+      } catch {}
       if (msgL.includes('sớm') || msgNorm.includes('som') || msgL.includes('early')) {
         return { reply: `⏰ Check-in tiêu chuẩn: ${checkIn}\n\nNhận sớm tùy phòng trống:\n• Trước 2h: +30%\n• Trước 4h: +50%\n\nBạn muốn check-in lúc mấy giờ?`, intent: 'checkin' };
       }
@@ -554,6 +583,15 @@ async function handleDeterministic(
     }
 
     case 'location': {
+      // v7: Ưu tiên hotel_knowledge
+      try {
+        const { hasKnowledge, getProfile } = require('./hotel-knowledge');
+        if (hasKnowledge(hotelId)) {
+          const p = getProfile(hotelId);
+          const parts = [p.address, p.district, p.city].filter(Boolean);
+          return { reply: `📍 ${hotelName}:\n🏨 ${parts.join(', ') || 'Liên hệ mình nhé'}\n${p.phone ? `📞 ${p.phone}` : ''}\n\nBạn cần chỉ đường không ạ?`, intent: 'location' };
+        }
+      } catch {}
       if (hotelCache) {
         const parts = [hotelCache.address, hotelCache.district, hotelCache.city].filter(Boolean);
         return { reply: `📍 ${hotelName}:\n🏨 ${parts.join(', ') || 'Liên hệ mình nhé'}\n${hotelCache.phone ? `📞 ${hotelCache.phone}` : ''}\n\nBạn cần chỉ đường không ạ?`, intent: 'location' };
@@ -562,6 +600,23 @@ async function handleDeterministic(
     }
 
     case 'amenities': {
+      // v7: Ưu tiên hotel_amenities (AI-synthesized)
+      try {
+        const { hasKnowledge, getAmenities } = require('./hotel-knowledge');
+        if (hasKnowledge(hotelId)) {
+          const am = getAmenities(hotelId);
+          if (am.length > 0) {
+            const emojiMap: Record<string, string> = { wifi: '📶', pool: '🏊', gym: '💪', spa: '🧖', parking: '🅿️', restaurant: '🍽️', elevator: '🛗', ac: '❄️', bathroom: '🚿', kitchen: '🍳', breakfast: '🥐', laundry: '🧺', reception: '🛎️' };
+            const formatted = am.slice(0, 12).map((a: any) => {
+              const key = (a.name_vi + ' ' + (a.name_en || '') + ' ' + a.category).toLowerCase().replace(/\s+/g, '');
+              const emoji = Object.entries(emojiMap).find(([k]) => key.includes(k))?.[1] || '✅';
+              return `${emoji} ${a.name_vi}${a.free === 0 ? ' (có phí)' : ''}${a.hours ? ` · ${a.hours}` : ''}`;
+            }).join('\n');
+            return { reply: `🏨 Tiện ích ${hotelName}:\n\n${formatted}`, intent: 'amenities' };
+          }
+        }
+      } catch {}
+      // Fallback legacy
       if (hotelCache?.amenities) {
         let amenities: string[] = [];
         try {
