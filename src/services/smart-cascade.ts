@@ -62,6 +62,10 @@ async function callGemini(opts: CascadeOpts, model: string, provider: SmartProvi
       const genCfg: any = {
         maxOutputTokens: opts.maxTokens || 800,
         temperature: opts.temperature ?? 0.7,
+        // Gemini 2.5 Flash có "thinking mode" mặc định tốn 200-800 tokens
+        // reasoning, ăn vào maxOutputTokens → output thực tế bị truncate.
+        // Disable thinking cho tasks thông thường (Q&A, classify, reply).
+        thinkingConfig: { thinkingBudget: 0 },
       };
       if (opts.json) genCfg.responseMimeType = 'application/json';
 
