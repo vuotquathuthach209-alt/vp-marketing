@@ -315,5 +315,17 @@ export function startScheduler() {
     }
   });
 
+  // Classifier batch mỗi 30 phút (process 10 articles/run; phù hợp với 177
+  // articles/ngày ÷ 10 × 48 runs ÷ ngày = đủ headroom)
+  cron.schedule('*/30 * * * *', async () => {
+    try {
+      const { classifyBatch } = require('./news-classifier');
+      const r = await classifyBatch(10);
+      if (r.processed > 0) console.log(`[scheduler] news-classify: ${JSON.stringify(r)}`);
+    } catch (e: any) {
+      console.error('[scheduler] news-classify error:', e?.message);
+    }
+  });
+
   console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h');
 }
