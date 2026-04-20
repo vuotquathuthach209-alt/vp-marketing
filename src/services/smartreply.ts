@@ -1116,8 +1116,16 @@ async function dispatchV6(ctx: {
       pauseBooking(senderId);
     }
 
-    // v7: Multi-hotel recommender — cho intent location_q / price_q có signal location
-    if (router.intent === 'location_q' || router.intent === 'price_q') {
+    // v7: Multi-hotel recommender
+    // Fire cho: location_q, price_q, HOẶC khi msg chứa property_type keyword
+    let shouldRecommend = router.intent === 'location_q' || router.intent === 'price_q';
+    if (!shouldRecommend) {
+      try {
+        const { detectTypeFromMessage } = require('./property-type-meta');
+        if (detectTypeFromMessage(msg)) shouldRecommend = true;
+      } catch {}
+    }
+    if (shouldRecommend) {
       try {
         const { recommend } = require('./hotel-recommender');
         const rec = recommend({ message: msg, slots: router.slots, historyTail });

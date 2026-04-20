@@ -102,7 +102,7 @@ export function detectTypeFromMessage(msg: string): PropertyType | null {
 
 /** User có hỏi thuê tháng không? */
 export function isMonthlyRentalQuery(msg: string): boolean {
-  return /\b(thuê tháng|thue thang|per month|monthly|theo tháng|theo thang|dài hạn|dai han|long term|1 tháng|2 tháng|6 tháng|hợp đồng)\b/i.test(msg);
+  return /(thuê tháng|thue thang|per month|monthly|theo tháng|theo thang|dài hạn|dai han|long[- ]term|\d+\s*tháng|\d+\s*thang|hợp đồng thuê|thuê dài|thuê\s+\d+\s*tháng)/i.test(msg);
 }
 
 /** User có hỏi thuê giờ không? */
