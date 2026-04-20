@@ -1037,8 +1037,31 @@ async function dispatchV6(ctx: {
     if (bookingInfo && bookingInfo.status !== 'paused' && router.intent !== 'booking_action' && router.intent !== 'booking_info') {
       pauseBooking(senderId);
     }
+
+    // v7: Multi-hotel recommender — cho intent location_q / price_q có signal location
+    if (router.intent === 'location_q' || router.intent === 'price_q') {
+      try {
+        const { recommend } = require('./hotel-recommender');
+        const rec = recommend({ message: msg, slots: router.slots, historyTail });
+        if (rec && rec.type !== 'no_knowledge') {
+          reply = rec.reply;
+          intentLabel = rec.type === 'recommended' ? 'hotel_rec' : 'hotel_no_match';
+          try {
+            const { trackEvent } = require('./events');
+            trackEvent({
+              event: 'hotel_recommend',
+              hotelId: hid,
+              meta: { type: rec.type, count: rec.hotels?.length || 0, ...rec.meta },
+            });
+          } catch {}
+        }
+      } catch (e: any) {
+        console.warn('[recommender] fail:', e?.message);
+      }
+    }
+
     // Price-limit filter shortcut: khi intent=price_q + có price_limit, trả lời nhanh từ DB
-    if (router.intent === 'price_q' && router.slots.price_limit) {
+    if (!reply && router.intent === 'price_q' && router.slots.price_limit) {
       try {
         // v7: Ưu tiên hotel_knowledge (AI-synthesized), fallback mkt_rooms_cache
         const { hasKnowledge, getRooms } = require('./hotel-knowledge');

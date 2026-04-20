@@ -5,6 +5,7 @@
 import { db } from '../db';
 import { SynthesizedHotel } from './hotel-synthesizer';
 import { embed, encodeEmbedding } from './embedder';
+import { geocode } from './geocoder';
 
 /** Simple geohash implementation cho VN */
 function geohashEncode(lat: number, lon: number, precision = 6): string {
@@ -35,10 +36,19 @@ export async function upsertKnowledge(
 ): Promise<void> {
   const now = Date.now();
 
-  // 1. hotel_profile
-  const geohash = (data.latitude && data.longitude)
-    ? geohashEncode(data.latitude, data.longitude, 6)
-    : null;
+  // 1. hotel_profile — auto-geocode nếu thiếu lat/lon
+  let lat = data.latitude, lon = data.longitude;
+  if ((!lat || !lon) && data.address) {
+    try {
+      const g = await geocode(`${data.address}, ${data.district || ''} ${data.city || ''} Vietnam`);
+      if (g) {
+        lat = g.latitude;
+        lon = g.longitude;
+        console.log(`[hotel_knowledge] geocoded #${hotelId}: ${lat},${lon}`);
+      }
+    } catch {}
+  }
+  const geohash = (lat && lon) ? geohashEncode(lat, lon, 6) : null;
 
   // Read existing version + manual_override flag
   const existing = db.prepare(
@@ -101,6 +111,11 @@ export async function upsertKnowledge(
     data.nearby_landmarks ? JSON.stringify(data.nearby_landmarks) : null,
     now, synthesizedBy, version, now,
   );
+  // override lat/lon với geocoded values
+  if (lat && lon && lat !== data.latitude) {
+    db.prepare(`UPDATE hotel_profile SET latitude = ?, longitude = ?, geohash = ? WHERE hotel_id = ?`)
+      .run(lat, lon, geohash, hotelId);
+  }
 
   // 2. rooms — replace all for this hotel
   db.prepare(`DELETE FROM hotel_room_catalog WHERE hotel_id = ?`).run(hotelId);
@@ -234,4 +249,131 @@ export function getPolicies(hotelId: number): any {
 export function hasKnowledge(hotelId: number): boolean {
   const r = db.prepare(`SELECT 1 FROM hotel_profile WHERE hotel_id = ? LIMIT 1`).get(hotelId);
   return !!r;
+}
+
+/** Count total hotels with knowledge */
+export function countHotels(): number {
+  const r = db.prepare(`SELECT COUNT(*) AS n FROM hotel_profile`).get() as any;
+  return r?.n || 0;
+}
+
+import { haversineKm } from './geocoder';
+
+/**
+ * Search hotels gần 1 điểm (lat/lon) trong bán kính km.
+ * Trả về top-N sorted by distance.
+ */
+export interface HotelSearchResult {
+  hotel_id: number;
+  name: string;
+  city: string;
+  district: string;
+  distance_km: number;
+  min_price: number;
+  star_rating: number | null;
+  ai_summary_vi: string;
+  usp_top3: string[];
+}
+
+export function searchNearby(opts: {
+  lat: number;
+  lon: number;
+  radius_km?: number;
+  limit?: number;
+  min_guests?: number;
+  max_price?: number;
+  city?: string;
+}): HotelSearchResult[] {
+  const radius = opts.radius_km || 10;
+  const limit = opts.limit || 5;
+
+  const cityFilter = opts.city ? `AND LOWER(city) = LOWER(?)` : '';
+  const params: any[] = [];
+  if (opts.city) params.push(opts.city);
+
+  const profiles = db.prepare(
+    `SELECT hotel_id, name_canonical, city, district, latitude, longitude, star_rating,
+            ai_summary_vi, usp_top3
+     FROM hotel_profile
+     WHERE latitude IS NOT NULL AND longitude IS NOT NULL ${cityFilter}`
+  ).all(...params) as any[];
+
+  const results: HotelSearchResult[] = [];
+  for (const p of profiles) {
+    const dist = haversineKm(opts.lat, opts.lon, p.latitude, p.longitude);
+    if (dist > radius) continue;
+
+    // Lookup cheapest room, optionally filter by price/guests
+    let roomSql = `SELECT MIN(price_weekday) AS min_price FROM hotel_room_catalog WHERE hotel_id = ?`;
+    const roomParams: any[] = [p.hotel_id];
+    if (opts.min_guests) {
+      roomSql = `SELECT MIN(price_weekday) AS min_price FROM hotel_room_catalog WHERE hotel_id = ? AND max_guests >= ?`;
+      roomParams.push(opts.min_guests);
+    }
+    const r = db.prepare(roomSql).get(...roomParams) as any;
+    const minPrice = r?.min_price || 0;
+    if (opts.max_price && minPrice > opts.max_price) continue;
+
+    let usps: string[] = [];
+    try { usps = JSON.parse(p.usp_top3 || '[]'); } catch {}
+
+    results.push({
+      hotel_id: p.hotel_id,
+      name: p.name_canonical,
+      city: p.city,
+      district: p.district,
+      distance_km: +dist.toFixed(1),
+      min_price: minPrice,
+      star_rating: p.star_rating,
+      ai_summary_vi: p.ai_summary_vi || '',
+      usp_top3: usps,
+    });
+  }
+
+  results.sort((a, b) => a.distance_km - b.distance_km);
+  return results.slice(0, limit);
+}
+
+/**
+ * Search hotels by city + district (fallback nếu không có lat/lon).
+ */
+export function searchByArea(opts: { city?: string; district?: string; limit?: number; max_price?: number; min_guests?: number }): HotelSearchResult[] {
+  const limit = opts.limit || 5;
+  const conds: string[] = [];
+  const params: any[] = [];
+  if (opts.city) { conds.push(`LOWER(city) LIKE LOWER(?)`); params.push(`%${opts.city}%`); }
+  if (opts.district) { conds.push(`LOWER(district) LIKE LOWER(?)`); params.push(`%${opts.district}%`); }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  const profiles = db.prepare(
+    `SELECT hotel_id, name_canonical, city, district, star_rating, ai_summary_vi, usp_top3
+     FROM hotel_profile ${where} LIMIT ?`
+  ).all(...params, limit) as any[];
+
+  const results: HotelSearchResult[] = [];
+  for (const p of profiles) {
+    let roomSql = `SELECT MIN(price_weekday) AS min_price FROM hotel_room_catalog WHERE hotel_id = ?`;
+    const roomParams: any[] = [p.hotel_id];
+    if (opts.min_guests) {
+      roomSql += ` AND max_guests >= ?`;
+      roomParams.push(opts.min_guests);
+    }
+    const r = db.prepare(roomSql).get(...roomParams) as any;
+    const minPrice = r?.min_price || 0;
+    if (opts.max_price && minPrice > opts.max_price) continue;
+
+    let usps: string[] = [];
+    try { usps = JSON.parse(p.usp_top3 || '[]'); } catch {}
+    results.push({
+      hotel_id: p.hotel_id,
+      name: p.name_canonical,
+      city: p.city,
+      district: p.district,
+      distance_km: 0,
+      min_price: minPrice,
+      star_rating: p.star_rating,
+      ai_summary_vi: p.ai_summary_vi || '',
+      usp_top3: usps,
+    });
+  }
+  return results;
 }
