@@ -19,6 +19,7 @@
 import { db } from '../db';
 import { smartCascade } from './smart-cascade';
 import { embed, cosine, encodeEmbedding, decodeEmbedding } from './embedder';
+import { getSourceById } from './news-sources';
 
 const BATCH_SIZE = 10;                           // classify 10 articles/run
 const DEDUPE_SIM_THRESHOLD = 0.85;
@@ -60,15 +61,28 @@ function countKeywords(text: string, lang: 'vi' | 'en'): { count: number; matche
   return { count: matched.size, matched: Array.from(matched) };
 }
 
-export function keywordGate(title: string, body: string | null, lang: 'vi' | 'en'): { pass: boolean; matched: string[] } {
+export function keywordGate(
+  title: string,
+  body: string | null,
+  lang: 'vi' | 'en',
+  sourceId?: string,
+): { pass: boolean; matched: string[]; reason: string } {
   const text = [title, body || ''].join(' ');
   const primary = countKeywords(text, lang);
-  if (primary.count >= 2) return { pass: true, matched: primary.matched };
-
-  // Fallback: try other lang (VN articles hay có keyword EN, ngược lại)
   const other = countKeywords(text, lang === 'vi' ? 'en' : 'vi');
   const combined = new Set([...primary.matched, ...other.matched]);
-  return { pass: combined.size >= 2, matched: Array.from(combined) };
+
+  // Source-aware threshold:
+  //   - Travel/industry specific sources: threshold = 1 (any travel keyword là OK)
+  //   - General sources (BBC world, VnExpress Thế giới): threshold = 2
+  const src = sourceId ? getSourceById(sourceId) : undefined;
+  const isTravelSource = src?.category === 'travel' || src?.category === 'industry';
+  const threshold = isTravelSource ? 1 : 2;
+
+  if (combined.size >= threshold) {
+    return { pass: true, matched: Array.from(combined), reason: `${combined.size}≥${threshold} (${isTravelSource ? 'travel_src' : 'general_src'})` };
+  }
+  return { pass: false, matched: Array.from(combined), reason: `${combined.size}<${threshold} (${isTravelSource ? 'travel_src' : 'general_src'})` };
 }
 
 /* ═══════════════════════════════════════════
@@ -119,12 +133,22 @@ Trả JSON schema:
     const result = await smartCascade({
       system: CLASSIFIER_SYSTEM,
       user,
-      maxTokens: 300,
+      maxTokens: 400,
       temperature: 0.1,
       json: true,
     });
-    const parsed = JSON.parse(result.text);
-    // Sanity check + clamp
+    // Gemini đôi khi trả prose prefix ("Here is the JSON..."). Extract JSON block.
+    let jsonText = result.text.trim();
+    // Strip markdown code fence ```json ... ```
+    const fence = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fence) jsonText = fence[1].trim();
+    // Extract { ... } block
+    const braceStart = jsonText.indexOf('{');
+    const braceEnd = jsonText.lastIndexOf('}');
+    if (braceStart >= 0 && braceEnd > braceStart) {
+      jsonText = jsonText.slice(braceStart, braceEnd + 1);
+    }
+    const parsed = JSON.parse(jsonText);
     return {
       relevant: !!parsed.relevant,
       impact: Math.max(0, Math.min(1, Number(parsed.impact) || 0)),
@@ -189,18 +213,18 @@ export interface ClassifyBatchResult {
 /** Classify 1 article — trả true nếu passed, update status luôn. */
 export async function classifyArticle(articleId: number): Promise<'pass' | 'keyword_filter' | 'ai_filter' | 'political' | 'duplicate' | 'gemini_error'> {
   const a = db.prepare(
-    `SELECT id, title, body, lang, published_at FROM news_articles WHERE id = ?`
+    `SELECT id, title, body, lang, published_at, source FROM news_articles WHERE id = ?`
   ).get(articleId) as any;
   if (!a) return 'gemini_error';
 
   const now = Date.now();
 
-  // Stage 1: keyword gate
-  const kw = keywordGate(a.title, a.body, a.lang === 'en' ? 'en' : 'vi');
+  // Stage 1: keyword gate (source-aware: threshold=1 cho travel sources, =2 cho general)
+  const kw = keywordGate(a.title, a.body, a.lang === 'en' ? 'en' : 'vi', a.source);
   if (!kw.pass) {
     db.prepare(
       `UPDATE news_articles SET status='filtered_out', status_note=?, last_state_change_at=? WHERE id=?`
-    ).run(`no_keywords (matched ${kw.matched.length}/${TRAVEL_KEYWORDS_VI.length})`, now, articleId);
+    ).run(`no_keywords ${kw.reason}`, now, articleId);
     return 'keyword_filter';
   }
 
