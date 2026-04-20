@@ -309,12 +309,22 @@ export async function synthesizeHotel(raw: OtaRawHotel): Promise<{
     parsed.property_type = raw.property_type.toLowerCase();
   }
   // v7.3: rental_type infer theo product-taxonomy (KHÔNG để Gemini tự chọn)
-  // apartment = thuê THÁNG, others = thuê ĐÊM
   if (parsed.property_type) {
     const { classifyProduct } = require('./product-taxonomy');
     const c = classifyProduct(parsed.property_type);
     parsed.rental_type = c.rental_type;
   }
+
+  // v7.3: CARRY THROUGH _scraped fields từ raw (không bị Gemini drop)
+  if ((raw as any)._scraped) {
+    (parsed as any)._scraped = (raw as any)._scraped;
+  }
+  // Preserve authoritative address
+  if (raw.address) parsed.address = raw.address;
+  if (raw.city) parsed.city = raw.city;
+  if (raw.district) parsed.district = raw.district;
+  if (raw.latitude) parsed.latitude = raw.latitude;
+  if (raw.longitude) parsed.longitude = raw.longitude;
 
   return { ok: true, data: parsed as SynthesizedHotel, retried };
 }
