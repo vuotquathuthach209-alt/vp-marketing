@@ -57,7 +57,7 @@ const DEFAULT_ROUTES: Record<TaskType, RouteConfig> = {
   intent_gateway:{ provider: 'google',    model: 'gemini-2.5-flash-lite',  maxTokens: 200  },
   reply_qwen:    { provider: 'ollama',    model: OLLAMA_MODEL,              maxTokens: 500  },
   // v7 Hotel Knowledge ETL: Gemini 2.5 Flash primary, Qwen local fallback
-  etl_synthesize:{ provider: 'google',    model: 'gemini-2.5-flash',        maxTokens: 800  },
+  etl_synthesize:{ provider: 'google',    model: 'gemini-2.5-flash',        maxTokens: 2000 },
 };
 
 /**
@@ -174,7 +174,7 @@ export async function generate({ task, system, user }: GenInput): Promise<string
         result = await callAnthropic(route, system, user);
         break;
       case 'google':
-        result = await callGemini(route, system, user);
+        result = await callGemini(route, system, user, task);
         break;
       case 'groq':
         result = await callGroq(route, system, user);
@@ -251,7 +251,7 @@ async function callAnthropic(route: RouteConfig, system: string, user: string): 
 }
 
 // ---------- Google Gemini ----------
-async function callGemini(route: RouteConfig, system: string, user: string): Promise<CallResult> {
+async function callGemini(route: RouteConfig, system: string, user: string, task?: TaskType): Promise<CallResult> {
   const keys = getAllKeys('google_api_key', process.env.GOOGLE_API_KEY);
   const startKey = pickKey('google_api_key', process.env.GOOGLE_API_KEY);
   const startIdx = keys.indexOf(startKey);
@@ -261,15 +261,18 @@ async function callGemini(route: RouteConfig, system: string, user: string): Pro
     const key = keys[(startIdx + i) % keys.length];
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${route.model}:generateContent?key=${key}`;
+      const needsJson = task === 'etl_synthesize' || task === 'intent_gateway';
+      const genCfg: any = {
+        maxOutputTokens: route.maxTokens,
+        temperature: needsJson ? 0.2 : 0.8,
+      };
+      if (needsJson) genCfg.responseMimeType = 'application/json';
       const resp = await axios.post(
         url,
         {
           systemInstruction: { parts: [{ text: system }] },
           contents: [{ role: 'user', parts: [{ text: user }] }],
-          generationConfig: {
-            maxOutputTokens: route.maxTokens,
-            temperature: 0.8,
-          },
+          generationConfig: genCfg,
         },
         { timeout: 60000, headers: { 'Content-Type': 'application/json' } }
       );
