@@ -74,7 +74,7 @@ CHỈ trả JSON, không giải thích.`;
 async function callGeminiMultimodal(
   prompt: string,
   input: AttachmentInput,
-  maxTokens = 600,
+  maxTokens = 1200,
 ): Promise<string> {
   const key = pickKey('google_api_key', process.env.GOOGLE_API_KEY);
   if (!key) throw new Error('GOOGLE_API_KEY not configured');
