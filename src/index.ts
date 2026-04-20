@@ -30,6 +30,7 @@ import bankWebhookRouter from './routes/bank-webhook';
 import agentRouter from './routes/agent';
 import dataDeletionRouter from './routes/data-deletion';
 import './services/agent-tools'; // init table + register tools
+import './services/ota-readonly-guard'; // self-test fires on boot (fail-fast if guard broken)
 import rateLimit from 'express-rate-limit';
 
 const app = express();

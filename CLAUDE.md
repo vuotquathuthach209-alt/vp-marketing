@@ -26,6 +26,13 @@
 2. **KHÔNG commit secrets** (API key, password) vào Git — dùng `.env` trên VPS.
 3. **KHÔNG edit DB production trực tiếp** — phải qua migration trong `src/db.ts`.
 4. **KHÔNG đụng vào hệ thống nào khác** trên internet khi làm VP MKT (kể cả Railway cũ, Vercel, v.v.)
+5. **KHÔNG ghi/sửa/xóa OTA database** (`103.153.73.97` / `OTA-WEB`):
+   - OTA là PRODUCTION — chứa data của nhiều khách sạn.
+   - Project này CHỈ ĐƯỢC ĐỌC: SELECT / SHOW / DESCRIBE / EXPLAIN.
+   - Mọi query phải đi qua `otaQueryReadOnly()` (`src/services/ota-readonly-guard.ts`).
+   - Guard throw `OtaReadOnlyViolation` ngay nếu phát hiện INSERT/UPDATE/DELETE/DROP/TRUNCATE/ALTER/CREATE/GRANT/REPLACE/MERGE/CALL/LOAD/FLUSH/etc.
+   - Self-test chạy khi app boot — fail-fast nếu guard hỏng.
+   - DB user phía OTA PHẢI chỉ có `GRANT SELECT` (defense in depth).
 
 ## ✅ Nguyên tắc làm việc
 
