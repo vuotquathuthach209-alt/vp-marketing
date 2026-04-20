@@ -228,13 +228,18 @@ export async function scrapeAllHotels(): Promise<OtaRawHotel[]> {
     if (a.utilitiesIncluded) services.push('Điện nước bao trọn');
     if (a.amenities?.includes('wifi')) services.push('Wifi');
 
+    // Apartment listing không expose address → fallback city/district
+    const address = a.address && a.address !== 'undefined'
+      ? a.address
+      : [a.district, a.city].filter(Boolean).join(', ') || undefined;
+
     result.push({
       id: a.id,
       name: a.name,
       slug: a.slug,
       city: a.city,
       district: a.district,
-      address: a.address,
+      address,
       latitude: a.lat,
       longitude: a.lng,
       star_rating: a.starRating,

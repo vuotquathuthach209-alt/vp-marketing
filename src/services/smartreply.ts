@@ -979,6 +979,21 @@ export async function smartReplyWithSender(
     useNewRouter = !!f.new_router;
   } catch {}
 
+  // v7.3+: Block legacy booking FSM cho monthly_apartment
+  // Đảm bảo khách apartment KHÔNG bị rơi vào flow thuê đêm
+  try {
+    const { getProfile } = require('./hotel-knowledge');
+    const prof = getProfile(hid);
+    if (prof?.product_group === 'long_term_apartment') {
+      // Clear any pending booking FSM state (legacy config)
+      const { hasActiveBooking, pauseBooking } = require('./bookingflow');
+      if (senderId && hasActiveBooking(senderId)) {
+        pauseBooking(senderId);
+        console.log(`[smartreply] paused legacy booking FSM for apartment hotel #${hid}`);
+      }
+    }
+  } catch {}
+
   // v7.3: Smart rental intent matching (thuê tháng vs đêm)
   // Bot biết hotel này thuộc nhóm gì → reply phù hợp
   try {
@@ -1044,6 +1059,31 @@ export async function smartReplyWithSender(
           `Nếu anh/chị cần khách sạn thuê đêm, em có thể giới thiệu hệ thống **Khách sạn/Homestay** của bên em. Anh/chị muốn tham khảo không ạ?`;
         if (senderId) saveMessage(senderId, pid, 'bot', reply, 'mismatch_nightly');
         return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'mismatch_nightly' };
+      }
+
+      // User wants HOURLY
+      if (userIntent === 'hourly') {
+        // Apartment → không support thuê giờ
+        if (classification.group === 'monthly_apartment') {
+          const reply = `Dạ bên em là **${classification.label_vi} ${prof.name_canonical}** cho thuê theo THÁNG ạ 🙏\n\n` +
+            `Chưa có gói thuê theo giờ. Nếu anh/chị cần nghỉ ngắn (theo giờ hoặc theo đêm), em có thể giới thiệu Khách sạn/Homestay khác trong hệ thống Sonder nhé.`;
+          if (senderId) saveMessage(senderId, pid, 'bot', reply, 'mismatch_hourly_apt');
+          return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'mismatch_hourly_apt' };
+        }
+        // Hotel/homestay có thể có hourly option
+        const hourlyRoom = rooms.find((r: any) => r.price_hourly && r.price_hourly > 0);
+        if (hourlyRoom) {
+          const reply = `Dạ có ạ! **${prof.name_canonical}** có gói thuê theo giờ:\n\n` +
+            `⏰ ${hourlyRoom.display_name_vi}: ${hourlyRoom.price_hourly.toLocaleString('vi-VN')}đ/giờ\n\n` +
+            `Anh/chị định thuê từ giờ nào và bao lâu ạ?`;
+          if (senderId) saveMessage(senderId, pid, 'bot', reply, 'hourly_match');
+          return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'hourly_match' };
+        }
+        // Hotel không có hourly price
+        const reply = `Dạ bên em là **${classification.label_vi} ${prof.name_canonical}** cho thuê theo đêm ạ, hiện chưa có gói thuê theo giờ 🙏\n\n` +
+          `Anh/chị định ở mấy đêm để em tư vấn phòng phù hợp ạ?`;
+        if (senderId) saveMessage(senderId, pid, 'bot', reply, 'mismatch_hourly_nightly');
+        return { reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'mismatch_hourly_nightly' };
       }
     }
   } catch (e) { console.warn('[taxonomy] fail:', (e as any)?.message); }

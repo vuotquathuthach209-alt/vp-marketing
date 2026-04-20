@@ -433,11 +433,19 @@ export async function synthesizeHotel(raw: OtaRawHotel): Promise<{
       parsed.rental_type = c.rental_type;
     }
     if ((raw as any)._scraped) (parsed as any)._scraped = (raw as any)._scraped;
-    if (raw.address) parsed.address = raw.address;
-    if (raw.city) parsed.city = raw.city;
-    if (raw.district) parsed.district = raw.district;
+    if (raw.address && raw.address !== 'undefined') parsed.address = raw.address;
+    if (raw.city && raw.city !== 'undefined') parsed.city = raw.city;
+    if (raw.district && raw.district !== 'undefined') parsed.district = raw.district;
     if (raw.latitude) parsed.latitude = raw.latitude;
     if (raw.longitude) parsed.longitude = raw.longitude;
+  }
+
+  // v7.4: Clean "undefined"/"null" string literals từ Gemini output
+  for (const key of ['address', 'city', 'district', 'phone', 'name_en', 'ai_summary_en'] as const) {
+    const v = (parsed as any)[key];
+    if (v === 'undefined' || v === 'null' || v === '') {
+      (parsed as any)[key] = undefined;
+    }
   }
 
   return { ok: true, data: parsed as SynthesizedHotel, retried };
