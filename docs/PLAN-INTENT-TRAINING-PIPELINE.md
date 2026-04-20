@@ -1,18 +1,31 @@
 # Plan — Smart Intent Training Pipeline
 
 > Hệ thống AI "lãnh đạo thông minh" + "nhân viên địa phương rẻ" + human loop
-> Version: 1.0 | Date: 2026-04-20
+> Version: 1.1 | Date: 2026-04-20
+> 
+> ⚠️ **DECISION**: Claude CHỈ dùng cho marketing (caption/post), KHÔNG dùng cho chatbot.
+> Smart AI cho training pipeline = **Gemini 2.5 Flash** (free tier) hoặc **Gemini 2.5 Pro** (paid).
 
 ---
 
 ## 🎯 Mục tiêu
 
 Bot chatbot phải:
-1. **Khởi động thông minh**: AI cao cấp (Claude/GPT-4) phân tích ý định khách + sinh reply chất lượng cao
+1. **Khởi động thông minh**: AI cao cấp (**Gemini 2.5 Flash/Pro**) phân tích ý định khách + sinh reply chất lượng cao
 2. **Học dần**: Admin review reply pairs → approved → nạp vào training data
-3. **Vận hành kinh tế**: Local AI (Gemma) xử lý 80%+ queries (free), chỉ gọi Claude khi cần thiết
+3. **Vận hành kinh tế**: Local AI (Gemma/Qwen) xử lý 80%+ queries (free), chỉ gọi Gemini khi cần thiết
 4. **Gate confidence**: Local AI chỉ được phép trả tự động khi match ≥ 70% với data đã train
 5. **Tự cải thiện**: Feedback loop — reply tốt được boost, tệ bị demote
+
+**Phân tách AI provider rõ ràng:**
+
+| Use case | AI provider | Lý do |
+|----------|-------------|-------|
+| **Marketing content** (caption, post Facebook) | **Claude Sonnet 4.5** | Chất lượng Việt cao cấp, brand voice tốt |
+| **Chatbot smart reply (bootstrap)** | **Gemini 2.5 Flash** (free) / Pro (paid) | Free tier dồi dào, đủ tốt cho reasoning + VN |
+| **Chatbot local reply (steady state)** | **Gemma 2 / Qwen 2.5-7B local** | $0/reply, đủ khi cache hit ≥ 70% |
+| **ETL synthesize hotel data** | **Gemini 2.5 Flash** | Đã deploy, work tốt |
+| **Embedding (intent matching)** | **MiniLM ONNX local** | Free, instant |
 
 ---
 
@@ -179,7 +192,7 @@ Routing layer trên router.ts hiện tại.
 ```typescript
 interface SmartReplyResult {
   reply: string;
-  source: 'cache' | 'claude' | 'gemini' | 'gemma';
+  source: 'cache' | 'gemini_flash' | 'gemini_pro' | 'gemma' | 'qwen';  // Claude NOT used here
   match_confidence?: number;
   qa_cache_id?: number;
   cost_tokens?: number;
@@ -195,12 +208,14 @@ export async function smartReplyWithLearning(opts: {
 Logic:
 1. `matchIntent()` trên cache
 2. If `match.should_use_cached === true`:
-   - Return cached response
+   - Return cached response (Gemma sẽ polish variation nếu cần)
    - Inc `hits_count`
 3. Else:
-   - Call **Claude** (smart AI) với hotel context + message
+   - Call **Gemini 2.5 Flash** (smart AI cho bootstrap) với hotel context + message
+   - Nếu output không đủ tốt → fallback Gemini 2.5 Pro
    - Save response → qa_training_cache với tier='pending'
    - Return response + qa_cache_id (để track feedback)
+4. Claude **KHÔNG được gọi từ đây** — chỉ reserved cho marketing tasks (`task='caption'`, `task='image_prompt'`...)
 
 #### `feedback-tracker.ts`
 Capture customer follow-up signals.
@@ -327,35 +342,49 @@ if (match.should_use_cached) {
 
 ## 💰 Cost analysis
 
-### Scenario: 1000 messages/ngày
+### Scenario: 1000 messages/ngày — dùng **Gemini 2.5 Flash** (không Claude)
 
-**Month 1 (bootstrap)**:
-- 100% calls hit Claude (cache trống)
-- Claude Sonnet 4.5: ~$3/1M input, $15/1M output
-- Avg 500 tokens in + 200 tokens out per call
-- 1000 calls/day × 30 days × ($3×500/1M + $15×200/1M) = $135/month
-- Admin review → accumulate Q&A
+**Month 1 (bootstrap, 100% cache miss)**:
+- 100% calls → Gemini 2.5 Flash
+- Gemini Flash free tier: **1,500 RPD** — 1000 calls/day fit hoàn toàn
+- Cost: **$0/tháng** trong free tier
+- Nếu vượt: $0.075/1M input + $0.30/1M output
+- 500 tokens in + 200 tokens out × 1000 calls × 30 days = **$2.30/tháng** (paid tier)
 
 **Month 2 (50% cache hit)**:
-- 500 calls hit cache (Gemma free)
-- 500 calls Claude = $67/month
-- Cost saved: $68/month
+- 500 cache hits → Gemma local (free)
+- 500 Gemini calls → trong free tier luôn
+- **Cost: $0/tháng**
 
 **Month 3 (80% cache hit)**:
-- 800 cache hits
-- 200 Claude = $27/month
-- **Steady state**: ~$30/month for 1000 msgs/day quality bot
+- 800 cache hits → Gemma local
+- 200 Gemini calls → dư free tier
+- **Cost: $0/tháng**
 
-### Alternative: Skip Claude, use Gemini Flash
-- Gemini 2.5 Flash: $0.075/1M input, $0.30/1M output
-- Cheaper but lower quality reasoning
-- **Month 1**: 1000×30×($0.075×500/1M + $0.30×200/1M) = $4/month
-- **Good option** nếu budget căng
+### So sánh providers (cho 1000 msgs/day)
 
-### Recommended: Hybrid
-- Claude for intents chưa match (bootstrap + edge cases)
-- Gemini Flash cho bulk replies khi cache hit moderate
-- Gemma local cho match ≥ 85%
+| Provider | Month 1 bootstrap | Month 3 steady | Chất lượng VN | Reasoning |
+|----------|-------------------|----------------|---------------|-----------|
+| **Gemini 2.5 Flash** (FREE tier) | **$0** | **$0** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
+| Gemini 2.5 Flash (paid) | $2 | $0.5 | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
+| Gemini 2.5 Pro (paid) | $30 | $6 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+| ~~Claude Sonnet 4.5~~ | ~~$135~~ | ~~$30~~ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | **Reserved cho MKT** |
+
+### Recommended: Gemini Flash tier cascade
+```
+Match ≥ 85% → Gemma local (free, fastest)
+Match 70-85% → Gemma local + log for review
+Match < 70% → Gemini 2.5 Flash (free tier)
+Match fails (edge case) → Gemini 2.5 Pro (paid, rare)
+```
+
+**Dự kiến chi phí cho 1000 hotels × 100 msgs/ngày = 100k msgs/month:**
+- Cache hit 80% = 80k served by Gemma ($0)
+- Cache miss 20% = 20k served by Gemini Flash
+- Free tier: 1,500 RPD × 30 = 45k/month free
+- Paid: 20k - 45k = 0 overage = **$0/tháng**
+
+**Conclusion**: Plan này có thể **$0/tháng forever** nếu staying in Gemini free tier. Chỉ cần paid khi vượt 1,500 smart AI calls/ngày.
 
 ---
 
@@ -375,21 +404,28 @@ if (match.should_use_cached) {
 
 ## 🎯 Quyết định quan trọng cần chốt
 
-1. **Smart AI provider**: Claude vs GPT-4 vs Gemini Pro?
-   - Đề xuất: **Claude Sonnet 4.5** — tốt tiếng Việt, JSON structured output reliable
+1. ~~**Smart AI provider**: Claude vs GPT-4 vs Gemini Pro?~~
+   - ✅ **CHỐT**: **Gemini 2.5 Flash** (free tier) — Claude reserved cho marketing
+   - Nếu query phức tạp cần quality cao hơn: fallback **Gemini 2.5 Pro** (paid)
    
 2. **Confidence threshold**: 70% cố định hay adaptive?
-   - Đề xuất: 70% cố định cho MVP, tuning sau
+   - Đề xuất: **70% cố định** cho MVP, tuning sau khi có data
 
 3. **Admin review workflow**: 
    - Per-hotel admin hay global admin?
-   - Đề xuất: **Global admin** cho MVP (1 người review tất), sau expand multi-tenant
+   - Đề xuất: **Global admin** cho MVP, sau expand multi-tenant
 
 4. **Retention policy**: giữ rejected Q&A để học hay xóa?
-   - Đề xuất: Soft-delete (tier='rejected'), giữ để phân tích pattern spam/troll
+   - Đề xuất: **Soft-delete** (tier='rejected'), giữ để phân tích pattern spam/troll
 
 5. **Edge case**: customer hỏi câu hoàn toàn mới (chưa có pattern tương tự)?
-   - Đề xuất: Claude handle + flag "bootstrap_urgent" cho admin review sớm
+   - Đề xuất: **Gemini 2.5 Pro** handle + flag "bootstrap_urgent" cho admin review sớm
+
+6. **Khi free tier Gemini quota hết** (1500 RPD/project):
+   - Option A: Spin up nhiều Google API keys (đã có key rotation trong router.ts)
+   - Option B: Fallback Qwen 2.5-7B local (free, slower)
+   - Option C: Paid Gemini Flash (~$2-5/tháng)
+   - Đề xuất: **Cascade A→B→C**
 
 ---
 
@@ -421,11 +457,12 @@ Sau 1 tuần build + 2-4 tuần bootstrap (admin review), bot vào steady state.
 
 | Rủi ro | Mitigation |
 |--------|------------|
-| Claude API down | Fallback Gemini → Gemma local cascade |
-| Cost spike (nhiều bootstrap) | Hard cap $X/month, alert khi gần ngưỡng |
+| Gemini free tier quota hết | Multi-key rotation (đã có) → Qwen local fallback → paid tier |
+| Cost spike (nhiều bootstrap) | Quota monitor + alert khi gần 80% free tier |
 | Admin không kịp review | Auto-promote sau 7 ngày nếu hits_count > 20 + no negative feedback |
 | Customer hỏi trùng nhau liên tục | Dedupe bằng question_hash, save 1 entry + increment hits |
 | Cache poisoning (admin approve reply sai) | Tracking admin_user_id, có thể revert |
+| Gemini Flash quality không đủ cho edge case | Escalate Gemini Pro (paid) khi confidence < 50% |
 
 ---
 
@@ -435,8 +472,9 @@ Sau 1 tháng production:
 - [ ] 500+ Q&A pairs approved cho Sonder hotels
 - [ ] Cache hit rate ≥ 60%
 - [ ] Customer complaint rate giảm 40% vs baseline
-- [ ] Cost < $50/month cho 1000 customers/day
+- [ ] Cost **$0/month** (stay in Gemini free tier) hoặc < $5/month overage
 - [ ] Admin review time < 10 min/day
+- [ ] Claude spend KHÔNG tăng (chỉ cho marketing, không cho chatbot)
 
 ---
 
