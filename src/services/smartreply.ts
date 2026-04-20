@@ -949,10 +949,19 @@ export async function smartReplyWithSender(
 
       // User wants MONTHLY + hotel is monthly_apartment → match!
       if (userIntent === 'monthly' && classification.group === 'monthly_apartment') {
-        const priceStr = minPrice ? formatPriceWithUnit(minPrice, classification) : 'giá liên hệ';
+        // minPrice < 1M → nghi ngờ là giá /đêm của OTA, ước lượng giá tháng qua scale (×8 theo website Sonder)
+        let priceDisplay: string;
+        if (!minPrice || minPrice < 1_000_000) {
+          const estimated = minPrice > 0 ? minPrice * 8 : 0;
+          priceDisplay = estimated
+            ? `**~${Math.round(estimated / 100_000) / 10}-${Math.round(estimated * 1.2 / 100_000) / 10} triệu/tháng** (vui lòng inbox để báo giá chính xác)`
+            : 'Vui lòng inbox để em báo giá chính xác ạ';
+        } else {
+          priceDisplay = `**${minPrice.toLocaleString('vi-VN')}₫/tháng**`;
+        }
         const services = (classification.included_services || []).join(' + ');
         const reply = `Dạ đúng rồi ạ! Bên em là **${classification.label_vi} ${prof.name_canonical}** thuê theo THÁNG 😊\n\n` +
-          `💰 Giá từ: **${priceStr}**\n` +
+          `💰 Giá từ: ${priceDisplay}\n` +
           `📦 Đã bao gồm: ${services}\n` +
           `📍 ${[prof.address, prof.district, prof.city].filter(Boolean).join(', ')}\n\n` +
           `Anh/chị cần thuê từ tháng nào và bao nhiêu tháng ạ?`;
