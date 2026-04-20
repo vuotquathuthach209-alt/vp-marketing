@@ -551,20 +551,28 @@ async function handleDeterministic(
       if (rooms.length > 0) {
         const unit = rentalUnit;
         const roomList = rooms.map((r: any) => {
-          let line = `💰 ${r.name} — ${r.base_price?.toLocaleString('vi-VN')}₫/${unit}`;
+          // Apartment monthly: estimate từ giá ngày × 8 (Sonder business rule)
+          let priceStr: string;
+          if (productGroup === 'monthly_apartment' && r.base_price < 1_000_000) {
+            const est = r.base_price * 8;
+            const low = (est / 1_000_000).toFixed(1);
+            const high = (est * 1.2 / 1_000_000).toFixed(1);
+            priceStr = `~${low}-${high} triệu/tháng`;
+          } else {
+            priceStr = `${r.base_price?.toLocaleString('vi-VN')}₫/${unit}`;
+          }
+          let line = `💰 ${r.name} — ${priceStr}`;
           if (r.hourly_price && productGroup === 'nightly_stay') line += ` | Giờ: ${r.hourly_price.toLocaleString('vi-VN')}₫`;
           if (r.max_guests) line += ` | ${r.max_guests} khách`;
-          const avail = r.available_count ?? r.room_count;
-          if (avail !== undefined && avail > 0) line += ` | Còn ${avail} phòng`;
           return line;
         }).join('\n');
         const header = productGroup === 'monthly_apartment'
           ? `💰 Bảng giá thuê tháng ${hotelNameWithType}`
           : `💰 Bảng giá ${hotelName}`;
         const note = productGroup === 'monthly_apartment'
-          ? `\n\n📦 Đã bao gồm: bếp riêng, máy giặt, điện nước, wifi`
+          ? `\n\n📦 Đã bao gồm: bếp riêng, máy giặt, điện nước, wifi, dọn phòng định kỳ\n💡 Giá thực tế có thể thay đổi theo tháng thuê, inbox em báo chính xác nhé ạ.`
           : '\n\n✅ Giá tốt nhất khi đặt trực tiếp!';
-        return { reply: `${header}:\n\n${roomList}${note}\nAnh/chị cần tư vấn thêm gì không ạ?`, intent: 'price' };
+        return { reply: `${header}:\n\n${roomList}${note}\n\nAnh/chị cần thuê từ tháng nào ạ?`, intent: 'price' };
       }
       return null;
     }
@@ -618,19 +626,36 @@ async function handleDeterministic(
     }
 
     case 'amenities': {
-      // v7: Ưu tiên hotel_amenities (AI-synthesized)
+      // v7: Ưu tiên hotel_amenities (AI-synthesized) + merge included_services cho apartment
       try {
         const { hasKnowledge, getAmenities } = require('./hotel-knowledge');
+        const { classifyProduct: _cp } = require('./product-taxonomy');
         if (hasKnowledge(hotelId)) {
           const am = getAmenities(hotelId);
-          if (am.length > 0) {
-            const emojiMap: Record<string, string> = { wifi: '📶', pool: '🏊', gym: '💪', spa: '🧖', parking: '🅿️', restaurant: '🍽️', elevator: '🛗', ac: '❄️', bathroom: '🚿', kitchen: '🍳', breakfast: '🥐', laundry: '🧺', reception: '🛎️' };
-            const formatted = am.slice(0, 12).map((a: any) => {
+          const { getProfile } = require('./hotel-knowledge');
+          const _prof = getProfile(hotelId);
+          const _class = _prof?.property_type ? _cp(_prof.property_type) : null;
+          const existingNames = am.map((a: any) => (a.name_vi || '').toLowerCase());
+
+          // Merge taxonomy's included_services (bếp, máy giặt, điện nước...) cho monthly apartment
+          const merged: Array<{ name_vi: string; category: string; free: number; hours?: string }> = [...am];
+          if (_class?.group === 'monthly_apartment' && _class.included_services) {
+            for (const svc of _class.included_services) {
+              if (!existingNames.some((n: string) => n.includes(svc.toLowerCase().split(' ')[0]))) {
+                merged.push({ name_vi: svc, category: 'package', free: 1 });
+              }
+            }
+          }
+
+          if (merged.length > 0) {
+            const emojiMap: Record<string, string> = { wifi: '📶', pool: '🏊', gym: '💪', spa: '🧖', parking: '🅿️', restaurant: '🍽️', elevator: '🛗', ac: '❄️', bathroom: '🚿', kitchen: '🍳', bếp: '🍳', breakfast: '🥐', laundry: '🧺', giặt: '🧺', reception: '🛎️', điện: '⚡', nước: '💧', dọn: '🧹' };
+            const formatted = merged.slice(0, 14).map((a: any) => {
               const key = (a.name_vi + ' ' + (a.name_en || '') + ' ' + a.category).toLowerCase().replace(/\s+/g, '');
               const emoji = Object.entries(emojiMap).find(([k]) => key.includes(k))?.[1] || '✅';
               return `${emoji} ${a.name_vi}${a.free === 0 ? ' (có phí)' : ''}${a.hours ? ` · ${a.hours}` : ''}`;
             }).join('\n');
-            return { reply: `🏨 Tiện ích ${hotelName}:\n\n${formatted}`, intent: 'amenities' };
+            const note = _class?.group === 'monthly_apartment' ? '\n\n💡 Thuê tháng đã bao gồm trọn gói tiện ích trên.' : '';
+            return { reply: `🏨 Tiện ích ${hotelName}:\n\n${formatted}${note}`, intent: 'amenities' };
           }
         }
       } catch {}
