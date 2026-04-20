@@ -228,17 +228,21 @@ async function rebuildEmbeddings(hotelId: number, data: SynthesizedHotel): Promi
   }
 }
 
-/** Query helpers for bot dispatcher */
-export function getProfile(hotelId: number): any {
-  const row = db.prepare(`SELECT * FROM hotel_profile WHERE hotel_id = ?`).get(hotelId) as any;
+/** Query helpers for bot dispatcher — tự động resolve mkt_hotel_id → ota_hotel_id */
+export function getProfile(mktHotelId: number): any {
+  const k = resolveKnowledgeHotelId(mktHotelId);
+  if (!k) return null;
+  const row = db.prepare(`SELECT * FROM hotel_profile WHERE hotel_id = ?`).get(k) as any;
   if (!row) return null;
   try { row.usp_top3 = JSON.parse(row.usp_top3 || '[]'); } catch { row.usp_top3 = []; }
   try { row.nearby_landmarks = row.nearby_landmarks ? JSON.parse(row.nearby_landmarks) : {}; } catch { row.nearby_landmarks = {}; }
   return row;
 }
 
-export function getRooms(hotelId: number): any[] {
-  const rows = db.prepare(`SELECT * FROM hotel_room_catalog WHERE hotel_id = ? ORDER BY price_weekday`).all(hotelId) as any[];
+export function getRooms(mktHotelId: number): any[] {
+  const k = resolveKnowledgeHotelId(mktHotelId);
+  if (!k) return [];
+  const rows = db.prepare(`SELECT * FROM hotel_room_catalog WHERE hotel_id = ? ORDER BY price_weekday`).all(k) as any[];
   return rows.map(r => {
     try { r.amenities = r.amenities ? JSON.parse(r.amenities) : []; } catch { r.amenities = []; }
     try { r.photos_urls = r.photos_urls ? JSON.parse(r.photos_urls) : []; } catch { r.photos_urls = []; }
@@ -246,18 +250,40 @@ export function getRooms(hotelId: number): any[] {
   });
 }
 
-export function getAmenities(hotelId: number): any[] {
-  return db.prepare(`SELECT * FROM hotel_amenities WHERE hotel_id = ?`).all(hotelId) as any[];
+export function getAmenities(mktHotelId: number): any[] {
+  const k = resolveKnowledgeHotelId(mktHotelId);
+  if (!k) return [];
+  return db.prepare(`SELECT * FROM hotel_amenities WHERE hotel_id = ?`).all(k) as any[];
 }
 
-export function getPolicies(hotelId: number): any {
-  return db.prepare(`SELECT * FROM hotel_policies WHERE hotel_id = ?`).get(hotelId);
+export function getPolicies(mktHotelId: number): any {
+  const k = resolveKnowledgeHotelId(mktHotelId);
+  if (!k) return null;
+  return db.prepare(`SELECT * FROM hotel_policies WHERE hotel_id = ?`).get(k);
 }
 
-/** Has knowledge been built for this hotel? */
-export function hasKnowledge(hotelId: number): boolean {
-  const r = db.prepare(`SELECT 1 FROM hotel_profile WHERE hotel_id = ? LIMIT 1`).get(hotelId);
+/** Has knowledge been built for this hotel? Resolve via mkt_hotels.ota_hotel_id mapping nếu có. */
+export function hasKnowledge(mktHotelId: number): boolean {
+  const k = resolveKnowledgeHotelId(mktHotelId);
+  if (!k) return false;
+  const r = db.prepare(`SELECT 1 FROM hotel_profile WHERE hotel_id = ? LIMIT 1`).get(k);
   return !!r;
+}
+
+/**
+ * Map mkt_hotels.id (tenant) → hotel_profile.hotel_id (OTA hotel).
+ * Priority:
+ *   1. mkt_hotels.ota_hotel_id (explicit mapping)
+ *   2. mkt_hotels.id === hotel_profile.hotel_id (fallback, legacy)
+ */
+export function resolveKnowledgeHotelId(mktHotelId: number): number | null {
+  try {
+    const row = db.prepare(`SELECT ota_hotel_id FROM mkt_hotels WHERE id = ?`).get(mktHotelId) as any;
+    if (row?.ota_hotel_id) return row.ota_hotel_id;
+  } catch {}
+  // Fallback: treat mktHotelId as knowledge hotel_id directly
+  const r = db.prepare(`SELECT hotel_id FROM hotel_profile WHERE hotel_id = ?`).get(mktHotelId);
+  return r ? mktHotelId : null;
 }
 
 /** Count total hotels with knowledge */

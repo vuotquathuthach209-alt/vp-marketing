@@ -561,6 +561,8 @@ safeAddColumn('mkt_users', 'phone', 'TEXT');
 safeAddColumn('mkt_users', 'signup_source', 'TEXT');   // 'self' | 'ota' | 'invite' | 'fb_oauth'
 safeAddColumn('mkt_hotels', 'industry', 'TEXT', `'hotel'`);
 safeAddColumn('mkt_hotels', 'website_url', 'TEXT');
+// v7: link marketing hotel tenant to OTA hotel in knowledge base
+safeAddColumn('mkt_hotels', 'ota_hotel_id', 'INTEGER');
 
 // v6 Sprint 3: Memory recall — embed user messages for semantic search
 safeAddColumn('conversation_memory', 'embedding', 'BLOB');
