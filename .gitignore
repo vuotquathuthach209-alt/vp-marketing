@@ -38,3 +38,4 @@ Thumbs.db
 # Claude local settings (có thể chứa secrets)
 .claude/
 CREDENTIALS.txt
+.claude/memory.md

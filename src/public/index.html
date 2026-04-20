@@ -101,6 +101,7 @@
         <button data-tab="funnel" class="nav-btn nav-admin w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="trending-down"></i><span>Funnel (admin)</span></button>
         <button data-tab="intents" class="nav-btn nav-admin w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="brain-circuit"></i><span>Intent Router</span></button>
         <button data-tab="revenue" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="trending-up"></i><span>Revenue &amp; Funnel</span></button>
+        <button data-tab="knowledge-sync" class="nav-btn nav-admin w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="database"></i><span>Knowledge Sync</span></button>
 
         <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Báo cáo</div>
         <button data-tab="analytics" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="bar-chart-3"></i><span>Thống kê</span></button>
@@ -1298,6 +1299,28 @@
         <div class="bg-white rounded-xl shadow p-5">
           <h3 class="font-bold mb-3">🛡️ Spam blocklist</h3>
           <div id="rev-spam"></div>
+        </div>
+      </section>
+
+      <!-- KNOWLEDGE SYNC TAB (admin only) -->
+      <section data-panel="knowledge-sync" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-2">🗄️ Hotel Knowledge Sync</h2>
+        <p class="text-sm text-slate-500 mb-4">ETL OTA → Bot Knowledge Base bằng Gemini. Chạy T2/T4/T6 3am.</p>
+        <div class="flex gap-2 mb-4 flex-wrap">
+          <button id="ks-run-btn" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700">▶ Run sync ngay</button>
+          <button id="ks-force-btn" class="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-amber-600">↻ Force re-sync all</button>
+          <button id="ks-refresh" class="bg-slate-200 px-3 py-1 rounded text-sm">🔄 Tải lại</button>
+        </div>
+        <div id="ks-kpis" class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6"></div>
+        <div class="bg-white rounded-xl shadow p-5 mb-4">
+          <h3 class="font-bold mb-3">📜 Recent runs</h3>
+          <div id="ks-runs"></div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-5">
+          <h3 class="font-bold mb-3">🔍 Preview hotel knowledge</h3>
+          <input id="ks-preview-id" type="number" placeholder="Hotel ID" class="border rounded px-3 py-2 text-sm w-32" />
+          <button id="ks-preview-btn" class="bg-slate-600 text-white px-3 py-2 rounded text-sm ml-2">Xem</button>
+          <pre id="ks-preview" class="mt-3 bg-slate-50 p-3 rounded text-xs overflow-auto max-h-96"></pre>
         </div>
       </section>
 

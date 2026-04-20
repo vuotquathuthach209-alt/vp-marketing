@@ -253,6 +253,16 @@ export function startScheduler() {
     }
   });
 
+  // ── v7: Hotel Knowledge ETL — T2/T4/T6 03:00 ──
+  cron.schedule('0 3 * * 1,3,5', async () => {
+    try {
+      const { runEtl } = require('./etl-runner');
+      await runEtl({ trigger: 'cron' });
+    } catch (e: any) {
+      console.error('[scheduler] etl error:', e?.message);
+    }
+  });
+
   // ── Billing renewal reminders: 9h sáng mỗi ngày ──
   cron.schedule('0 9 * * *', async () => {
     try {

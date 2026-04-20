@@ -565,6 +565,118 @@ safeAddColumn('mkt_hotels', 'website_url', 'TEXT');
 // v6 Sprint 3: Memory recall — embed user messages for semantic search
 safeAddColumn('conversation_memory', 'embedding', 'BLOB');
 
+// v7: Hotel Knowledge Layer — AI-synthesized bot-ready data
+db.exec(`
+CREATE TABLE IF NOT EXISTS hotel_profile (
+  hotel_id INTEGER PRIMARY KEY,
+  ota_hotel_id INTEGER,
+  name_canonical TEXT NOT NULL,
+  name_en TEXT,
+  city TEXT,
+  district TEXT,
+  address TEXT,
+  latitude REAL,
+  longitude REAL,
+  geohash TEXT,
+  phone TEXT,
+  star_rating INTEGER,
+  target_segment TEXT,
+  brand_voice TEXT,
+  ai_summary_vi TEXT,
+  ai_summary_en TEXT,
+  usp_top3 TEXT,
+  nearby_landmarks TEXT,
+  manual_override INTEGER NOT NULL DEFAULT 0,
+  synthesized_at INTEGER,
+  synthesized_by TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_hp_geohash ON hotel_profile(geohash);
+CREATE INDEX IF NOT EXISTS idx_hp_city ON hotel_profile(city);
+
+CREATE TABLE IF NOT EXISTS hotel_room_catalog (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  room_key TEXT NOT NULL,
+  display_name_vi TEXT NOT NULL,
+  display_name_en TEXT,
+  price_weekday INTEGER NOT NULL DEFAULT 0,
+  price_weekend INTEGER NOT NULL DEFAULT 0,
+  price_hourly INTEGER,
+  max_guests INTEGER NOT NULL DEFAULT 2,
+  bed_config TEXT,
+  size_m2 INTEGER,
+  amenities TEXT,
+  photos_urls TEXT,
+  description_vi TEXT,
+  updated_at INTEGER NOT NULL,
+  UNIQUE(hotel_id, room_key)
+);
+CREATE INDEX IF NOT EXISTS idx_hrc_hotel ON hotel_room_catalog(hotel_id);
+
+CREATE TABLE IF NOT EXISTS hotel_amenities (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  category TEXT NOT NULL,
+  name_vi TEXT NOT NULL,
+  name_en TEXT,
+  free INTEGER NOT NULL DEFAULT 1,
+  hours TEXT,
+  note TEXT,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ha_hotel ON hotel_amenities(hotel_id);
+
+CREATE TABLE IF NOT EXISTS hotel_policies (
+  hotel_id INTEGER PRIMARY KEY,
+  checkin_time TEXT,
+  checkout_time TEXT,
+  cancellation_text TEXT,
+  deposit_percent INTEGER,
+  pet_allowed INTEGER NOT NULL DEFAULT 0,
+  child_policy TEXT,
+  payment_methods TEXT,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS hotel_knowledge_embeddings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  chunk_type TEXT NOT NULL,
+  chunk_text TEXT NOT NULL,
+  embedding BLOB,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_hke_hotel ON hotel_knowledge_embeddings(hotel_id, chunk_type);
+
+CREATE TABLE IF NOT EXISTS etl_sync_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER,
+  status TEXT NOT NULL,
+  hotels_total INTEGER DEFAULT 0,
+  hotels_ok INTEGER DEFAULT 0,
+  hotels_failed INTEGER DEFAULT 0,
+  provider_gemini INTEGER DEFAULT 0,
+  provider_fallback INTEGER DEFAULT 0,
+  duration_ms INTEGER,
+  trigger_source TEXT,
+  error_summary TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_esl_started ON etl_sync_log(started_at DESC);
+
+CREATE TABLE IF NOT EXISTS etl_hotel_failures (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sync_log_id INTEGER NOT NULL,
+  ota_hotel_id INTEGER,
+  hotel_name TEXT,
+  reason TEXT,
+  retry_count INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+`);
+
 // Indexes trên hotel_id
 try {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_pages_hotel ON pages(hotel_id)`);

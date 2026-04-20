@@ -383,4 +383,46 @@ router.get('/health-report', async (req: AuthRequest, res) => {
   }
 });
 
+// v7: Hotel Knowledge ETL
+router.post('/etl/run', async (req: AuthRequest, res) => {
+  try {
+    const { runEtl } = require('../services/etl-runner');
+    const { force, limit, targetHotelIds } = req.body || {};
+    const result = await runEtl({
+      force: !!force,
+      limit: limit ? parseInt(limit, 10) : undefined,
+      targetHotelIds: Array.isArray(targetHotelIds) ? targetHotelIds.map(Number) : undefined,
+      trigger: 'api',
+    });
+    res.json({ ok: true, result });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/etl/stats', (req: AuthRequest, res) => {
+  try {
+    const { getEtlStats } = require('../services/etl-runner');
+    const days = Math.max(1, Math.min(90, parseInt(String(req.query.days || '30'), 10) || 30));
+    res.json(getEtlStats(days));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/etl/knowledge/:hotelId', (req: AuthRequest, res) => {
+  try {
+    const { getProfile, getRooms, getAmenities, getPolicies } = require('../services/hotel-knowledge');
+    const hid = parseInt(String(req.params.hotelId), 10);
+    res.json({
+      profile: getProfile(hid),
+      rooms: getRooms(hid),
+      amenities: getAmenities(hid),
+      policies: getPolicies(hid),
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;

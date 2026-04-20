@@ -126,6 +126,7 @@ function switchTab(tab) {
   if (tab === 'funnel') loadFunnel();
   if (tab === 'intents') loadIntents();
   if (tab === 'revenue') loadRevenue();
+  if (tab === 'knowledge-sync') loadKnowledgeSync();
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
   b.addEventListener('click', () => switchTab(b.dataset.tab));
@@ -3440,6 +3441,89 @@ window.unblockSender = async (sid) => {
 };
 document.getElementById('rev-days')?.addEventListener('change', loadRevenue);
 document.getElementById('rev-refresh')?.addEventListener('click', loadRevenue);
+
+// ── Knowledge Sync (v7) ──
+async function loadKnowledgeSync() {
+  const kpis = document.getElementById('ks-kpis');
+  const runs = document.getElementById('ks-runs');
+  if (!kpis) return;
+  runs.innerHTML = 'Đang tải...';
+  try {
+    const s = await api('/admin/etl/stats?days=30');
+    const agg = s.agg || {};
+    const last = s.last_run;
+    kpis.innerHTML = [
+      { label: 'Total runs (30d)', val: agg.total_runs || 0, sub: last ? `last ${_fmtTs(last.started_at)}` : 'chưa chạy' },
+      { label: 'Hotels synced', val: agg.hotels_synced || 0, sub: `Gemini ${agg.gemini_calls || 0} / fallback ${agg.fallback_calls || 0}` },
+      { label: 'Failures', val: agg.failures || 0, sub: agg.failures > 0 ? '⚠️ review below' : '✅ all ok' },
+      { label: 'Total time', val: Math.round((agg.total_duration_ms || 0) / 60000) + ' phút', sub: 'cho 30 ngày' },
+    ].map(k => `<div class="bg-white rounded-xl shadow p-4">
+      <div class="text-xs text-slate-500">${k.label}</div>
+      <div class="text-2xl font-bold mt-1">${k.val}</div>
+      <div class="text-xs text-slate-400 mt-1">${k.sub}</div>
+    </div>`).join('');
+
+    const recent = s.recent_runs || [];
+    runs.innerHTML = recent.length === 0
+      ? '<div class="text-sm text-slate-500">Chưa có run nào. Bấm "Run sync ngay" để thử.</div>'
+      : `<table class="w-full text-sm"><thead class="bg-slate-50"><tr>
+          <th class="p-2 text-left text-xs">Run #</th>
+          <th class="p-2 text-left text-xs">Started</th>
+          <th class="p-2 text-left text-xs">Status</th>
+          <th class="p-2 text-left text-xs">Hotels</th>
+          <th class="p-2 text-left text-xs">Providers</th>
+          <th class="p-2 text-left text-xs">Duration</th>
+          <th class="p-2 text-left text-xs">Trigger</th>
+        </tr></thead><tbody>${recent.map(r => `<tr class="border-t">
+          <td class="p-2">#${r.id}</td>
+          <td class="p-2 text-xs">${_fmtTs(r.started_at)}</td>
+          <td class="p-2"><span class="px-2 py-0.5 rounded text-xs ${r.status === 'completed' ? 'bg-green-100 text-green-700' : r.status === 'partial' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}">${r.status}</span></td>
+          <td class="p-2 text-xs">${r.hotels_ok || 0}/${r.hotels_total || 0}${r.hotels_failed > 0 ? ` <span class="text-red-600">(${r.hotels_failed} fail)</span>` : ''}</td>
+          <td class="p-2 text-xs">G:${r.provider_gemini || 0} / F:${r.provider_fallback || 0}</td>
+          <td class="p-2 text-xs">${r.duration_ms ? Math.round(r.duration_ms / 1000) + 's' : '-'}</td>
+          <td class="p-2 text-xs font-mono">${r.trigger_source || '-'}</td>
+        </tr>`).join('')}</tbody></table>`;
+  } catch (e) {
+    runs.innerHTML = `<div class="text-red-600 text-sm">Lỗi: ${_esc(e.message)}</div>`;
+  }
+}
+
+document.getElementById('ks-refresh')?.addEventListener('click', loadKnowledgeSync);
+
+document.getElementById('ks-run-btn')?.addEventListener('click', async () => {
+  if (!confirm('Chạy ETL sync ngay? (incremental)')) return;
+  const btn = document.getElementById('ks-run-btn');
+  btn.disabled = true; btn.textContent = '⏳ Đang chạy...';
+  try {
+    const r = await api('/admin/etl/run', { method: 'POST', body: JSON.stringify({}) });
+    alert(`ETL ${r.result.status}\n${r.result.hotels_ok} ok / ${r.result.hotels_failed} failed\n${Math.round(r.result.duration_ms / 1000)}s`);
+    loadKnowledgeSync();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = '▶ Run sync ngay'; }
+});
+
+document.getElementById('ks-force-btn')?.addEventListener('click', async () => {
+  if (!confirm('Force re-sync TẤT CẢ hotels? (có thể mất nhiều phút)')) return;
+  const btn = document.getElementById('ks-force-btn');
+  btn.disabled = true; btn.textContent = '⏳ Forcing...';
+  try {
+    const r = await api('/admin/etl/run', { method: 'POST', body: JSON.stringify({ force: true }) });
+    alert(`Force ETL ${r.result.status}\n${r.result.hotels_ok} ok / ${r.result.hotels_failed} failed`);
+    loadKnowledgeSync();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = '↻ Force re-sync all'; }
+});
+
+document.getElementById('ks-preview-btn')?.addEventListener('click', async () => {
+  const hid = document.getElementById('ks-preview-id').value;
+  const pre = document.getElementById('ks-preview');
+  if (!hid) return;
+  pre.textContent = 'Đang tải...';
+  try {
+    const r = await api('/admin/etl/knowledge/' + encodeURIComponent(hid));
+    pre.textContent = JSON.stringify(r, null, 2);
+  } catch (e) { pre.textContent = 'Lỗi: ' + e.message; }
+});
 
 // ====== Init ======
 checkAuth();
