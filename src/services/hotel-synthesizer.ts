@@ -249,8 +249,10 @@ export async function synthesizeHotel(raw: OtaRawHotel): Promise<{
   }
 
   // Parse
+  console.log(`[synth] raw output preview (len=${raw_text?.length || 0}):`, (raw_text || '').slice(0, 200));
   let jsonStr = extractJson(raw_text);
   if (!jsonStr) {
+    console.warn('[synth] no JSON in first attempt, retrying stricter');
     // Retry với prompt stricter
     try {
       raw_text = await generate({
@@ -258,6 +260,7 @@ export async function synthesizeHotel(raw: OtaRawHotel): Promise<{
         system: SYSTEM_PROMPT + '\n\nCRITICAL: Output ONLY valid JSON, nothing else. No markdown, no explanation.',
         user,
       });
+      console.log('[synth] retry output preview:', (raw_text || '').slice(0, 200));
       jsonStr = extractJson(raw_text);
       retried = true;
     } catch (e: any) {
