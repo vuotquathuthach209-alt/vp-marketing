@@ -116,6 +116,7 @@ export interface RecommendResult {
     district?: string;
     landmark?: string;
     radius_km?: number;
+    property_type?: string;
   };
 }
 
