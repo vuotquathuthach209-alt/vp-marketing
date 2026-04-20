@@ -944,6 +944,14 @@ async function dispatchV6(ctx: {
     trackEvent({ event: 'intent_classified', hotelId: hid, meta: { intent: router.intent, handler, confidence: router.confidence, source: router.source } });
   } catch {}
 
+  // v6 Sprint 7: Funnel qualified stage
+  try {
+    if (router.intent === 'booking_action' || router.intent === 'booking_info') {
+      const { trackFunnelStage } = require('./conversion-tracker');
+      trackFunnelStage({ stage: 'qualified', senderId, hotelId: hid, pageId: pid });
+    }
+  } catch {}
+
   // [3] Route
   let reply = '';
   let intentLabel = router.intent;

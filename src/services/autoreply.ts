@@ -104,6 +104,26 @@ async function replyToMessages(page: any) {
       // If no text and no attachments, skip
       if (!messageText && !hasImage && !hasAudio) continue;
 
+      // ─── v6 Sprint 7: Spam guard + funnel inbox event ───
+      if (senderId) {
+        try {
+          const { checkSpam, logSpamEvent } = require('./spam-guard');
+          const { trackFunnelStage } = require('./conversion-tracker');
+          const spam = checkSpam({ senderId, pageId: page.id, message: messageText || '', hotelId: page.hotel_id || 1 });
+          if (spam.block) {
+            logSpamEvent(senderId, page.id, page.hotel_id || 1, spam.reason || 'unknown', spam.detail || '', messageText || '');
+            console.log(`[spam-guard] blocked sender=${senderId} reason=${spam.reason} detail=${spam.detail}`);
+            // Mark as "replied" để không loop
+            db.prepare(
+              `INSERT INTO auto_reply_log (page_id, kind, fb_id, original_text, reply_text, status, created_at)
+               VALUES (?, 'message', ?, ?, ?, 'blocked_spam', ?)`
+            ).run(page.id, latest.id, messageText || '(attachment)', 'BLOCKED: ' + (spam.reason || ''), Date.now());
+            continue;
+          }
+          trackFunnelStage({ stage: 'inbox', senderId, hotelId: page.hotel_id || 1, pageId: page.id });
+        } catch {}
+      }
+
       try {
         // If image + awaiting transfer → handle transfer
         if (hasImage && senderId && hasActiveBooking(senderId)) {

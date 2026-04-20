@@ -100,6 +100,7 @@
         <button data-tab="bot-control" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="pause-circle"></i><span>Tạm dừng bot</span></button>
         <button data-tab="funnel" class="nav-btn nav-admin w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="trending-down"></i><span>Funnel (admin)</span></button>
         <button data-tab="intents" class="nav-btn nav-admin w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="brain-circuit"></i><span>Intent Router</span></button>
+        <button data-tab="revenue" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="trending-up"></i><span>Revenue &amp; Funnel</span></button>
 
         <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Báo cáo</div>
         <button data-tab="analytics" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="bar-chart-3"></i><span>Thống kê</span></button>
@@ -1274,6 +1275,29 @@
             <h3 class="font-bold mb-3">Handler được chọn</h3>
             <div id="intents-handlers"></div>
           </div>
+        </div>
+      </section>
+
+      <!-- REVENUE + FUNNEL TAB -->
+      <section data-panel="revenue" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-2">📈 Revenue &amp; Bot Conversion</h2>
+        <p class="text-sm text-slate-500 mb-4">Funnel thực từ inbox → đặt phòng → thanh toán → xác nhận. Đo ROI thực của bot.</p>
+        <div class="flex gap-2 mb-4 items-center flex-wrap">
+          <select id="rev-days" class="border rounded px-3 py-2 text-sm">
+            <option value="7">7 ngày</option>
+            <option value="30" selected>30 ngày</option>
+            <option value="90">90 ngày</option>
+          </select>
+          <button id="rev-refresh" class="bg-slate-200 px-3 py-1 rounded text-sm">🔄 Tải</button>
+        </div>
+        <div id="rev-kpis" class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6"></div>
+        <div class="bg-white rounded-xl shadow p-5 mb-6">
+          <h3 class="font-bold mb-3">🪜 Conversion Funnel</h3>
+          <div id="rev-funnel"></div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-5">
+          <h3 class="font-bold mb-3">🛡️ Spam blocklist</h3>
+          <div id="rev-spam"></div>
         </div>
       </section>
 

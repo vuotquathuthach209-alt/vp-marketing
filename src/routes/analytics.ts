@@ -201,4 +201,42 @@ router.get('/router-health', (_req, res) => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════
+// Sprint 7: Revenue / conversion funnel
+// ═══════════════════════════════════════════════════════════════
+import { getFunnelStats } from '../services/conversion-tracker';
+import { listBlocked, blockSender, unblockSender } from '../services/spam-guard';
+
+router.get('/revenue', (req, res) => {
+  const days = Math.max(1, Math.min(90, parseInt(String(req.query.days || '30'), 10) || 30));
+  // TODO: per-hotel filter via auth. For now hotel_id = null (global) or from req.user.hotelId if present.
+  const hotelId = (req as any).user?.hotelId || null;
+  try {
+    const stats = getFunnelStats(hotelId, days);
+    res.json(stats);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/spam', (req, res) => {
+  const hotelId = (req as any).user?.hotelId;
+  res.json({ items: listBlocked(hotelId) });
+});
+
+router.post('/spam/block', (req, res) => {
+  const { sender_id, reason, days } = req.body || {};
+  const hotelId = (req as any).user?.hotelId || 1;
+  if (!sender_id) return res.status(400).json({ error: 'sender_id required' });
+  try { blockSender(String(sender_id), hotelId, String(reason || 'manual'), days ? parseInt(days, 10) : undefined); res.json({ ok: true }); }
+  catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/spam/unblock', (req, res) => {
+  const { sender_id } = req.body || {};
+  if (!sender_id) return res.status(400).json({ error: 'sender_id required' });
+  try { unblockSender(String(sender_id)); res.json({ ok: true }); }
+  catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 export default router;

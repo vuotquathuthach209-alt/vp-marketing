@@ -125,6 +125,7 @@ function switchTab(tab) {
   if (tab === 'bot-control') loadBotStatus();
   if (tab === 'funnel') loadFunnel();
   if (tab === 'intents') loadIntents();
+  if (tab === 'revenue') loadRevenue();
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
   b.addEventListener('click', () => switchTab(b.dataset.tab));
@@ -3352,6 +3353,93 @@ async function loadIntents() {
 }
 document.getElementById('intents-days')?.addEventListener('change', loadIntents);
 document.getElementById('intents-refresh')?.addEventListener('click', loadIntents);
+
+// ── Revenue & Funnel (Sprint 7) ──
+const STAGE_LABELS = {
+  inbox: '📥 Inbox đầu tiên',
+  qualified: '🎯 Có ý định đặt',
+  booking_created: '📋 Tạo báo giá',
+  deposit: '💰 Chuyển cọc',
+  confirmed: '✅ Xác nhận',
+};
+function fmtVnd(n) {
+  if (!n || isNaN(n)) return '0₫';
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B₫';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M₫';
+  if (n >= 1e3) return (n / 1e3).toFixed(0) + 'K₫';
+  return Math.round(n) + '₫';
+}
+async function loadRevenue() {
+  const days = parseInt(document.getElementById('rev-days')?.value || '30', 10);
+  const kpi = document.getElementById('rev-kpis');
+  const funnel = document.getElementById('rev-funnel');
+  const spam = document.getElementById('rev-spam');
+  if (!funnel) return;
+  funnel.innerHTML = 'Đang tải...';
+  try {
+    const [r, s] = await Promise.all([
+      api('/analytics/revenue?days=' + days),
+      api('/analytics/spam').catch(() => ({ items: [] })),
+    ]);
+    const inbox = r.stages?.find(x => x.stage === 'inbox')?.count || 0;
+    const qualified = r.stages?.find(x => x.stage === 'qualified')?.count || 0;
+    const confirmed = r.stages?.find(x => x.stage === 'confirmed')?.count || 0;
+    const finalConv = inbox > 0 ? ((confirmed / inbox) * 100).toFixed(1) : '0';
+    const qualifyRate = inbox > 0 ? ((qualified / inbox) * 100).toFixed(1) : '0';
+
+    kpi.innerHTML = [
+      { label: 'Inbox', val: inbox, sub: days + ' ngày qua' },
+      { label: 'Tỉ lệ qualified', val: qualifyRate + '%', sub: `${qualified} có ý định đặt` },
+      { label: 'Inbox → Đặt thành công', val: finalConv + '%', sub: `${confirmed} booking xác nhận` },
+      { label: 'Doanh thu từ bot', val: fmtVnd(r.revenue?.total_booking_vnd), sub: `TB: ${fmtVnd(r.revenue?.avg_booking_vnd)}/booking` },
+    ].map(k => `<div class="bg-white rounded-xl shadow p-4">
+      <div class="text-xs text-slate-500">${k.label}</div>
+      <div class="text-2xl font-bold mt-1">${k.val}</div>
+      <div class="text-xs text-slate-400 mt-1">${k.sub}</div>
+    </div>`).join('');
+
+    const maxCount = Math.max(1, ...(r.stages || []).map(x => x.count));
+    funnel.innerHTML = (r.stages || []).map((st, i) => {
+      const label = STAGE_LABELS[st.stage] || st.stage;
+      const w = Math.round(st.count / maxCount * 100);
+      const drop = i > 0 ? `<span class="text-xs text-red-500 ml-2">−${(100 - st.conversion_pct).toFixed(0)}%</span>` : '';
+      return `<div class="mb-3">
+        <div class="flex justify-between text-sm mb-1">
+          <span class="font-semibold">${label}</span>
+          <span class="font-mono">${st.count} ${drop}</span>
+        </div>
+        <div class="h-7 bg-slate-100 rounded overflow-hidden relative">
+          <div class="h-full bg-gradient-to-r from-indigo-500 to-green-500" style="width:${w}%"></div>
+          <span class="absolute right-3 top-1 text-xs font-semibold text-slate-700">${st.total_pct}%</span>
+        </div>
+      </div>`;
+    }).join('');
+
+    const blocked = s.items || [];
+    spam.innerHTML = blocked.length === 0
+      ? '<div class="text-sm text-slate-500">Không có sender nào bị block. 👍</div>'
+      : `<table class="w-full text-sm"><thead class="bg-slate-50"><tr>
+          <th class="text-left p-2 text-xs">Sender</th>
+          <th class="text-left p-2 text-xs">Lý do</th>
+          <th class="text-left p-2 text-xs">Block lúc</th>
+          <th class="p-2"></th>
+        </tr></thead><tbody>${blocked.map(b => `<tr class="border-t">
+          <td class="p-2 font-mono text-xs">${_esc(b.sender_id)}</td>
+          <td class="p-2">${_esc(b.reason)}</td>
+          <td class="p-2 text-xs text-slate-500">${_fmtTs(b.blocked_at)}</td>
+          <td class="p-2"><button onclick="unblockSender('${_esc(b.sender_id)}')" class="text-xs px-2 py-1 bg-red-100 rounded">Unblock</button></td>
+        </tr>`).join('')}</tbody></table>`;
+  } catch (e) {
+    funnel.innerHTML = `<div class="text-red-600 text-sm">Lỗi: ${_esc(e.message)}</div>`;
+  }
+}
+window.unblockSender = async (sid) => {
+  if (!confirm('Gỡ block sender ' + sid + '?')) return;
+  try { await api('/analytics/spam/unblock', { method: 'POST', body: JSON.stringify({ sender_id: sid }) }); loadRevenue(); }
+  catch (e) { alert('Lỗi: ' + e.message); }
+};
+document.getElementById('rev-days')?.addEventListener('change', loadRevenue);
+document.getElementById('rev-refresh')?.addEventListener('click', loadRevenue);
 
 // ====== Init ======
 checkAuth();

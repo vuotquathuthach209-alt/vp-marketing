@@ -335,6 +335,19 @@ export function processBookingStep(senderId: string, message: string, senderName
           status: 'quoting',
         });
 
+        // v6 Sprint 7: track booking_created funnel stage
+        try {
+          const { trackFunnelStage } = require('./conversion-tracker');
+          trackFunnelStage({
+            stage: 'booking_created',
+            senderId: booking.fb_sender_id,
+            hotelId: 1, // bookingflow is per-hotel=1 scope; multi-hotel refactor later
+            bookingId: booking.id,
+            revenue: total,
+            deposit,
+          });
+        } catch {}
+
         return `📋 *BÁO GIÁ ĐẶT PHÒNG*\n\n` +
           `🏨 ${config.hotel_name}\n` +
           `📍 ${config.address}\n\n` +
@@ -440,6 +453,19 @@ export function markTransferReceived(senderId: string, imageUrl?: string): { boo
 
   const updated = db.prepare(`SELECT * FROM pending_bookings WHERE id = ?`).get(booking.id) as PendingBooking;
 
+  // v6 Sprint 7: track deposit funnel stage
+  try {
+    const { trackFunnelStage } = require('./conversion-tracker');
+    trackFunnelStage({
+      stage: 'deposit',
+      senderId,
+      hotelId: 1,
+      bookingId: booking.id,
+      revenue: booking.total_price,
+      deposit: booking.deposit_amount,
+    });
+  } catch {}
+
   return {
     booking: updated,
     reply: `✅ Đã nhận ảnh chuyển khoản! Lễ tân đang xác nhận booking #${booking.id}.\nMình sẽ thông báo ngay khi xong. Cảm ơn bạn! 🙏`,
@@ -459,6 +485,19 @@ export function confirmBooking(bookingId: number, roomNumber: string): { reply: 
     assigned_room: roomNumber,
     confirmed_at: Date.now(),
   });
+
+  // v6 Sprint 7: track confirmed funnel stage
+  try {
+    const { trackFunnelStage } = require('./conversion-tracker');
+    trackFunnelStage({
+      stage: 'confirmed',
+      senderId: booking.fb_sender_id,
+      hotelId: 1,
+      bookingId,
+      revenue: booking.total_price,
+      deposit: booking.deposit_amount,
+    });
+  } catch {}
 
   const reply = `✅ Đặt phòng #${bookingId} đã được XÁC NHẬN!\n\n` +
     `🛏️ Phòng: ${roomNumber}\n` +
