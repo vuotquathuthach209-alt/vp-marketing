@@ -97,8 +97,9 @@ async function callGemini(opts: CascadeOpts, model: string, provider: SmartProvi
 
 // ── ChatGPT (OpenAI) ───────────────────────────────────────────────
 async function callChatGPT(opts: CascadeOpts): Promise<CascadeResult> {
-  const keys = getAllKeys('openai_api_key');
-  const key = pickKey('openai_api_key');
+  const keys = getAllKeys('openai_api_key', process.env.OPENAI_API_KEY);
+  if (keys.length === 0) throw new Error('chatgpt: no OPENAI_API_KEY configured');
+  const key = pickKey('openai_api_key', process.env.OPENAI_API_KEY);
   if (!key) throw new Error('chatgpt: no OPENAI_API_KEY configured');
   const t0 = Date.now();
 

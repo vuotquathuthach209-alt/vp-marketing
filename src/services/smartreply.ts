@@ -1203,6 +1203,28 @@ async function dispatchV6(ctx: {
   let intentLabel = router.intent;
   let skipSave = false; // smartReply đã tự lưu rồi
 
+  // [2.9] Smart QA cache — chỉ match cho LLM-handler paths (rag, objection).
+  // Không short-circuit booking_fsm (stateful), fast_reply (đã nhanh), handoff (one-off).
+  let qaCacheHit: { qa_cache_id: number; cached_response: string; confidence: number; tier: string } | null = null;
+  if (!bookingInfo && !handoffDecision.trigger && (handler === 'rag_pipeline' || handler === 'objection_handler')) {
+    try {
+      const { matchIntent } = require('./intent-matcher');
+      const m = await matchIntent({ hotelId: hid, customerMessage: msg });
+      if (m.should_use_cached && m.cached_response) {
+        console.log(`[v6] qa_cache HIT tier=${m.tier} conf=${m.confidence} id=${m.qa_cache_id}`);
+        db.prepare(`UPDATE qa_training_cache SET hits_count = hits_count + 1, last_hit_at = ? WHERE id = ?`)
+          .run(Date.now(), m.qa_cache_id);
+        qaCacheHit = { qa_cache_id: m.qa_cache_id, cached_response: m.cached_response, confidence: m.confidence, tier: m.tier };
+        try {
+          const { trackEvent } = require('./events');
+          trackEvent({ event: 'qa_cache_hit', hotelId: hid, meta: { id: m.qa_cache_id, confidence: m.confidence, tier: m.tier } });
+        } catch {}
+      } else if (m.matched) {
+        console.log(`[v6] qa_cache NEAR-MISS tier=${m.tier} conf=${m.confidence} (not used — tier=${m.tier} or below threshold)`);
+      }
+    } catch (e: any) { console.warn('[v6] cache check fail:', e?.message); }
+  }
+
   // Auto-handoff ưu tiên cao — override handler trừ khi user đang đặt phòng active
   if (handoffDecision.trigger && handler !== 'booking_fsm') {
     try {
@@ -1235,22 +1257,28 @@ async function dispatchV6(ctx: {
   } else if (handler === 'objection_handler') {
     // Pause booking nếu đang active
     if (bookingInfo && bookingInfo.status !== 'paused') pauseBooking(senderId);
-    const tierOfferHint = tierInfo ? tierOffer(tierInfo) : null;
-    const objToneDirective = [
-      tone.directive,
-      languageDirective(langInfo.lang),
-      tierInfo ? tierDirective(tierInfo, senderName) : '',
-      tierOfferHint ? `ƯU ĐÃI CÓ THỂ ÁP DỤNG: ${tierOfferHint}` : '',
-    ].filter(Boolean).join('\n\n');
-    reply = await handleObjection({
-      ro: router,
-      message: msg,
-      hotelId: hid,
-      history: historyTail,
-      toneDirective: objToneDirective,
-      recallHint: recallHit ? formatRecallHint(recallHit) : undefined,
-    });
-    intentLabel = 'price_objection';
+    // Cache hit short-circuit
+    if (qaCacheHit) {
+      reply = qaCacheHit.cached_response;
+      intentLabel = 'qa_cached';
+    } else {
+      const tierOfferHint = tierInfo ? tierOffer(tierInfo) : null;
+      const objToneDirective = [
+        tone.directive,
+        languageDirective(langInfo.lang),
+        tierInfo ? tierDirective(tierInfo, senderName) : '',
+        tierOfferHint ? `ƯU ĐÃI CÓ THỂ ÁP DỤNG: ${tierOfferHint}` : '',
+      ].filter(Boolean).join('\n\n');
+      reply = await handleObjection({
+        ro: router,
+        message: msg,
+        hotelId: hid,
+        history: historyTail,
+        toneDirective: objToneDirective,
+        recallHint: recallHit ? formatRecallHint(recallHit) : undefined,
+      });
+      intentLabel = 'price_objection';
+    }
   } else if (handler === 'fast_reply') {
     if (bookingInfo && bookingInfo.status !== 'paused') pauseBooking(senderId);
     reply = fastReply(router, msg, langInfo.lang);
@@ -1265,6 +1293,12 @@ async function dispatchV6(ctx: {
       pauseBooking(senderId);
     }
 
+    // Cache hit short-circuit (skip recommender/RAG)
+    if (qaCacheHit) {
+      reply = qaCacheHit.cached_response;
+      intentLabel = 'qa_cached';
+    }
+
     // v7: Multi-hotel recommender
     // Fire cho: location_q, price_q, HOẶC khi msg chứa property_type keyword
     let shouldRecommend = router.intent === 'location_q' || router.intent === 'price_q';
@@ -1274,7 +1308,7 @@ async function dispatchV6(ctx: {
         if (detectTypeFromMessage(msg)) shouldRecommend = true;
       } catch {}
     }
-    if (shouldRecommend) {
+    if (!reply && shouldRecommend) {
       try {
         const { recommend } = require('./hotel-recommender');
         const rec = recommend({ message: msg, slots: router.slots, historyTail });
@@ -1333,8 +1367,33 @@ async function dispatchV6(ctx: {
     }
   }
 
-  // ─── Anti-repetition filter (trừ booking/handoff/empty) ───
-  if (reply && senderId && !['booking', 'handoff', 'bot_paused'].includes(intentLabel)) {
+  // ─── Smart QA cache: save LLM-produced replies for admin review (tier=pending) ───
+  // Skip nếu: cache hit (đã có), booking/handoff/fast templates, empty reply, context-specific replies
+  const LLM_PRODUCED = ['rag', 'rag_fallback', 'price_objection', 'hotel_rec', 'price_filter'];
+  if (reply && LLM_PRODUCED.includes(intentLabel) && !qaCacheHit) {
+    try {
+      const { saveNewQA } = require('./intent-matcher');
+      // Fire-and-forget — không block reply
+      saveNewQA({
+        hotelId: hid,
+        question: msg,
+        response: reply,
+        provider: 'gemini_flash',  // router.ts default cho reply task (sẽ thay khi wire smartCascade ở Phase 1b)
+        intentCategory: router.intent,
+        contextTags: [
+          handler,
+          router.emotion ? `emotion_${router.emotion}` : '',
+          langInfo.lang !== 'vi' ? `lang_${langInfo.lang}` : '',
+        ].filter(Boolean),
+      }).then((res: any) => {
+        if (res?.is_new) console.log(`[v6] qa_cache saved id=${res.qa_cache_id} tier=pending intent=${router.intent}`);
+      }).catch((e: any) => console.warn('[v6] saveNewQA fail:', e?.message));
+    } catch {}
+  }
+
+  // ─── Anti-repetition filter (trừ booking/handoff/empty/qa_cached) ───
+  // qa_cached: admin đã duyệt nguyên văn → không rephrase để giữ intent đã train
+  if (reply && senderId && !['booking', 'handoff', 'bot_paused', 'qa_cached'].includes(intentLabel)) {
     try {
       const diverse = await ensureDiverse({
         reply,
@@ -1350,8 +1409,8 @@ async function dispatchV6(ctx: {
     } catch {}
   }
 
-  // ─── Next-step planner: chủ động gắn CTA (trừ booking/handoff/auto_handoff) ───
-  if (reply && !['booking', 'booking_info', 'booking_action', 'handoff', 'auto_handoff', 'bot_paused', 'transfer'].includes(intentLabel)) {
+  // ─── Next-step planner: chủ động gắn CTA (trừ booking/handoff/auto_handoff/qa_cached) ───
+  if (reply && !['booking', 'booking_info', 'booking_action', 'handoff', 'auto_handoff', 'bot_paused', 'transfer', 'qa_cached'].includes(intentLabel)) {
     try {
       const { appendNextStep } = require('./next-step-planner');
       reply = appendNextStep({ reply, ro: router, bookingState: bookingInfo?.status, historyTail });
