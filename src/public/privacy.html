@@ -38,8 +38,8 @@
     <h3>1.1. Dữ liệu từ khách hàng (chủ doanh nghiệp)</h3>
     <ul>
       <li>Email, số điện thoại, tên doanh nghiệp khi đăng ký.</li>
-      <li>Token truy cập Fanpage Facebook, Zalo OA (được mã hóa AES-256-GCM khi lưu).</li>
-      <li>Lịch sử thanh toán, giao dịch nạp gói dịch vụ.</li>
+      <li>Khóa kết nối Fanpage Facebook và Zalo OA (lưu ở dạng mã hóa).</li>
+      <li>Lịch sử gói dịch vụ đã sử dụng.</li>
     </ul>
     <h3>1.2. Dữ liệu từ người dùng cuối (khách của fanpage)</h3>
     <ul>
@@ -49,8 +49,9 @@
       <li>Thông tin lịch hẹn / đặt phòng người dùng yêu cầu.</li>
     </ul>
     <p class="text-sm text-slate-500">
-      Chúng tôi <strong>không</strong> thu thập: mật khẩu, dữ liệu tài chính cá nhân
-      (số thẻ tín dụng), vị trí GPS, thông tin sinh trắc học, dữ liệu nhạy cảm khác.
+      Chúng tôi <strong>không</strong> thu thập thông tin đăng nhập của bạn,
+      thông tin thẻ ngân hàng cá nhân, vị trí GPS, dữ liệu sinh trắc học,
+      hay dữ liệu nhạy cảm khác.
     </p>
 
     <h2>2. Mục đích sử dụng</h2>
@@ -73,10 +74,10 @@
 
     <h2>4. Lưu trữ &amp; thời hạn</h2>
     <ul>
-      <li>Máy chủ đặt tại Việt Nam (VPS IP <code>103.82.193.74</code>).</li>
-      <li>Dữ liệu mã hóa khi truyền (TLS 1.2+) và khi lưu (AES-256-GCM cho token).</li>
+      <li>Máy chủ đặt tại Việt Nam.</li>
+      <li>Dữ liệu được mã hóa khi truyền và khi lưu trữ.</li>
       <li>Lịch sử tin nhắn: tự động xóa sau <strong>7 ngày</strong>.</li>
-      <li>Bản sao lưu gzip: giữ tối đa <strong>30 ngày</strong>, ghi đè tự động.</li>
+      <li>Bản sao lưu: giữ tối đa <strong>30 ngày</strong>, ghi đè tự động.</li>
       <li>Sau khi khách hàng hủy dịch vụ: xóa toàn bộ trong vòng <strong>90 ngày</strong>.</li>
     </ul>
 
@@ -92,13 +93,13 @@
       <li><strong>Quyền khiếu nại</strong>: gửi Bộ Công an — A05, hoặc Cục An toàn thông tin.</li>
     </ul>
 
-    <h2>6. Bảo mật</h2>
+    <h2>6. Biện pháp bảo mật</h2>
     <ul>
-      <li>HTTPS toàn site (chứng chỉ Let's Encrypt tự động gia hạn).</li>
-      <li>Mã hóa AES-256-GCM cho token nhạy cảm.</li>
-      <li>Rate limiting + WAF cơ bản chống DDoS / brute-force.</li>
-      <li>Kiểm toán tool-call AI (ai làm gì, khi nào).</li>
-      <li>Backup tự động hàng ngày + monitoring.</li>
+      <li>Kết nối HTTPS với chứng chỉ tự động gia hạn.</li>
+      <li>Mã hóa khóa truy cập khi lưu trữ.</li>
+      <li>Giới hạn tần suất và bảo vệ cơ bản chống truy cập trái phép.</li>
+      <li>Nhật ký hoạt động AI để kiểm tra chất lượng.</li>
+      <li>Sao lưu tự động định kỳ và giám sát hệ thống.</li>
     </ul>
 
     <h2>7. Cookies</h2>
