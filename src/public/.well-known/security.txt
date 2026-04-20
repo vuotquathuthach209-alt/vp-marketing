@@ -1,0 +1,6 @@
+Contact: mailto:privacy@sondervn.com
+Contact: tel:+84942883133
+Expires: 2027-04-20T00:00:00.000Z
+Preferred-Languages: vi, en
+Canonical: https://mkt.sondervn.com/.well-known/security.txt
+Policy: https://mkt.sondervn.com/privacy.html
