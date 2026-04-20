@@ -19,13 +19,18 @@ Bot chatbot phải:
 
 **Phân tách AI provider rõ ràng:**
 
-| Use case | AI provider | Lý do |
-|----------|-------------|-------|
-| **Marketing content** (caption, post Facebook) | **Claude Sonnet 4.5** | Chất lượng Việt cao cấp, brand voice tốt |
-| **Chatbot smart reply (bootstrap)** | **Gemini 2.5 Flash** (free) / Pro (paid) | Free tier dồi dào, đủ tốt cho reasoning + VN |
-| **Chatbot local reply (steady state)** | **Gemma 2 / Qwen 2.5-7B local** | $0/reply, đủ khi cache hit ≥ 70% |
+| Use case | AI provider (cascade) | Lý do |
+|----------|----------------------|-------|
+| **Marketing content** (caption, post Facebook) | **Claude Sonnet 4.5** (exclusive) | Brand voice VN cao cấp |
+| **Chatbot smart reply (bootstrap)** | **Gemini Flash → Pro → ChatGPT → Qwen** | Free tier ưu tiên, fallback đa dạng |
+| **Chatbot local reply (steady state)** | **Gemma 2 / Qwen 2.5-7B local** | $0/reply khi cache hit ≥ 70% |
 | **ETL synthesize hotel data** | **Gemini 2.5 Flash** | Đã deploy, work tốt |
 | **Embedding (intent matching)** | **MiniLM ONNX local** | Free, instant |
+
+**Quy tắc bất di bất dịch:**
+- Claude CHỈ cho marketing (đừng mix với chatbot)
+- ChatGPT/OpenAI CHỈ fallback trong chatbot (đừng dùng mặc định, đắt hơn Gemini)
+- Qwen local = safety net không bao giờ fail
 
 ---
 
@@ -192,10 +197,12 @@ Routing layer trên router.ts hiện tại.
 ```typescript
 interface SmartReplyResult {
   reply: string;
-  source: 'cache' | 'gemini_flash' | 'gemini_pro' | 'gemma' | 'qwen';  // Claude NOT used here
+  source: 'cache' | 'gemini_flash' | 'gemini_pro' | 'chatgpt' | 'gemma' | 'qwen';
+  // NEVER: 'claude' — claude is reserved cho marketing tasks
   match_confidence?: number;
   qa_cache_id?: number;
   cost_tokens?: number;
+  fallback_hops?: number;  // 0 = first try OK, 3 = passed through all cascade
 }
 
 export async function smartReplyWithLearning(opts: {
@@ -342,24 +349,37 @@ if (match.should_use_cached) {
 
 ## 💰 Cost analysis
 
-### Scenario: 1000 messages/ngày — dùng **Gemini 2.5 Flash** (không Claude)
+### Scenario: 1000 messages/ngày — cascade Gemini → ChatGPT → Qwen
 
 **Month 1 (bootstrap, 100% cache miss)**:
-- 100% calls → Gemini 2.5 Flash
-- Gemini Flash free tier: **1,500 RPD** — 1000 calls/day fit hoàn toàn
-- Cost: **$0/tháng** trong free tier
-- Nếu vượt: $0.075/1M input + $0.30/1M output
-- 500 tokens in + 200 tokens out × 1000 calls × 30 days = **$2.30/tháng** (paid tier)
+- 100% calls vào smart AI cascade
+- 1000 calls ≤ 1500 RPD free Gemini → **$0/tháng** với Gemini Flash free
+- Nếu peak vượt 1500: ChatGPT GPT-4o-mini $0.15/1M in + $0.60/1M out = ~$2/tháng
+- Qwen local $0 catch-all
 
 **Month 2 (50% cache hit)**:
 - 500 cache hits → Gemma local (free)
-- 500 Gemini calls → trong free tier luôn
+- 500 smart AI calls → trong Gemini free tier
 - **Cost: $0/tháng**
 
 **Month 3 (80% cache hit)**:
 - 800 cache hits → Gemma local
-- 200 Gemini calls → dư free tier
+- 200 smart calls → dư free Gemini tier
 - **Cost: $0/tháng**
+
+**Cost cascade breakdown (per 1000 smart AI calls)**:
+
+| Provider | Free quota | Over quota cost |
+|----------|-----------|-----------------|
+| Gemini 2.5 Flash | 1,500 RPD | $0.075 in / $0.30 out per 1M tok (~$0.15/1k calls) |
+| Gemini 2.5 Pro | 50 RPD | $1.25 in / $5 out per 1M tok (~$2/1k calls) |
+| ChatGPT GPT-4o-mini | không free | $0.15 in / $0.60 out per 1M tok (~$0.35/1k calls) |
+| ChatGPT GPT-4o | không free | $2.50 in / $10 out per 1M tok (~$3.5/1k calls) |
+| Qwen 2.5-7B local | unlimited | $0 |
+
+**Worst-case scenario**: Gemini hoàn toàn down 1 tháng:
+- 1000 calls/day × 30 × GPT-4o-mini = ~$10/tháng
+- Vẫn affordable
 
 ### So sánh providers (cho 1000 msgs/day)
 
@@ -370,12 +390,18 @@ if (match.should_use_cached) {
 | Gemini 2.5 Pro (paid) | $30 | $6 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
 | ~~Claude Sonnet 4.5~~ | ~~$135~~ | ~~$30~~ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | **Reserved cho MKT** |
 
-### Recommended: Gemini Flash tier cascade
+### Final cascade (đã chốt)
 ```
-Match ≥ 85% → Gemma local (free, fastest)
-Match 70-85% → Gemma local + log for review
-Match < 70% → Gemini 2.5 Flash (free tier)
-Match fails (edge case) → Gemini 2.5 Pro (paid, rare)
+Match ≥ 85% → Gemma/Qwen local (free, fastest)
+Match 70-85% → Gemma local + log for admin review
+Match < 70% → CASCADE:
+   1. Gemini 2.5 Flash (free tier 1500 RPD)
+      ↓ fail/quota
+   2. Gemini 2.5 Pro (paid, reasoning tốt hơn)
+      ↓ fail/quota
+   3. ChatGPT (OpenAI GPT-4o-mini primary, GPT-4o for complex)
+      ↓ fail
+   4. Qwen 2.5-7B local (last resort, $0, không bao giờ down)
 ```
 
 **Dự kiến chi phí cho 1000 hotels × 100 msgs/ngày = 100k msgs/month:**
@@ -422,10 +448,13 @@ Match fails (edge case) → Gemini 2.5 Pro (paid, rare)
    - Đề xuất: **Gemini 2.5 Pro** handle + flag "bootstrap_urgent" cho admin review sớm
 
 6. **Khi free tier Gemini quota hết** (1500 RPD/project):
-   - Option A: Spin up nhiều Google API keys (đã có key rotation trong router.ts)
-   - Option B: Fallback Qwen 2.5-7B local (free, slower)
-   - Option C: Paid Gemini Flash (~$2-5/tháng)
-   - Đề xuất: **Cascade A→B→C**
+   - ✅ **CHỐT CASCADE**: Gemini 2.5 Flash → Gemini 2.5 Pro → **ChatGPT (OpenAI)** → **Qwen 2.5-7B local**
+   - Logic:
+     1. Gemini Flash free tier (1500 RPD)
+     2. Hết quota → Gemini Pro (paid, cao cấp hơn)
+     3. Gemini Pro cũng fail/quota → **ChatGPT** (GPT-4o-mini hoặc GPT-4o)
+     4. ChatGPT fail → **Qwen local** (fallback cuối, không bao giờ "down")
+   - Multi-key rotation cho Gemini đã có sẵn trong router.ts
 
 ---
 
@@ -457,12 +486,15 @@ Sau 1 tuần build + 2-4 tuần bootstrap (admin review), bot vào steady state.
 
 | Rủi ro | Mitigation |
 |--------|------------|
-| Gemini free tier quota hết | Multi-key rotation (đã có) → Qwen local fallback → paid tier |
-| Cost spike (nhiều bootstrap) | Quota monitor + alert khi gần 80% free tier |
+| Gemini Flash free tier quota hết | → Gemini Pro → ChatGPT → Qwen local (4-tier cascade) |
+| Gemini toàn bộ down | → ChatGPT (OpenAI thường độc lập với Google) |
+| ChatGPT down | → Qwen local (never fails) |
+| Cost spike (nhiều bootstrap) | Quota monitor + alert khi gần 80% free tier + spending cap |
 | Admin không kịp review | Auto-promote sau 7 ngày nếu hits_count > 20 + no negative feedback |
 | Customer hỏi trùng nhau liên tục | Dedupe bằng question_hash, save 1 entry + increment hits |
 | Cache poisoning (admin approve reply sai) | Tracking admin_user_id, có thể revert |
-| Gemini Flash quality không đủ cho edge case | Escalate Gemini Pro (paid) khi confidence < 50% |
+| Gemini Flash quality không đủ cho edge case | Escalate Gemini Pro khi confidence < 50% |
+| ChatGPT API key exposed | Key rotation + env vars only, never commit |
 
 ---
 
