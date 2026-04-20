@@ -13,6 +13,7 @@
  *   4. Nếu không match → fallback RAG
  */
 import { searchNearby, searchByArea, countHotels, HotelSearchResult } from './hotel-knowledge';
+import { db } from '../db';
 import { findLandmark } from './geocoder';
 import { RouterSlots } from './intent-router';
 
@@ -216,13 +217,31 @@ export function recommend(ctx: RecommendContext): RecommendResult | null {
   }
 
   // Found signal but no match → honest reply
-  const where = landmark?.landmark || district || city;
-  let reply = `Dạ em rất tiếc, hiện bên em chưa có khách sạn nào `;
-  if (landmark) reply += `gần ${where}`;
-  else if (district) reply += `tại ${where}`;
-  else reply += `ở ${where}`;
+  const typeLabel = propertyType ? PROPERTY_TYPE_VI[propertyType] : 'khách sạn';
+  let reply = `Dạ em rất tiếc, hiện bên em chưa có ${typeLabel} nào`;
+  if (landmark) reply += ` gần ${landmark.landmark}`;
+  else if (district) reply += ` tại ${district}`;
+  else if (city) reply += ` ở ${city}`;
   if (priceLimit) reply += ` trong tầm ${formatPrice(priceLimit)}đ`;
-  reply += ` ạ 🙏\n\nAnh/chị có muốn em gợi ý các khu vực lân cận không ạ?`;
+  reply += ` ạ 🙏\n\n`;
 
-  return { type: 'no_match', reply, meta: { search_type: searchType, city: city || undefined, district: district || undefined, landmark: landmark?.landmark } };
+  // Gợi ý: nếu user hỏi type, đề xuất các type có sẵn
+  if (propertyType) {
+    const availableTypes = db.prepare(
+      `SELECT DISTINCT property_type FROM hotel_profile WHERE property_type IS NOT NULL`
+    ).all() as any[];
+    const otherTypes = availableTypes
+      .map(r => r.property_type)
+      .filter(t => t !== propertyType)
+      .map(t => PROPERTY_TYPE_VI[t] || t);
+    if (otherTypes.length > 0) {
+      reply += `Hiện bên em có các loại: ${otherTypes.join(', ')}. Anh/chị có muốn xem không ạ?`;
+    } else {
+      reply += `Anh/chị có muốn em gợi ý lựa chọn khác không ạ?`;
+    }
+  } else {
+    reply += `Anh/chị có muốn em gợi ý các khu vực lân cận không ạ?`;
+  }
+
+  return { type: 'no_match', reply, meta: { search_type: searchType, city: city || undefined, district: district || undefined, landmark: landmark?.landmark, property_type: propertyType || undefined } };
 }
