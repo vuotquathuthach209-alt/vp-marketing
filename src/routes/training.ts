@@ -37,11 +37,15 @@ router.get('/stats', (req: AuthRequest, res) => {
   try {
     const hotelId = getHotelId(req);
     const stats = getTrainingStats(hotelId);
-    // Extra: average confidence boost from cache hits
-    const events = db.prepare(
-      `SELECT COUNT(*) as n FROM events WHERE event = 'qa_cache_hit' AND created_at > ?`
-    ).get(Date.now() - 7 * 24 * 3600_000) as any;
-    res.json({ ...stats, cache_hits_7d: events?.n || 0 });
+    // Extra: cache hits 7 days (events table: event_name + ts)
+    let cacheHits7d = 0;
+    try {
+      const ev = db.prepare(
+        `SELECT COUNT(*) as n FROM events WHERE event_name = 'qa_cache_hit' AND ts > ?`
+      ).get(Date.now() - 7 * 24 * 3600_000) as any;
+      cacheHits7d = ev?.n || 0;
+    } catch { /* events table may not exist yet */ }
+    res.json({ ...stats, cache_hits_7d: cacheHits7d });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
