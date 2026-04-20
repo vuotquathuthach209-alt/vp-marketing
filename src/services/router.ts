@@ -33,7 +33,7 @@ function getAiTier(): AiTier {
  * - reply_complex   : reply inbox phức tạp (mặc định Claude Sonnet)
  */
 
-export type TaskType = 'caption' | 'image_prompt' | 'classify' | 'reply_simple' | 'reply_complex' | 'intent_gateway' | 'reply_qwen' | 'etl_synthesize';
+export type TaskType = 'caption' | 'image_prompt' | 'classify' | 'reply_simple' | 'reply_complex' | 'intent_gateway' | 'reply_qwen' | 'etl_synthesize' | 'reply_smart';
 export type Provider = 'anthropic' | 'google' | 'groq' | 'deepseek' | 'openai' | 'mistral' | 'ollama';
 
 // Ollama local (Qwen 2.5-7B on VPS) — free, no API key
@@ -58,6 +58,9 @@ const DEFAULT_ROUTES: Record<TaskType, RouteConfig> = {
   reply_qwen:    { provider: 'ollama',    model: OLLAMA_MODEL,              maxTokens: 500  },
   // v7 Hotel Knowledge ETL: Gemini 2.5 Flash primary, Qwen local fallback
   etl_synthesize:{ provider: 'google',    model: 'gemini-2.5-flash',        maxTokens: 6000 },
+  // v8 Smart chatbot reply: Gemini Flash → Pro → ChatGPT → Qwen cascade
+  // (CLAUDE KHÔNG DÙNG cho task này — reserved cho marketing caption)
+  reply_smart:   { provider: 'google',    model: 'gemini-2.5-flash',        maxTokens: 800  },
 };
 
 /**

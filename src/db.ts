@@ -587,6 +587,64 @@ safeAddColumn('hotel_profile', 'washing_machine', 'INTEGER');
 safeAddColumn('hotel_profile', 'scraped_at', 'INTEGER');
 safeAddColumn('hotel_profile', 'data_source', 'TEXT'); // 'scraper' | 'api' | 'manual'
 
+// v8: Smart Intent Training Pipeline (Q&A cache + human review + feedback loop)
+db.exec(`
+CREATE TABLE IF NOT EXISTS qa_training_cache (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+
+  -- Input
+  customer_question TEXT NOT NULL,
+  question_embedding BLOB,
+  question_hash TEXT,
+
+  -- Output
+  ai_response TEXT NOT NULL,
+  ai_provider TEXT NOT NULL,
+  ai_model TEXT,
+  ai_tokens_used INTEGER DEFAULT 0,
+
+  -- Lifecycle
+  tier TEXT NOT NULL DEFAULT 'pending',
+  admin_notes TEXT,
+  admin_edited_response TEXT,
+  admin_user_id INTEGER,
+  approved_at INTEGER,
+
+  -- Metrics
+  hits_count INTEGER DEFAULT 0,
+  positive_feedback INTEGER DEFAULT 0,
+  negative_feedback INTEGER DEFAULT 0,
+  feedback_score REAL DEFAULT 0,
+
+  -- Context
+  intent_category TEXT,
+  context_tags TEXT,
+
+  -- Timestamps
+  created_at INTEGER NOT NULL,
+  last_hit_at INTEGER,
+  last_reviewed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_qa_hotel_tier ON qa_training_cache(hotel_id, tier);
+CREATE INDEX IF NOT EXISTS idx_qa_hash ON qa_training_cache(question_hash);
+CREATE INDEX IF NOT EXISTS idx_qa_feedback ON qa_training_cache(feedback_score DESC);
+CREATE INDEX IF NOT EXISTS idx_qa_last_hit ON qa_training_cache(last_hit_at DESC);
+
+CREATE TABLE IF NOT EXISTS qa_feedback (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  qa_cache_id INTEGER NOT NULL,
+  customer_id TEXT,
+  sentiment TEXT,
+  signal TEXT,
+  follow_up_message TEXT,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (qa_cache_id) REFERENCES qa_training_cache(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_qa_fb_cache ON qa_feedback(qa_cache_id);
+CREATE INDEX IF NOT EXISTS idx_qa_fb_created ON qa_feedback(created_at DESC);
+`);
+
 // v7: Hotel Knowledge Layer — AI-synthesized bot-ready data
 db.exec(`
 CREATE TABLE IF NOT EXISTS hotel_profile (

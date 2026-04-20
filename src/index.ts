@@ -31,6 +31,9 @@ import agentRouter from './routes/agent';
 import dataDeletionRouter from './routes/data-deletion';
 import './services/agent-tools'; // init table + register tools
 import './services/ota-readonly-guard'; // self-test fires on boot (fail-fast if guard broken)
+// v8: Intent matcher self-test
+import { selfTest as intentMatcherSelfTest } from './services/intent-matcher';
+intentMatcherSelfTest().catch(e => console.warn('[intent-matcher] boot selftest fail:', e?.message));
 import rateLimit from 'express-rate-limit';
 
 const app = express();
