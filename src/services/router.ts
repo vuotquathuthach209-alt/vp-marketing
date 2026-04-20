@@ -57,7 +57,7 @@ const DEFAULT_ROUTES: Record<TaskType, RouteConfig> = {
   intent_gateway:{ provider: 'google',    model: 'gemini-2.5-flash-lite',  maxTokens: 200  },
   reply_qwen:    { provider: 'ollama',    model: OLLAMA_MODEL,              maxTokens: 500  },
   // v7 Hotel Knowledge ETL: Gemini 2.5 Flash primary, Qwen local fallback
-  etl_synthesize:{ provider: 'google',    model: 'gemini-2.5-flash',        maxTokens: 4000 },
+  etl_synthesize:{ provider: 'google',    model: 'gemini-2.5-flash',        maxTokens: 6000 },
 };
 
 /**
