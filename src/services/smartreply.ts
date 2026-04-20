@@ -1174,6 +1174,14 @@ async function dispatchV6(ctx: {
   // Index user message async (no await — background)
   indexUserMessage({ senderId, pageId: pid, message: msg }).catch(() => {});
 
+  // [0] Phase 3: analyze last bot reply (feedback signal) — fire-and-forget
+  try {
+    const { analyzeFollowUp } = require('./qa-feedback-tracker');
+    analyzeFollowUp({ senderId, message: msg, hotelId: hid }).catch((e: any) =>
+      console.warn('[qa-feedback] analyze fail:', e?.message)
+    );
+  } catch {}
+
   // Fetch history 6 last turns
   const historyRows = db.prepare(
     `SELECT role, message FROM conversation_memory
@@ -1241,6 +1249,17 @@ async function dispatchV6(ctx: {
         db.prepare(`UPDATE qa_training_cache SET hits_count = hits_count + 1, last_hit_at = ? WHERE id = ?`)
           .run(Date.now(), m.qa_cache_id);
         qaCacheHit = { qa_cache_id: m.qa_cache_id, cached_response: m.cached_response, confidence: m.confidence, tier: m.tier };
+        // Phase 3: nhớ để đánh giá feedback từ user turn tiếp theo
+        try {
+          const { rememberLastReply } = require('./qa-feedback-tracker');
+          rememberLastReply(senderId, {
+            qa_cache_id: m.qa_cache_id,
+            bot_reply: m.cached_response,
+            user_question: msg,
+            hotel_id: hid,
+            is_cached_hit: true,
+          });
+        } catch {}
         try {
           const { trackEvent } = require('./events');
           trackEvent({ event: 'qa_cache_hit', hotelId: hid, meta: { id: m.qa_cache_id, confidence: m.confidence, tier: m.tier } });
@@ -1421,6 +1440,19 @@ async function dispatchV6(ctx: {
       }).then((res: any) => {
         if (res?.is_new) {
           console.log(`[v6] qa_cache saved id=${res.qa_cache_id} tier=pending intent=${router.intent} provider=${llmInfo?.provider || 'unknown'}`);
+        }
+        // Phase 3: remember kể cả pending entries (để đánh giá feedback)
+        if (res?.qa_cache_id) {
+          try {
+            const { rememberLastReply } = require('./qa-feedback-tracker');
+            rememberLastReply(senderId, {
+              qa_cache_id: res.qa_cache_id,
+              bot_reply: reply,
+              user_question: msg,
+              hotel_id: hid,
+              is_cached_hit: false,
+            });
+          } catch {}
         }
       }).catch((e: any) => console.warn('[v6] saveNewQA fail:', e?.message));
     } catch {}

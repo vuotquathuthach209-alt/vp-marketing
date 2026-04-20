@@ -28,6 +28,11 @@ import {
   autoDemoteOnBadFeedback,
   getTrainingStats,
 } from '../services/intent-matcher';
+import {
+  manualFeedback,
+  getRecentFeedback,
+  getFeedbackStats,
+} from '../services/qa-feedback-tracker';
 
 const router = Router();
 router.use(authMiddleware);
@@ -215,6 +220,50 @@ router.post('/promote-trusted', (_req: AuthRequest, res) => {
     const promoted = autoPromoteTrusted();
     const demoted = autoDemoteOnBadFeedback();
     res.json({ ok: true, promoted, demoted });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Phase 3: Feedback endpoints ───────────────────────────────────
+router.get('/:id/feedback', (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const id = parseInt(String(req.params.id), 10);
+    // Verify ownership
+    const owns = db.prepare(`SELECT id FROM qa_training_cache WHERE id = ? AND hotel_id = ?`).get(id, hotelId);
+    if (!owns) return res.status(404).json({ error: 'not found' });
+    const items = getRecentFeedback(id, 50);
+    res.json({ items });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/:id/feedback', (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const id = parseInt(String(req.params.id), 10);
+    const { sentiment, note } = req.body || {};
+    if (!['positive', 'negative', 'neutral'].includes(sentiment)) {
+      return res.status(400).json({ error: 'sentiment must be positive/negative/neutral' });
+    }
+    const owns = db.prepare(`SELECT id FROM qa_training_cache WHERE id = ? AND hotel_id = ?`).get(id, hotelId);
+    if (!owns) return res.status(404).json({ error: 'not found' });
+    manualFeedback({ qa_cache_id: id, sentiment, note, admin_user_id: req.user?.userId });
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/feedback/stats', (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const days = Math.min(90, Math.max(1, parseInt((req.query.days as string) || '7', 10)));
+    const since = Date.now() - days * 24 * 3600_000;
+    const stats = getFeedbackStats(hotelId, since);
+    res.json({ days, ...stats });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

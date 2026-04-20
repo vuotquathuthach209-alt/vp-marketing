@@ -3634,6 +3634,10 @@ function renderTrainingRow(row) {
   const displayedResponse = row.admin_edited_response || row.ai_response;
   const editedBadge = row.admin_edited_response ? '<span class="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded ml-1">đã sửa</span>' : '';
   const isActionable = row.tier === 'pending';
+  const scoreClass = row.feedback_score > 0 ? 'text-emerald-600' : row.feedback_score < 0 ? 'text-rose-600' : 'text-slate-400';
+  const feedbackSummary = (row.positive_feedback || row.negative_feedback)
+    ? `<span class="text-xs ${scoreClass} font-semibold">★${row.feedback_score || 0} (<span class="text-emerald-600">+${row.positive_feedback}</span>/<span class="text-rose-600">-${row.negative_feedback}</span>)</span>`
+    : '';
   return `
     <div class="bg-white rounded-lg shadow-sm p-4 border border-slate-200" data-id="${row.id}">
       <div class="flex items-start justify-between mb-2 gap-2">
@@ -3642,10 +3646,11 @@ function renderTrainingRow(row) {
           <span class="text-xs text-slate-500">#${row.id}</span>
           <span class="text-xs text-slate-500">${escapeHtml(row.ai_provider || 'unknown')}</span>
           ${row.intent_category ? `<span class="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">${escapeHtml(row.intent_category)}</span>` : ''}
-          <span class="text-xs text-slate-400">hits=${row.hits_count}${row.feedback_score ? ` ★${row.feedback_score}` : ''}</span>
+          <span class="text-xs text-slate-400">hits=${row.hits_count}</span>
+          ${feedbackSummary}
           <span class="text-xs text-slate-400">${formatRelTime(row.created_at)}</span>
         </div>
-        <div class="flex gap-1">
+        <div class="flex gap-1 flex-wrap">
           ${isActionable ? `
             <button class="training-approve bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1 rounded font-medium">✓ Duyệt</button>
             <button class="training-edit bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1 rounded font-medium">✎ Sửa</button>
@@ -3655,6 +3660,9 @@ function renderTrainingRow(row) {
             <button class="training-edit bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1 rounded">✎ Sửa</button>
             <button class="training-reject bg-rose-600 hover:bg-rose-700 text-white text-xs px-3 py-1 rounded">Hủy</button>
           ` : ''}
+          <button class="training-feedback-up bg-white border border-emerald-500 text-emerald-600 hover:bg-emerald-50 text-xs px-2 py-1 rounded" title="Đánh giá tốt">👍</button>
+          <button class="training-feedback-down bg-white border border-rose-500 text-rose-600 hover:bg-rose-50 text-xs px-2 py-1 rounded" title="Đánh giá không ổn">👎</button>
+          <button class="training-feedback-history bg-white border text-slate-600 hover:bg-slate-50 text-xs px-2 py-1 rounded" title="Lịch sử feedback">📊</button>
         </div>
       </div>
       <div class="mb-2">
@@ -3663,10 +3671,11 @@ function renderTrainingRow(row) {
       </div>
       <div>
         <div class="text-xs font-semibold text-slate-500 uppercase mb-1">Bot trả lời ${editedBadge}</div>
-        <div class="text-sm text-slate-800 bg-emerald-50 p-2 rounded border border-emerald-200 whitespace-pre-wrap">${escapeHtml(displayedResponse)}</div>
+        <div class="training-response text-sm text-slate-800 bg-emerald-50 p-2 rounded border border-emerald-200 whitespace-pre-wrap">${escapeHtml(displayedResponse)}</div>
       </div>
       ${tags ? `<div class="mt-2">${tags}</div>` : ''}
       ${row.admin_notes ? `<div class="mt-2 text-xs text-slate-600 italic">Ghi chú: ${escapeHtml(row.admin_notes)}</div>` : ''}
+      <div class="training-feedback-panel hidden mt-3 pt-3 border-t border-slate-200" data-feedback-for="${row.id}"></div>
     </div>`;
 }
 
@@ -3702,17 +3711,75 @@ function trainingEdit(id, currentResponse) {
   trainingApprove(id, edited.trim());
 }
 
+// Phase 3: feedback helpers
+const SIGNAL_LABEL = {
+  positive_thanks: '🙏 Cảm ơn',
+  positive_phone_given: '📞 Cho SĐT',
+  positive_booking_progress: '📅 Tiếp tục đặt',
+  positive_different_topic: '✅ Chuyển chủ đề',
+  negative_explicit: '❌ Nói sai',
+  negative_repeated_question: '🔁 Hỏi lại',
+  negative_handoff_request: '🆘 Xin gặp người',
+  negative_complaint: '😠 Khiếu nại',
+  admin_manual: '👤 Admin',
+  neutral: '• neutral',
+};
+
+async function trainingFeedbackGrade(id, sentiment) {
+  const note = sentiment === 'negative' ? prompt('Ghi chú (tùy chọn):') : null;
+  try {
+    await api(`/training/${id}/feedback`, {
+      method: 'POST',
+      body: JSON.stringify({ sentiment, note: note || undefined }),
+    });
+    await loadTrainingList();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function trainingFeedbackHistory(id, panel) {
+  if (!panel.classList.contains('hidden')) { panel.classList.add('hidden'); return; }
+  panel.innerHTML = '<div class="text-sm text-slate-400">Đang tải...</div>';
+  panel.classList.remove('hidden');
+  try {
+    const r = await api(`/training/${id}/feedback`);
+    if (r.items.length === 0) {
+      panel.innerHTML = '<div class="text-sm text-slate-500">Chưa có feedback.</div>';
+      return;
+    }
+    panel.innerHTML = `
+      <div class="text-xs font-semibold text-slate-600 mb-2">Lịch sử feedback (${r.items.length} mục gần nhất):</div>
+      <div class="space-y-1 max-h-48 overflow-y-auto">
+        ${r.items.map(f => {
+          const sentClass = f.sentiment === 'positive' ? 'bg-emerald-50 border-emerald-200' : f.sentiment === 'negative' ? 'bg-rose-50 border-rose-200' : 'bg-slate-50 border-slate-200';
+          return `<div class="${sentClass} border rounded p-2 text-xs">
+            <div class="flex justify-between items-center">
+              <span class="font-medium">${SIGNAL_LABEL[f.signal] || f.signal}</span>
+              <span class="text-slate-500">${formatRelTime(f.created_at)}</span>
+            </div>
+            ${f.follow_up_message ? `<div class="mt-1 text-slate-700 italic">"${escapeHtml(f.follow_up_message)}"</div>` : ''}
+          </div>`;
+        }).join('')}
+      </div>`;
+  } catch (e) {
+    panel.innerHTML = '<div class="text-sm text-rose-600">Lỗi: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
 // Event delegation cho list
 document.getElementById('training-list')?.addEventListener('click', (ev) => {
   const row = ev.target.closest('[data-id]');
   if (!row) return;
   const id = parseInt(row.dataset.id, 10);
-  const responseEl = row.querySelector('.bg-emerald-50');
+  const responseEl = row.querySelector('.training-response');
   const currentResponse = responseEl ? responseEl.textContent : '';
+  const panel = row.querySelector('.training-feedback-panel');
   if (ev.target.classList.contains('training-approve')) trainingApprove(id);
   else if (ev.target.classList.contains('training-reject')) trainingReject(id);
   else if (ev.target.classList.contains('training-blacklist')) trainingBlacklist(id);
   else if (ev.target.classList.contains('training-edit')) trainingEdit(id, currentResponse);
+  else if (ev.target.classList.contains('training-feedback-up')) trainingFeedbackGrade(id, 'positive');
+  else if (ev.target.classList.contains('training-feedback-down')) trainingFeedbackGrade(id, 'negative');
+  else if (ev.target.classList.contains('training-feedback-history') && panel) trainingFeedbackHistory(id, panel);
 });
 
 // Filter changes
