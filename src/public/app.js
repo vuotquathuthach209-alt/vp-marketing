@@ -127,6 +127,7 @@ function switchTab(tab) {
   if (tab === 'intents') loadIntents();
   if (tab === 'revenue') loadRevenue();
   if (tab === 'knowledge-sync') loadKnowledgeSync();
+  if (tab === 'training') loadTraining();
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
   b.addEventListener('click', () => switchTab(b.dataset.tab));
@@ -3524,6 +3525,241 @@ document.getElementById('ks-preview-btn')?.addEventListener('click', async () =>
     pre.textContent = JSON.stringify(r, null, 2);
   } catch (e) { pre.textContent = 'Lỗi: ' + e.message; }
 });
+
+// ====== Training Review ======
+const trainingState = { tier: 'pending', provider: '', intent: '', offset: 0, limit: 20, total: 0 };
+
+function escapeHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function formatRelTime(ts) {
+  if (!ts) return '-';
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return 'vừa xong';
+  if (diff < 3600_000) return Math.floor(diff / 60_000) + ' phút trước';
+  if (diff < 86400_000) return Math.floor(diff / 3600_000) + ' giờ trước';
+  return Math.floor(diff / 86400_000) + ' ngày trước';
+}
+
+async function loadTraining() {
+  trainingState.offset = 0;
+  await Promise.all([loadTrainingStats(), loadTrainingDistinct(), loadTrainingList()]);
+}
+
+async function loadTrainingStats() {
+  try {
+    const s = await api('/training/stats');
+    const byTier = {};
+    (s.by_tier || []).forEach(r => byTier[r.tier] = r.n);
+    document.getElementById('stat-pending').textContent = byTier.pending || 0;
+    document.getElementById('stat-approved').textContent = byTier.approved || 0;
+    document.getElementById('stat-trusted').textContent = byTier.trusted || 0;
+    document.getElementById('stat-rejected').textContent = (byTier.rejected || 0) + (byTier.blacklisted || 0);
+    document.getElementById('stat-hits').textContent = s.cache_hits_7d || 0;
+    // Update sidebar badge
+    const badge = document.getElementById('training-badge');
+    if (badge) {
+      const pendingCount = byTier.pending || 0;
+      if (pendingCount > 0) { badge.textContent = pendingCount > 99 ? '99+' : pendingCount; badge.classList.remove('hidden'); }
+      else badge.classList.add('hidden');
+    }
+  } catch (e) { console.warn('training stats fail:', e.message); }
+}
+
+async function loadTrainingDistinct() {
+  try {
+    const d = await api('/training/meta/distinct');
+    const provSel = document.getElementById('training-provider');
+    const intSel = document.getElementById('training-intent');
+    if (provSel.options.length <= 1) {
+      (d.providers || []).forEach(p => {
+        const o = document.createElement('option'); o.value = p; o.textContent = p; provSel.appendChild(o);
+      });
+    }
+    if (intSel.options.length <= 1) {
+      (d.intents || []).forEach(i => {
+        const o = document.createElement('option'); o.value = i; o.textContent = i; intSel.appendChild(o);
+      });
+    }
+  } catch (e) { /* non-fatal */ }
+}
+
+async function loadTrainingList() {
+  const container = document.getElementById('training-list');
+  container.innerHTML = '<div class="text-slate-400 text-sm p-4">Đang tải...</div>';
+  try {
+    const qs = new URLSearchParams({
+      tier: trainingState.tier,
+      provider: trainingState.provider,
+      intent: trainingState.intent,
+      limit: trainingState.limit,
+      offset: trainingState.offset,
+    }).toString();
+    const r = await api('/training/list?' + qs);
+    trainingState.total = r.total;
+    if (r.items.length === 0) {
+      container.innerHTML = '<div class="bg-white rounded-lg shadow-sm p-8 text-center text-slate-500 border border-slate-200">Chưa có entry nào ở tier <b>' + trainingState.tier + '</b>.</div>';
+    } else {
+      container.innerHTML = r.items.map(renderTrainingRow).join('');
+    }
+    // Pager
+    const info = document.getElementById('training-pager-info');
+    const start = trainingState.offset + 1;
+    const end = Math.min(trainingState.offset + trainingState.limit, r.total);
+    info.textContent = r.total > 0 ? `Hiển thị ${start}-${end} / ${r.total} entries` : '';
+    document.getElementById('training-prev').disabled = trainingState.offset <= 0;
+    document.getElementById('training-next').disabled = end >= r.total;
+    if (window.lucide) window.lucide.createIcons();
+  } catch (e) {
+    container.innerHTML = '<div class="text-rose-600 text-sm p-4">Lỗi: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function tierBadge(tier) {
+  const map = {
+    pending: { bg: 'bg-amber-100', text: 'text-amber-800', label: 'Pending' },
+    approved: { bg: 'bg-emerald-100', text: 'text-emerald-800', label: 'Approved' },
+    trusted: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Trusted' },
+    rejected: { bg: 'bg-rose-100', text: 'text-rose-800', label: 'Rejected' },
+    blacklisted: { bg: 'bg-slate-300', text: 'text-slate-800', label: 'Blacklisted' },
+  };
+  const m = map[tier] || { bg: 'bg-slate-100', text: 'text-slate-700', label: tier };
+  return `<span class="text-xs font-medium ${m.bg} ${m.text} px-2 py-0.5 rounded">${m.label}</span>`;
+}
+
+function renderTrainingRow(row) {
+  const tags = (row.context_tags || []).map(t => `<span class="inline-block text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded mr-1">${escapeHtml(t)}</span>`).join('');
+  const displayedResponse = row.admin_edited_response || row.ai_response;
+  const editedBadge = row.admin_edited_response ? '<span class="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded ml-1">đã sửa</span>' : '';
+  const isActionable = row.tier === 'pending';
+  return `
+    <div class="bg-white rounded-lg shadow-sm p-4 border border-slate-200" data-id="${row.id}">
+      <div class="flex items-start justify-between mb-2 gap-2">
+        <div class="flex items-center gap-2 flex-wrap">
+          ${tierBadge(row.tier)}
+          <span class="text-xs text-slate-500">#${row.id}</span>
+          <span class="text-xs text-slate-500">${escapeHtml(row.ai_provider || 'unknown')}</span>
+          ${row.intent_category ? `<span class="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">${escapeHtml(row.intent_category)}</span>` : ''}
+          <span class="text-xs text-slate-400">hits=${row.hits_count}${row.feedback_score ? ` ★${row.feedback_score}` : ''}</span>
+          <span class="text-xs text-slate-400">${formatRelTime(row.created_at)}</span>
+        </div>
+        <div class="flex gap-1">
+          ${isActionable ? `
+            <button class="training-approve bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1 rounded font-medium">✓ Duyệt</button>
+            <button class="training-edit bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1 rounded font-medium">✎ Sửa</button>
+            <button class="training-reject bg-rose-600 hover:bg-rose-700 text-white text-xs px-3 py-1 rounded">✗ Từ chối</button>
+            <button class="training-blacklist bg-slate-700 hover:bg-slate-800 text-white text-xs px-3 py-1 rounded">🚫 Chặn</button>
+          ` : row.tier === 'approved' || row.tier === 'trusted' ? `
+            <button class="training-edit bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1 rounded">✎ Sửa</button>
+            <button class="training-reject bg-rose-600 hover:bg-rose-700 text-white text-xs px-3 py-1 rounded">Hủy</button>
+          ` : ''}
+        </div>
+      </div>
+      <div class="mb-2">
+        <div class="text-xs font-semibold text-slate-500 uppercase mb-1">Khách hỏi</div>
+        <div class="text-sm text-slate-800 bg-slate-50 p-2 rounded border border-slate-200">${escapeHtml(row.customer_question)}</div>
+      </div>
+      <div>
+        <div class="text-xs font-semibold text-slate-500 uppercase mb-1">Bot trả lời ${editedBadge}</div>
+        <div class="text-sm text-slate-800 bg-emerald-50 p-2 rounded border border-emerald-200 whitespace-pre-wrap">${escapeHtml(displayedResponse)}</div>
+      </div>
+      ${tags ? `<div class="mt-2">${tags}</div>` : ''}
+      ${row.admin_notes ? `<div class="mt-2 text-xs text-slate-600 italic">Ghi chú: ${escapeHtml(row.admin_notes)}</div>` : ''}
+    </div>`;
+}
+
+async function trainingApprove(id, editedResponse) {
+  try {
+    await api(`/training/${id}/approve`, { method: 'POST', body: JSON.stringify({ edited_response: editedResponse || undefined }) });
+    await Promise.all([loadTrainingStats(), loadTrainingList()]);
+  } catch (e) { alert('Lỗi duyệt: ' + e.message); }
+}
+
+async function trainingReject(id) {
+  const reason = prompt('Lý do từ chối (bắt buộc, ≥3 ký tự):');
+  if (!reason || reason.trim().length < 3) return;
+  try {
+    await api(`/training/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason: reason.trim() }) });
+    await Promise.all([loadTrainingStats(), loadTrainingList()]);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function trainingBlacklist(id) {
+  if (!confirm('Blacklist entry này? Pattern tương tự sẽ bị chặn tự động.')) return;
+  const reason = prompt('Lý do blacklist (tùy chọn):') || 'spam/troll pattern';
+  try {
+    await api(`/training/${id}/blacklist`, { method: 'POST', body: JSON.stringify({ reason }) });
+    await Promise.all([loadTrainingStats(), loadTrainingList()]);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+function trainingEdit(id, currentResponse) {
+  const edited = prompt('Sửa câu trả lời (bot sẽ dùng phiên bản này khi match):', currentResponse);
+  if (edited === null) return;
+  if (edited.trim().length < 3) { alert('Phản hồi quá ngắn'); return; }
+  trainingApprove(id, edited.trim());
+}
+
+// Event delegation cho list
+document.getElementById('training-list')?.addEventListener('click', (ev) => {
+  const row = ev.target.closest('[data-id]');
+  if (!row) return;
+  const id = parseInt(row.dataset.id, 10);
+  const responseEl = row.querySelector('.bg-emerald-50');
+  const currentResponse = responseEl ? responseEl.textContent : '';
+  if (ev.target.classList.contains('training-approve')) trainingApprove(id);
+  else if (ev.target.classList.contains('training-reject')) trainingReject(id);
+  else if (ev.target.classList.contains('training-blacklist')) trainingBlacklist(id);
+  else if (ev.target.classList.contains('training-edit')) trainingEdit(id, currentResponse);
+});
+
+// Filter changes
+document.getElementById('training-tier')?.addEventListener('change', (e) => {
+  trainingState.tier = e.target.value; trainingState.offset = 0; loadTrainingList();
+});
+document.getElementById('training-provider')?.addEventListener('change', (e) => {
+  trainingState.provider = e.target.value; trainingState.offset = 0; loadTrainingList();
+});
+document.getElementById('training-intent')?.addEventListener('change', (e) => {
+  trainingState.intent = e.target.value; trainingState.offset = 0; loadTrainingList();
+});
+document.getElementById('training-refresh')?.addEventListener('click', loadTraining);
+document.getElementById('training-prev')?.addEventListener('click', () => {
+  trainingState.offset = Math.max(0, trainingState.offset - trainingState.limit);
+  loadTrainingList();
+});
+document.getElementById('training-next')?.addEventListener('click', () => {
+  trainingState.offset += trainingState.limit;
+  loadTrainingList();
+});
+document.getElementById('training-promote')?.addEventListener('click', async () => {
+  try {
+    const r = await api('/training/promote-trusted', { method: 'POST' });
+    alert(`Promoted ${r.promoted} → trusted. Demoted ${r.demoted} → pending.`);
+    await loadTraining();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
+
+document.getElementById('training-seed-btn')?.addEventListener('click', async () => {
+  const question = prompt('Câu hỏi của khách (VD: "Có wifi không?"):');
+  if (!question || question.trim().length < 3) return;
+  const response = prompt('Câu trả lời mẫu (bot sẽ dùng nguyên văn khi match):');
+  if (!response || response.trim().length < 3) return;
+  const intent_category = prompt('Intent category (tùy chọn, VD: amenity_q, price_q, location_q):') || 'manual_seed';
+  try {
+    const r = await api('/training/seed', {
+      method: 'POST',
+      body: JSON.stringify({ question: question.trim(), response: response.trim(), intent_category, notes: 'manual seed' }),
+    });
+    alert(r.is_new ? `Đã thêm Q&A #${r.qa_cache_id}` : 'Q&A này đã tồn tại (merge hits)');
+    await loadTraining();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
+
+// Auto-refresh badge mỗi 60s khi đang ở tab khác (nhắc có pending mới)
+setInterval(() => { if (document.visibilityState === 'visible') loadTrainingStats().catch(() => {}); }, 60_000);
 
 // ====== Init ======
 checkAuth();
