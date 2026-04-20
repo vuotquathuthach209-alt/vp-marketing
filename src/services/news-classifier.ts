@@ -133,11 +133,11 @@ Trả JSON schema:
     const result = await smartCascade({
       system: CLASSIFIER_SYSTEM,
       user,
-      maxTokens: 400,
+      maxTokens: 800,         // tăng để tránh truncate mid-JSON
       temperature: 0.1,
       json: true,
     });
-    // Gemini đôi khi trả prose prefix ("Here is the JSON..."). Extract JSON block.
+    // Gemini đôi khi trả prose prefix / markdown fence. Extract JSON block.
     let jsonText = result.text.trim();
     // Strip markdown code fence ```json ... ```
     const fence = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -147,6 +147,9 @@ Trả JSON schema:
     const braceEnd = jsonText.lastIndexOf('}');
     if (braceStart >= 0 && braceEnd > braceStart) {
       jsonText = jsonText.slice(braceStart, braceEnd + 1);
+    } else if (braceStart >= 0 && braceEnd < 0) {
+      // Truncated response — try repair bằng cách append '}'
+      jsonText = jsonText.slice(braceStart).replace(/,\s*$/, '') + '"}';
     }
     const parsed = JSON.parse(jsonText);
     return {
@@ -159,6 +162,56 @@ Trả JSON schema:
   } catch (e: any) {
     console.warn(`[news-classifier] Gemini fail: ${e?.message}`);
     return null;
+  }
+}
+
+/** Debug version: trả raw response + parsed result để troubleshoot */
+export async function classifyWithGeminiDebug(title: string, body: string | null): Promise<{ raw: string; provider: string; parsed: ClassifierResult | null; error?: string }> {
+  const user = `Tiêu đề: ${title}
+${body ? 'Nội dung: ' + body.slice(0, 800) : ''}
+
+Trả JSON schema:
+{
+  "relevant": boolean,
+  "impact": number,
+  "political_risk": number,
+  "region": string,
+  "angle_hint": string
+}`;
+  try {
+    const result = await smartCascade({
+      system: CLASSIFIER_SYSTEM,
+      user,
+      maxTokens: 800,
+      temperature: 0.1,
+      json: true,
+    });
+    const raw = result.text;
+    let jsonText = raw.trim();
+    const fence = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fence) jsonText = fence[1].trim();
+    const braceStart = jsonText.indexOf('{');
+    const braceEnd = jsonText.lastIndexOf('}');
+    if (braceStart >= 0 && braceEnd > braceStart) {
+      jsonText = jsonText.slice(braceStart, braceEnd + 1);
+    }
+    try {
+      const parsed = JSON.parse(jsonText);
+      return {
+        raw, provider: result.provider,
+        parsed: {
+          relevant: !!parsed.relevant,
+          impact: Math.max(0, Math.min(1, Number(parsed.impact) || 0)),
+          political_risk: Math.max(0, Math.min(1, Number(parsed.political_risk) || 0)),
+          region: String(parsed.region || '').slice(0, 80),
+          angle_hint: String(parsed.angle_hint || '').slice(0, 200),
+        },
+      };
+    } catch (parseErr: any) {
+      return { raw, provider: result.provider, parsed: null, error: parseErr.message };
+    }
+  } catch (e: any) {
+    return { raw: '', provider: 'error', parsed: null, error: e.message };
   }
 }
 
