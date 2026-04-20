@@ -98,28 +98,25 @@ export interface ClassifierResult {
   reasoning?: string;        // debug
 }
 
-const CLASSIFIER_SYSTEM = `Bạn phân loại tin cho ngành du lịch/khách sạn VN. Trả JSON CÓ ĐÚNG 5 TRƯỜNG, KHÔNG THIẾU TRƯỜNG NÀO.
+const CLASSIFIER_SYSTEM = `Bạn là trợ lý phân loại tin cho fanpage du lịch. Trả JSON đúng 5 trường. Luôn điền đủ 5 trường.
 
-Bắt buộc output đủ 5 trường: relevant, impact, political_risk, region, angle_hint.
+Ví dụ output:
+{"relevant":true,"impact":0.7,"sensitivity":0.3,"region":"Đông Nam Á","angle":"du khách chuyển hướng sang VN"}
 
-Ý nghĩa:
-- relevant (true/false): tin có tác động tới ĐẶT PHÒNG / DU LỊCH / HÀNG KHÔNG?
-- impact (0..1): mức độ tác động.
-- political_risk (0..1): 0-0.2 thuần factual, 0.3-0.4 trung lập có bối cảnh, ≥0.5 chính trị.
-- region: khu vực (VN ngắn, ví dụ "Trung Đông", "Đông Nam Á", "Việt Nam").
-- angle_hint: góc nhìn khách sạn ≤ 20 từ.
-
-LUÔN trả CẢ 5 trường dù relevant=false.
-CẤM: markdown, text ngoài JSON, bình luận chính trị.`;
+Trường:
+- relevant: có ảnh hưởng đặt phòng/du lịch/hàng không?
+- impact: 0..1 mức độ ảnh hưởng
+- sensitivity: 0..1 (0=số liệu trung lập, 0.5=có yếu tố nhạy, 1=sự kiện phức tạp)
+- region: khu vực ngắn tiếng Việt
+- angle: 1 câu ngắn về góc du lịch`;
 
 export async function classifyWithGemini(title: string, body: string | null): Promise<ClassifierResult | null> {
-  const user = `Phân loại tin sau, trả JSON đúng 5 trường:
+  // Chỉ gửi title + snippet ngắn của body. Body dài (chứa tên/địa danh nhạy cảm)
+  // có thể trigger safety filter và làm Gemini truncate response.
+  const snippet = body ? body.slice(0, 300) : '';
+  const user = `Tin: "${title}"${snippet ? `. ${snippet}` : ''}
 
-Tiêu đề: ${title}
-${body ? 'Nội dung: ' + body.slice(0, 800) : ''}
-
-Output JSON (không markdown, không text thêm):
-{"relevant":true,"impact":0.7,"political_risk":0.2,"region":"Trung Đông","angle_hint":"..."}`;
+Trả JSON 5 trường (relevant, impact, sensitivity, region, angle). Đầy đủ, không thiếu trường.`;
 
   try {
     const result = await smartCascade({
@@ -145,12 +142,15 @@ Output JSON (không markdown, không text thêm):
       jsonText = jsonText.slice(braceStart).replace(/,\s*$/, '') + '"}';
     }
     const parsed = JSON.parse(jsonText);
+    // Accept both sensitivity và political_risk (backward compat)
+    const sens = parsed.sensitivity !== undefined ? parsed.sensitivity : parsed.political_risk;
+    const ang = parsed.angle !== undefined ? parsed.angle : parsed.angle_hint;
     return {
       relevant: !!parsed.relevant,
       impact: Math.max(0, Math.min(1, Number(parsed.impact) || 0)),
-      political_risk: Math.max(0, Math.min(1, Number(parsed.political_risk) || 0)),
+      political_risk: Math.max(0, Math.min(1, Number(sens) || 0)),
       region: String(parsed.region || '').slice(0, 80),
-      angle_hint: String(parsed.angle_hint || '').slice(0, 200),
+      angle_hint: String(ang || '').slice(0, 200),
     };
   } catch (e: any) {
     console.warn(`[news-classifier] Gemini fail: ${e?.message}`);
@@ -160,17 +160,10 @@ Output JSON (không markdown, không text thêm):
 
 /** Debug version: trả raw response + parsed result để troubleshoot */
 export async function classifyWithGeminiDebug(title: string, body: string | null): Promise<{ raw: string; provider: string; parsed: ClassifierResult | null; error?: string }> {
-  const user = `Tiêu đề: ${title}
-${body ? 'Nội dung: ' + body.slice(0, 800) : ''}
+  const snippet = body ? body.slice(0, 300) : '';
+  const user = `Tin: "${title}"${snippet ? `. ${snippet}` : ''}
 
-Trả JSON schema:
-{
-  "relevant": boolean,
-  "impact": number,
-  "political_risk": number,
-  "region": string,
-  "angle_hint": string
-}`;
+Trả JSON 5 trường (relevant, impact, sensitivity, region, angle). Đầy đủ, không thiếu trường.`;
   try {
     const result = await smartCascade({
       system: CLASSIFIER_SYSTEM,
@@ -189,14 +182,16 @@ Trả JSON schema:
     }
     try {
       const parsed = JSON.parse(jsonText);
+      const sens = parsed.sensitivity !== undefined ? parsed.sensitivity : parsed.political_risk;
+      const ang = parsed.angle !== undefined ? parsed.angle : parsed.angle_hint;
       return {
         raw, provider: result.provider,
         parsed: {
           relevant: !!parsed.relevant,
           impact: Math.max(0, Math.min(1, Number(parsed.impact) || 0)),
-          political_risk: Math.max(0, Math.min(1, Number(parsed.political_risk) || 0)),
+          political_risk: Math.max(0, Math.min(1, Number(sens) || 0)),
           region: String(parsed.region || '').slice(0, 80),
-          angle_hint: String(parsed.angle_hint || '').slice(0, 200),
+          angle_hint: String(ang || '').slice(0, 200),
         },
       };
     } catch (parseErr: any) {
