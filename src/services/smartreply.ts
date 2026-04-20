@@ -901,13 +901,39 @@ async function ragReply(
     }
   } catch {}
 
-  // v5: Qwen local (Ollama) là main generator — free, ~7.5 tok/s trên VPS.
-  // Fallback tự động sang Gemini nếu Ollama offline (cấu hình trong FALLBACK chain).
-  const raw = await generate({
-    task: 'reply_qwen',
-    system: systemPrompt,
-    user: `${contextParts}\n\nKhách viết: "${message}"\n\nTrả lời ngắn, chỉ dựa trên ngữ cảnh trên:`,
-  });
+  // v8: Smart Cascade — Gemini Flash → Pro → ChatGPT → Qwen local (no Claude).
+  // Mỗi hop fallback tự động nếu tầng trước hết quota / lỗi 5xx.
+  const { smartCascade } = require('./smart-cascade');
+  const { rememberLLMInfo } = require('./llm-info-store');
+  let raw: string;
+  try {
+    const cascadeResult = await smartCascade({
+      system: systemPrompt,
+      user: `${contextParts}\n\nKhách viết: "${message}"\n\nTrả lời ngắn, chỉ dựa trên ngữ cảnh trên:`,
+      maxTokens: 800,
+      temperature: 0.5,
+    });
+    raw = cascadeResult.text;
+    rememberLLMInfo(senderId, {
+      provider: cascadeResult.provider,
+      model: cascadeResult.model,
+      tokens_in: cascadeResult.tokens_in,
+      tokens_out: cascadeResult.tokens_out,
+      latency_ms: cascadeResult.latency_ms,
+      hops: cascadeResult.hops,
+    });
+    if (cascadeResult.hops > 0) {
+      console.log(`[ragReply] cascade used hops=${cascadeResult.hops} final=${cascadeResult.provider}`);
+    }
+  } catch (e: any) {
+    console.warn('[ragReply] cascade exhausted:', e?.message);
+    // Last-resort fallback to legacy router (Qwen via FALLBACK chain)
+    raw = await generate({
+      task: 'reply_qwen',
+      system: systemPrompt,
+      user: `${contextParts}\n\nKhách viết: "${message}"\n\nTrả lời ngắn, chỉ dựa trên ngữ cảnh trên:`,
+    });
+  }
 
   // Build valid price whitelist from current OTA rooms (base_price + hourly_price)
   const { rooms } = getHotelCache(hotelId);
@@ -1276,6 +1302,7 @@ async function dispatchV6(ctx: {
         history: historyTail,
         toneDirective: objToneDirective,
         recallHint: recallHit ? formatRecallHint(recallHit) : undefined,
+        senderId,  // v8: cho llm-info-store track provider
       });
       intentLabel = 'price_objection';
     }
@@ -1368,25 +1395,33 @@ async function dispatchV6(ctx: {
   }
 
   // ─── Smart QA cache: save LLM-produced replies for admin review (tier=pending) ───
-  // Skip nếu: cache hit (đã có), booking/handoff/fast templates, empty reply, context-specific replies
+  // Skip nếu: cache hit (đã có), booking/handoff/fast templates, empty reply
+  // v8 Phase 1b: đọc provider thực tế từ llm-info-store (từ smartCascade)
   const LLM_PRODUCED = ['rag', 'rag_fallback', 'price_objection', 'hotel_rec', 'price_filter'];
   if (reply && LLM_PRODUCED.includes(intentLabel) && !qaCacheHit) {
     try {
       const { saveNewQA } = require('./intent-matcher');
+      const { consumeLLMInfo } = require('./llm-info-store');
+      const llmInfo = consumeLLMInfo(senderId);
       // Fire-and-forget — không block reply
       saveNewQA({
         hotelId: hid,
         question: msg,
         response: reply,
-        provider: 'gemini_flash',  // router.ts default cho reply task (sẽ thay khi wire smartCascade ở Phase 1b)
+        provider: llmInfo?.provider || 'gemini_flash',
+        model: llmInfo?.model,
+        tokens: llmInfo?.tokens_out || 0,
         intentCategory: router.intent,
         contextTags: [
           handler,
           router.emotion ? `emotion_${router.emotion}` : '',
           langInfo.lang !== 'vi' ? `lang_${langInfo.lang}` : '',
+          llmInfo?.hops ? `cascade_hops_${llmInfo.hops}` : '',
         ].filter(Boolean),
       }).then((res: any) => {
-        if (res?.is_new) console.log(`[v6] qa_cache saved id=${res.qa_cache_id} tier=pending intent=${router.intent}`);
+        if (res?.is_new) {
+          console.log(`[v6] qa_cache saved id=${res.qa_cache_id} tier=pending intent=${router.intent} provider=${llmInfo?.provider || 'unknown'}`);
+        }
       }).catch((e: any) => console.warn('[v6] saveNewQA fail:', e?.message));
     } catch {}
   }

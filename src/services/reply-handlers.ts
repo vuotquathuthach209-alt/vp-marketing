@@ -171,6 +171,8 @@ interface ObjectionCtx {
   toneDirective?: string;
   /** Recall hint từ memory-recall */
   recallHint?: string;
+  /** Sender ID để track provider cho qa_training_cache save */
+  senderId?: string;
 }
 
 export async function handleObjection(ctx: ObjectionCtx): Promise<string> {
@@ -204,14 +206,35 @@ ${strategyHint}${toneBlock}${recallBlock}`;
 ${ctx.history.length > 0 ? `Ngữ cảnh gần đây:\n${ctx.history.slice(-3).join('\n')}\n\n` : ''}Viết 1 câu trả lời theo chiến lược trên.`;
 
   try {
-    const reply = await generate({ task: 'reply_qwen', system, user });
-    return reply.trim().slice(0, 400);
-  } catch {
-    // Fallback template
-    if (cheapest) {
-      return `Dạ em hiểu ạ 😊 Phòng ${cheapest.name} bên em hiện có giá ${cheapest.price.toLocaleString('vi-VN')}đ — đã gồm đầy đủ tiện nghi. Anh/chị muốn xem không ạ?`;
+    // v8: Smart Cascade — Gemini Flash → Pro → ChatGPT → Qwen local.
+    const { smartCascade } = require('./smart-cascade');
+    const { rememberLLMInfo } = require('./llm-info-store');
+    const result = await smartCascade({ system, user, maxTokens: 400, temperature: 0.7 });
+    rememberLLMInfo(ctx.senderId, {
+      provider: result.provider,
+      model: result.model,
+      tokens_in: result.tokens_in,
+      tokens_out: result.tokens_out,
+      latency_ms: result.latency_ms,
+      hops: result.hops,
+    });
+    if (result.hops > 0) {
+      console.log(`[objection] cascade used hops=${result.hops} final=${result.provider}`);
     }
-    return 'Dạ em hiểu ạ. Anh/chị cho em biết ngân sách mong muốn để em tư vấn phòng phù hợp nhất nhé ạ 😊';
+    return result.text.trim().slice(0, 400);
+  } catch (e: any) {
+    console.warn('[objection] cascade exhausted:', e?.message);
+    // Last-resort: legacy router fallback
+    try {
+      const reply = await generate({ task: 'reply_qwen', system, user });
+      return reply.trim().slice(0, 400);
+    } catch {
+      // Final template fallback
+      if (cheapest) {
+        return `Dạ em hiểu ạ 😊 Phòng ${cheapest.name} bên em hiện có giá ${cheapest.price.toLocaleString('vi-VN')}đ — đã gồm đầy đủ tiện nghi. Anh/chị muốn xem không ạ?`;
+      }
+      return 'Dạ em hiểu ạ. Anh/chị cho em biết ngân sách mong muốn để em tư vấn phòng phù hợp nhất nhé ạ 😊';
+    }
   }
 }
 
