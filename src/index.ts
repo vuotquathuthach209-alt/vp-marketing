@@ -89,6 +89,19 @@ app.use('/webhook', webhookLimiter);
 app.use('/api/subscription/submit-proof', proofLimiter);
 app.use('/api/', apiGeneralLimiter);
 
+// Zalo domain ownership verification (file-based fallback).
+// Zalo crawler checks for file `zalo-site-verification-<code>.html` at root.
+// Content must equal the verification code.
+app.get('/zalo-site-verification-SEwnEuJyP15KshOkjlvY64EAwpol_3vXD3Wm.html', (_req, res) => {
+  res.type('text/html').send('SEwnEuJyP15KshOkjlvY64EAwpol_3vXD3Wm');
+});
+app.get('/zalo_verifierSEwnEuJyP15KshOkjlvY64EAwpol_3vXD3Wm.html', (_req, res) => {
+  res.type('text/html').send('SEwnEuJyP15KshOkjlvY64EAwpol_3vXD3Wm');
+});
+app.get('/zaloverify.html', (_req, res) => {
+  res.type('text/html').send('SEwnEuJyP15KshOkjlvY64EAwpol_3vXD3Wm');
+});
+
 // Static frontend
 app.use(express.static(path.join(__dirname, '..', 'src', 'public')));
 
