@@ -58,12 +58,12 @@ export function getTopInternalPosts(opts: {
        p.caption,
        p.published_at,
        pg.name AS page_name,
-       -- Lấy metrics snapshot mới nhất
-       (SELECT reach FROM post_metrics pm WHERE pm.post_id = p.id ORDER BY pm.pulled_at DESC LIMIT 1) AS reach,
-       (SELECT likes FROM post_metrics pm WHERE pm.post_id = p.id ORDER BY pm.pulled_at DESC LIMIT 1) AS likes,
-       (SELECT comments FROM post_metrics pm WHERE pm.post_id = p.id ORDER BY pm.pulled_at DESC LIMIT 1) AS comments,
-       (SELECT shares FROM post_metrics pm WHERE pm.post_id = p.id ORDER BY pm.pulled_at DESC LIMIT 1) AS shares,
-       (SELECT clicks FROM post_metrics pm WHERE pm.post_id = p.id ORDER BY pm.pulled_at DESC LIMIT 1) AS clicks
+       -- Lấy metrics snapshot mới nhất (schema: reactions + snapshot_at)
+       (SELECT reach FROM post_metrics pm WHERE pm.post_id = p.id ORDER BY pm.snapshot_at DESC LIMIT 1) AS reach,
+       (SELECT reactions FROM post_metrics pm WHERE pm.post_id = p.id ORDER BY pm.snapshot_at DESC LIMIT 1) AS likes,
+       (SELECT comments FROM post_metrics pm WHERE pm.post_id = p.id ORDER BY pm.snapshot_at DESC LIMIT 1) AS comments,
+       (SELECT shares FROM post_metrics pm WHERE pm.post_id = p.id ORDER BY pm.snapshot_at DESC LIMIT 1) AS shares,
+       (SELECT clicks FROM post_metrics pm WHERE pm.post_id = p.id ORDER BY pm.snapshot_at DESC LIMIT 1) AS clicks
      FROM posts p
      LEFT JOIN pages pg ON pg.id = p.page_id
      WHERE p.published_at >= ? AND p.fb_post_id IS NOT NULL
