@@ -483,13 +483,15 @@ export function searchByArea(opts: { city?: string; district?: string; limit?: n
   const limit = opts.limit || 5;
   const conds: string[] = [];
   const params: any[] = [];
-  if (opts.city) { conds.push(`LOWER(city) LIKE LOWER(?)`); params.push(`%${opts.city}%`); }
-  if (opts.district) { conds.push(`LOWER(district) LIKE LOWER(?)`); params.push(`%${opts.district}%`); }
-  if (opts.property_type) { conds.push(`LOWER(property_type) = LOWER(?)`); params.push(opts.property_type); }
-  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  if (opts.city) { conds.push(`LOWER(hp.city) LIKE LOWER(?)`); params.push(`%${opts.city}%`); }
+  if (opts.district) { conds.push(`LOWER(hp.district) LIKE LOWER(?)`); params.push(`%${opts.district}%`); }
+  if (opts.property_type) { conds.push(`LOWER(hp.property_type) = LOWER(?)`); params.push(opts.property_type); }
+  // CRITICAL: chỉ list hotels có mkt_hotels entry active (loại test hotels)
+  conds.push(`EXISTS (SELECT 1 FROM mkt_hotels mh WHERE mh.ota_hotel_id = hp.hotel_id AND mh.status = 'active')`);
+  const where = `WHERE ${conds.join(' AND ')}`;
   const profiles = db.prepare(
-    `SELECT hotel_id, name_canonical, city, district, star_rating, property_type, ai_summary_vi, usp_top3
-     FROM hotel_profile ${where} LIMIT ?`
+    `SELECT hp.hotel_id, hp.name_canonical, hp.city, hp.district, hp.star_rating, hp.property_type, hp.ai_summary_vi, hp.usp_top3
+     FROM hotel_profile hp ${where} LIMIT ?`
   ).all(...params, limit) as any[];
 
   const results: HotelSearchResult[] = [];
