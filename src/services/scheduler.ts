@@ -327,5 +327,17 @@ export function startScheduler() {
     }
   });
 
+  // Angle generator batch mỗi 45 phút (slow vì Pollinations image gen ~3s/draft)
+  // 5 drafts/run × 32 runs/day = 160 drafts/day capacity, đủ cho mức 3 bài/tuần
+  cron.schedule('15 */1 * * *', async () => {
+    try {
+      const { generateDraftsBatch } = require('./news-angle-generator');
+      const r = await generateDraftsBatch(5);
+      if (r.processed > 0) console.log(`[scheduler] news-angle: ${JSON.stringify(r)}`);
+    } catch (e: any) {
+      console.error('[scheduler] news-angle error:', e?.message);
+    }
+  });
+
   console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h');
 }
