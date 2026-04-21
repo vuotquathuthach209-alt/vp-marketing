@@ -122,22 +122,74 @@ router.post('/disable', (req: AuthRequest, res) => {
   res.json({ ok: true });
 });
 
+/** Test OA connection + probe tier/send capability */
 router.post('/test', async (req: AuthRequest, res) => {
   const hotelId = getHotelId(req);
   const { oa_id } = req.body || {};
   const oa = listZaloForHotel(hotelId).find(o => o.oa_id === oa_id) as ZaloOA | undefined;
   if (!oa) return res.status(404).json({ error: 'OA not found' });
+
+  const result: any = {
+    ok: false,
+    oa_info: null,
+    send_capability: null,
+    tier: null,
+    webhook_ready: false,
+    app_approved: null,
+  };
+
+  // Test 1: get OA info (works on all tiers)
   try {
     const r = await axios.get('https://openapi.zalo.me/v2.0/oa/getoa', {
       headers: { access_token: oa.access_token }, timeout: 10000,
     });
     if (r.data?.error && r.data.error !== 0) {
-      return res.json({ ok: false, error: r.data.message, code: r.data.error });
+      result.error = r.data.message;
+      result.error_code = r.data.error;
+      if (r.data.error === -216 || r.data.error === -213) result.error_hint = 'Token invalid/expired — refresh via Zalo dev console';
+      if (r.data.error === -209) { result.error_hint = 'App chưa được Zalo approve'; result.app_approved = false; }
+      return res.json(result);
     }
-    res.json({ ok: true, data: r.data?.data });
+    result.oa_info = r.data?.data;
+    result.app_approved = true;
+    result.webhook_ready = true;
   } catch (e: any) {
-    res.status(500).json({ ok: false, error: e?.response?.data?.message || e?.message });
+    result.error = e?.response?.data?.message || e?.message;
+    return res.status(500).json(result);
   }
+
+  // Test 2: probe send capability với dummy recipient (sẽ fail nhưng biết error code)
+  // Zalo trả -224 nếu tier free, -32 nếu recipient không tồn tại (tức send API work)
+  try {
+    const probe = await axios.post(
+      'https://openapi.zalo.me/v3.0/oa/message/cs',
+      { recipient: { user_id: '0' }, message: { text: 'probe' } },
+      { headers: { access_token: oa.access_token, 'Content-Type': 'application/json' }, timeout: 10000 }
+    );
+    const errCode = probe.data?.error;
+    if (errCode === -224) {
+      result.tier = 'free';
+      result.send_capability = 'blocked';
+      result.tier_hint = 'OA Sonder đang ở tier miễn phí. Cần upgrade Zalo OA Premium (99k-1M/tháng) để bot gửi tin tự động. Xem https://zalo.cloud/oa/pricing';
+    } else if (errCode === -32 || errCode === -200) {
+      result.tier = 'paid';
+      result.send_capability = 'ok';
+    } else if (errCode === 0) {
+      result.tier = 'paid';
+      result.send_capability = 'ok_sent';
+    } else {
+      result.tier = 'unknown';
+      result.send_capability = 'error';
+      result.send_error = probe.data?.message;
+      result.send_error_code = errCode;
+    }
+  } catch (e: any) {
+    result.send_capability = 'unreachable';
+    result.send_error = e?.response?.data?.message || e?.message;
+  }
+
+  result.ok = true;
+  res.json(result);
 });
 
 router.post('/send-test', async (req: AuthRequest, res) => {

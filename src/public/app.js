@@ -4886,11 +4886,41 @@ document.getElementById('btn-zalo-save')?.addEventListener('click', async () => 
 async function testZalo(oaId) {
   try {
     const r = await api('/zalo/test', { method: 'POST', body: JSON.stringify({ oa_id: oaId }) });
+    const lines = [];
+
+    // Connection status
     if (r.ok) {
-      alert(`✅ Kết nối OK!\nOA: ${r.data?.name || oaId}\nCategory: ${r.data?.cate_name || '-'}\nDescription: ${r.data?.description || '-'}`);
+      lines.push('✅ Kết nối OA: OK');
+      lines.push(`  Name: ${r.oa_info?.name || oaId}`);
+      lines.push(`  Category: ${r.oa_info?.cate_name || '-'}`);
+      lines.push(`  Followers: ${r.oa_info?.num_follower ?? '-'}`);
     } else {
-      alert(`❌ Lỗi: ${r.error} (code ${r.code})`);
+      lines.push(`❌ Kết nối fail: ${r.error || 'unknown'}${r.error_code ? ' (code ' + r.error_code + ')' : ''}`);
+      if (r.error_hint) lines.push(`   💡 ${r.error_hint}`);
     }
+
+    // App approval
+    if (r.app_approved === true) lines.push('✅ App đã được Zalo approve');
+    else if (r.app_approved === false) lines.push('❌ App chưa approved');
+
+    // Tier + send capability
+    if (r.tier === 'free') {
+      lines.push('');
+      lines.push('⚠️  OA đang ở tier MIỄN PHÍ');
+      lines.push('   → Bot KHÔNG thể gửi tin tự động qua API');
+      lines.push('   → Cần upgrade Zalo OA Premium');
+      lines.push('   → Link: https://zalo.cloud/oa/pricing');
+    } else if (r.tier === 'paid') {
+      lines.push('✅ OA tier paid — bot gửi tin được!');
+    } else if (r.tier) {
+      lines.push(`⚠️  OA tier: ${r.tier}`);
+      if (r.send_error) lines.push(`   send error: ${r.send_error}`);
+    }
+
+    // Webhook status
+    if (r.webhook_ready) lines.push('✅ Webhook endpoint sẵn sàng');
+
+    alert(lines.join('\n'));
   } catch (e) { alert('Lỗi: ' + e.message); }
 }
 
