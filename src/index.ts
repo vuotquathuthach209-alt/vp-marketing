@@ -110,6 +110,9 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/autopilot', autopilotRouter);
 app.use('/api/booking', bookingRouter);
 app.use('/api/hotel-telegram', hotelTelegramRouter);
+// IMPORTANT: /api/ota/push phải đặt TRƯỚC /api/ota vì otaRouter dùng
+// authMiddleware — Express match prefix theo thứ tự.
+app.use('/api/ota/push', otaPushRouter);
 app.use('/api/ota', otaRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/onboarding', onboardingRouter);
@@ -125,8 +128,7 @@ app.use('/api/news', newsRouter);
 app.use('/api/playground', playgroundRouter);
 app.use('/api/hotels-editor', hotelsEditorRouter);
 app.use('/api/conversations', conversationsRouter);
-// OTA push: public endpoints (HMAC auth), admin sub-paths có authMiddleware riêng
-app.use('/api/ota/push', otaPushRouter);
+// (OTA push router đã mount trước /api/ota phía trên)
 app.use('/api/data-deletion', dataDeletionRouter);
 app.use('/data-deletion', dataDeletionRouter); // also accept /data-deletion/status (URL returned to FB)
 app.use('/', zaloWebhookRouter); // POST /webhook/zalo
