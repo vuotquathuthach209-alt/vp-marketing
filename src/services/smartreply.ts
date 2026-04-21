@@ -9,7 +9,8 @@ import {
 } from './bookingflow';
 import { getOtaDbConfig, getOtaRoomTypes, getOtaHotelStats } from './ota-db';
 import { notifyAll } from './telegram';
-import { lookupLearned, recordQA } from './learning';
+// v10 Đợt 1: bỏ lookupLearned (qa_training_cache đã đảm nhiệm). Giữ recordQA cho migration.
+import { recordQA } from './learning';
 
 /**
  * Smart Reply Engine v4 — RAG + AI Intent Classification + Structured Output
@@ -1590,23 +1591,10 @@ export async function smartReply(
     return { reply, tier: 'phone_capture', latency_ms: Date.now() - t0, intent: 'negative', confidence };
   }
 
-  // ─── STEP 5.5: LEARNED CACHE LOOKUP (fast path, no LLM) ───
-  try {
-    const learned = await lookupLearned(msg, hotelId);
-    if (learned) {
-      console.log(`[smartreply] learned cache hit sim=${learned.similarity.toFixed(3)} hits=${learned.hits}`);
-      if (senderId) saveMessage(senderId, pid, 'bot', learned.answer, 'learned');
-      return {
-        reply: learned.answer,
-        tier: 'learned',
-        latency_ms: Date.now() - t0,
-        intent: learned.intent || 'learned',
-        confidence: Math.min(0.99, learned.similarity),
-      };
-    }
-  } catch (e: any) {
-    console.warn('[smartreply] learned lookup failed:', e.message);
-  }
+  // ─── STEP 5.5: LEARNED CACHE LOOKUP (DEPRECATED v10 Đợt 1) ───
+  // dispatchV6 đã check qa_training_cache (admin-curated) trước khi gọi smartReply,
+  // nên lookupLearned ở đây là lookup thứ 2 → tốn CPU + có thể trả lời trùng.
+  // Giữ recordQA bên dưới để pipeline migration đẩy dần dữ liệu sang qa_training_cache.
 
   // ─── STEP 6: RAG AI (chỉ khi có context thực) ───
   try {

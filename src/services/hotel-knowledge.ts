@@ -332,6 +332,69 @@ export function countHotels(): number {
   return r?.n || 0;
 }
 
+/**
+ * v10 Đợt 1: Get unified bot context in 1 query.
+ * Đọc từ v_hotel_bot_context view — gộp tất cả hotel data bot cần.
+ * Prefer mkt_hotel_id; fallback ota_hotel_id nếu mkt_id không có.
+ */
+export function getBotContext(mktHotelId: number): any {
+  try {
+    // Try by mkt_hotel_id first
+    let row = db.prepare(
+      `SELECT * FROM v_hotel_bot_context WHERE mkt_hotel_id = ?`
+    ).get(mktHotelId) as any;
+    // Fallback: có thể mktHotelId thực ra là ota_hotel_id
+    if (!row || !row.profile_hotel_id) {
+      const alt = db.prepare(
+        `SELECT * FROM v_hotel_bot_context WHERE ota_hotel_id = ?`
+      ).get(mktHotelId) as any;
+      if (alt && alt.profile_hotel_id) row = alt;
+    }
+    if (!row) return null;
+    // Parse JSON fields
+    try { row.usp_top3 = row.usp_top3 ? JSON.parse(row.usp_top3) : []; } catch { row.usp_top3 = []; }
+    try { row.nearby_landmarks = row.nearby_landmarks ? JSON.parse(row.nearby_landmarks) : {}; } catch { row.nearby_landmarks = {}; }
+    try { row.scraped_data = row.scraped_data ? JSON.parse(row.scraped_data) : {}; } catch { row.scraped_data = {}; }
+    row.full_kitchen = !!row.full_kitchen;
+    row.washing_machine = !!row.washing_machine;
+    row.utilities_included = !!row.utilities_included;
+    return row;
+  } catch (e: any) {
+    console.warn('[getBotContext] fail:', e?.message);
+    return null;
+  }
+}
+
+/** Tất cả rooms từ view (resolves mkt_hotel_id → ota_hotel_id tự động) */
+export function getBotRooms(mktHotelId: number): any[] {
+  try {
+    const rows = db.prepare(
+      `SELECT * FROM v_hotel_rooms WHERE mkt_hotel_id = ? OR ota_hotel_id = ? ORDER BY price_weekday ASC`
+    ).all(mktHotelId, mktHotelId) as any[];
+    return rows.map((r: any) => {
+      try { r.amenities = r.amenities ? JSON.parse(r.amenities) : []; } catch { r.amenities = []; }
+      try { r.photos_urls = r.photos_urls ? JSON.parse(r.photos_urls) : []; } catch { r.photos_urls = []; }
+      return r;
+    });
+  } catch { return []; }
+}
+
+/** Amenities grouped by category */
+export function getBotAmenities(mktHotelId: number): Record<string, any[]> {
+  try {
+    const rows = db.prepare(
+      `SELECT * FROM v_hotel_amenities WHERE mkt_hotel_id = ? OR ota_hotel_id = ?`
+    ).all(mktHotelId, mktHotelId) as any[];
+    const grouped: Record<string, any[]> = {};
+    for (const r of rows) {
+      const cat = r.category || 'general';
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(r);
+    }
+    return grouped;
+  } catch { return {}; }
+}
+
 import { haversineKm } from './geocoder';
 
 /**

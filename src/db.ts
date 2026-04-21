@@ -821,6 +821,96 @@ CREATE TABLE IF NOT EXISTS etl_hotel_failures (
 );
 `);
 
+// ═══════════════════════════════════════════════════════════════════
+// v10 Đợt 1: Unified Hotel Bot Context View
+// ═══════════════════════════════════════════════════════════════════
+// Gộp 4 knowledge sources (mkt_hotels + hotel_profile + room_catalog +
+// amenities + policies) thành 1 view duy nhất cho bot query.
+// Resolves hotel_id mismatch: mkt_hotels.id <-> hotel_profile.hotel_id
+// (thực chất là ota_hotel_id) qua mkt_hotels.ota_hotel_id link.
+//
+// DROP + CREATE để luôn reflect schema mới nhất (view không có data).
+db.exec(`
+DROP VIEW IF EXISTS v_hotel_bot_context;
+CREATE VIEW v_hotel_bot_context AS
+SELECT
+  -- Keys (bot có thể lookup bằng mkt.id hoặc ota_hotel_id)
+  mh.id AS mkt_hotel_id,
+  mh.ota_hotel_id,
+  hp.hotel_id AS profile_hotel_id,
+  -- Basic
+  COALESCE(hp.name_canonical, mh.name) AS name,
+  hp.name_en,
+  mh.slug,
+  mh.plan,
+  mh.status AS hotel_status,
+  -- Location
+  hp.city, hp.district, hp.address,
+  hp.latitude, hp.longitude, hp.geohash,
+  hp.phone,
+  hp.star_rating,
+  -- Classification (Sonder: monthly_apartment vs nightly_stay)
+  hp.property_type, hp.rental_type, hp.product_group, hp.target_segment,
+  -- Brand voice (friendly | formal | luxury) — inject vào bot prompt
+  COALESCE(hp.brand_voice, 'friendly') AS brand_voice,
+  -- AI-synthesized content
+  hp.ai_summary_vi, hp.ai_summary_en,
+  hp.usp_top3, hp.nearby_landmarks,
+  -- Apartment-specific (monthly rental)
+  hp.monthly_price_from, hp.monthly_price_to,
+  hp.min_stay_months, hp.deposit_months,
+  hp.full_kitchen, hp.washing_machine, hp.utilities_included,
+  -- Raw scraped blob (JSON) cho fallback parsing
+  hp.scraped_data,
+  hp.data_source, hp.synthesized_at, hp.scraped_at,
+  -- Aggregated counts cho bot biết sẵn sàng bao nhiêu data
+  (SELECT COUNT(*) FROM hotel_room_catalog WHERE hotel_id = hp.hotel_id) AS rooms_count,
+  (SELECT COUNT(*) FROM hotel_amenities WHERE hotel_id = hp.hotel_id) AS amenities_count,
+  CASE WHEN (SELECT 1 FROM hotel_policies WHERE hotel_id = hp.hotel_id) = 1 THEN 1 ELSE 0 END AS has_policies,
+  -- Price hints (nightly)
+  (SELECT MIN(price_weekday) FROM hotel_room_catalog
+    WHERE hotel_id = hp.hotel_id AND price_weekday > 0) AS price_min_vnd,
+  (SELECT MAX(price_weekday) FROM hotel_room_catalog
+    WHERE hotel_id = hp.hotel_id AND price_weekday > 0) AS price_max_vnd,
+  (SELECT MIN(price_hourly) FROM hotel_room_catalog
+    WHERE hotel_id = hp.hotel_id AND price_hourly > 0) AS price_hourly_min_vnd
+FROM mkt_hotels mh
+LEFT JOIN hotel_profile hp ON hp.ota_hotel_id = mh.ota_hotel_id
+WHERE mh.status != 'deleted';
+`);
+
+// View rooms: đơn giản + enriched
+db.exec(`
+DROP VIEW IF EXISTS v_hotel_rooms;
+CREATE VIEW v_hotel_rooms AS
+SELECT
+  mh.id AS mkt_hotel_id,
+  mh.ota_hotel_id,
+  hrc.id, hrc.room_key,
+  hrc.display_name_vi, hrc.display_name_en,
+  hrc.price_weekday, hrc.price_weekend, hrc.price_hourly,
+  hrc.max_guests, hrc.bed_config, hrc.size_m2,
+  hrc.amenities, hrc.photos_urls, hrc.description_vi,
+  hrc.updated_at
+FROM hotel_room_catalog hrc
+LEFT JOIN mkt_hotels mh ON mh.ota_hotel_id = hrc.hotel_id;
+`);
+
+// View amenities: grouped by category
+db.exec(`
+DROP VIEW IF EXISTS v_hotel_amenities;
+CREATE VIEW v_hotel_amenities AS
+SELECT
+  mh.id AS mkt_hotel_id,
+  mh.ota_hotel_id,
+  ha.category, ha.name_vi, ha.name_en,
+  ha.free, ha.hours, ha.note
+FROM hotel_amenities ha
+LEFT JOIN mkt_hotels mh ON mh.ota_hotel_id = ha.hotel_id;
+`);
+
+console.log('[db] Created unified bot views: v_hotel_bot_context + v_hotel_rooms + v_hotel_amenities');
+
 // Indexes trên hotel_id
 try {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_pages_hotel ON pages(hotel_id)`);
