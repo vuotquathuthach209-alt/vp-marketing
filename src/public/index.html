@@ -553,6 +553,47 @@
           </div>
           <pre id="ota-sample-data" class="bg-slate-900 text-emerald-300 p-3 rounded text-xs overflow-x-auto" style="max-height: 400px;"></pre>
         </div>
+
+        <!-- OTA PUSH API — receiver endpoints (OTA tự push vào bot) -->
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 mt-4 max-w-6xl">
+          <h3 class="font-bold mb-1">📥 OTA Push API (receive-only)</h3>
+          <p class="text-xs text-slate-500 mb-3">
+            Thay vì bot kéo data từ OTA (cần credentials), OTA <b>tự push</b> khi có thay đổi.
+            Bot expose endpoint <code class="bg-slate-100 px-1 rounded">POST /api/ota/push/sync</code> với HMAC auth.
+            Docs chi tiết: <code class="bg-slate-100 px-1 rounded">docs/OTA-PUSH-API-SPEC.md</code>
+          </p>
+
+          <!-- Shared secret -->
+          <div class="mb-3 pb-3 border-b border-slate-200">
+            <div class="flex items-center justify-between mb-1">
+              <h4 class="font-semibold text-sm">🔑 Shared Secret (HMAC key)</h4>
+              <span id="ota-push-secret-status" class="text-xs text-slate-500"></span>
+            </div>
+            <div class="flex gap-2 flex-wrap items-end">
+              <input id="ota-push-secret-input" type="text" placeholder="Paste secret hoặc click Generate" class="flex-1 border rounded px-2 py-1 text-sm font-mono"/>
+              <button id="btn-ota-push-save" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5 rounded">💾 Lưu</button>
+              <button id="btn-ota-push-generate" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded">🎲 Generate</button>
+            </div>
+            <p class="text-[10px] text-slate-400 mt-1">OTA dev paste secret này vào env <code>OTA_BOT_PUSH_SECRET</code> để ký request.</p>
+          </div>
+
+          <!-- Test endpoint -->
+          <div class="mb-3 pb-3 border-b border-slate-200">
+            <h4 class="font-semibold text-sm mb-1">🧪 Test endpoints</h4>
+            <div class="flex gap-2 flex-wrap">
+              <button id="btn-ota-push-ping" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs px-3 py-1.5 rounded">📡 Ping (no auth)</button>
+              <button id="btn-ota-push-log" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs px-3 py-1.5 rounded">📜 View push log</button>
+              <span class="text-xs text-slate-500 self-center">Public URL: <code class="bg-slate-100 px-1 rounded">https://app.sondervn.com/api/ota/push</code></span>
+            </div>
+            <pre id="ota-push-result" class="bg-slate-900 text-emerald-300 p-2 rounded text-xs mt-2 overflow-x-auto hidden" style="max-height: 200px;"></pre>
+          </div>
+
+          <!-- Log table -->
+          <div>
+            <h4 class="font-semibold text-sm mb-1">📊 Push log gần đây</h4>
+            <div id="ota-push-log-box" class="text-xs"></div>
+          </div>
+        </div>
       </section>
 
       <!-- CONVERSATIONS TAB (Đợt 3.3) -->

@@ -34,6 +34,7 @@ import newsRouter from './routes/news';
 import playgroundRouter from './routes/playground';
 import hotelsEditorRouter from './routes/hotels-editor';
 import conversationsRouter from './routes/conversations';
+import otaPushRouter from './routes/ota-push';
 import './services/agent-tools'; // init table + register tools
 import './services/ota-readonly-guard'; // self-test fires on boot (fail-fast if guard broken)
 // v8: Intent matcher self-test
@@ -124,6 +125,8 @@ app.use('/api/news', newsRouter);
 app.use('/api/playground', playgroundRouter);
 app.use('/api/hotels-editor', hotelsEditorRouter);
 app.use('/api/conversations', conversationsRouter);
+// OTA push: public endpoints (HMAC auth), admin sub-paths có authMiddleware riêng
+app.use('/api/ota/push', otaPushRouter);
 app.use('/api/data-deletion', dataDeletionRouter);
 app.use('/data-deletion', dataDeletionRouter); // also accept /data-deletion/status (URL returned to FB)
 app.use('/', zaloWebhookRouter); // POST /webhook/zalo

@@ -2195,6 +2195,90 @@ document.getElementById('ota-sample-close')?.addEventListener('click', () => {
   document.getElementById('ota-sample').classList.add('hidden');
 });
 
+// ───── OTA Push API admin ─────
+async function loadOtaPushSecretStatus() {
+  try {
+    const r = await api('/ota/push/admin/secret');
+    const el = document.getElementById('ota-push-secret-status');
+    if (el) {
+      el.innerHTML = r.configured
+        ? `<span class="text-emerald-600">🟢 Đã cấu hình</span> <span class="font-mono">${escapeHtml(r.masked)}</span>`
+        : `<span class="text-amber-600">⚠️ Chưa cấu hình — OTA sẽ được bot bypass HMAC check</span>`;
+    }
+  } catch (e) { console.warn('push secret fail:', e.message); }
+}
+
+document.getElementById('btn-ota-push-save')?.addEventListener('click', async () => {
+  const secret = document.getElementById('ota-push-secret-input').value.trim();
+  if (secret.length < 16) return alert('Secret phải ≥ 16 ký tự');
+  try {
+    const r = await api('/ota/push/admin/secret', { method: 'POST', body: JSON.stringify({ secret }) });
+    alert('✓ Đã lưu secret. Masked: ' + r.masked);
+    document.getElementById('ota-push-secret-input').value = '';
+    loadOtaPushSecretStatus();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
+
+document.getElementById('btn-ota-push-generate')?.addEventListener('click', async () => {
+  if (!confirm('Generate random secret mới? Secret cũ sẽ BỊ THAY — OTA dev phải update lại.')) return;
+  try {
+    const r = await api('/ota/push/admin/generate-secret', { method: 'POST' });
+    document.getElementById('ota-push-secret-input').value = r.secret;
+    alert('✓ Secret mới:\n\n' + r.secret + '\n\nCOPY + gửi cho OTA dev ngay! Sẽ bị che sau khi reload.');
+    loadOtaPushSecretStatus();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
+
+document.getElementById('btn-ota-push-ping')?.addEventListener('click', async () => {
+  const out = document.getElementById('ota-push-result');
+  out.classList.remove('hidden');
+  out.textContent = '⏳ Pinging...';
+  try {
+    const r = await fetch('/api/ota/push/ping');   // unauthenticated public endpoint
+    const j = await r.json();
+    out.textContent = JSON.stringify(j, null, 2);
+  } catch (e) { out.textContent = '❌ ' + e.message; }
+});
+
+document.getElementById('btn-ota-push-log')?.addEventListener('click', async () => {
+  const box = document.getElementById('ota-push-log-box');
+  box.innerHTML = '<div class="text-slate-400">Đang tải...</div>';
+  try {
+    const r = await api('/ota/push/admin/log');
+    if (!r.entries?.length) {
+      box.innerHTML = '<div class="text-slate-400 py-2">Chưa có push request nào từ OTA.</div>';
+      return;
+    }
+    box.innerHTML = `<table class="w-full text-xs">
+      <thead class="text-slate-500"><tr>
+        <th class="text-left font-normal py-1">Thời gian</th>
+        <th class="text-left font-normal py-1">Status</th>
+        <th class="text-right font-normal py-1">Total</th>
+        <th class="text-right font-normal py-1">OK</th>
+        <th class="text-right font-normal py-1">Fail</th>
+        <th class="text-right font-normal py-1">Duration</th>
+      </tr></thead>
+      <tbody>${r.entries.map(e => `<tr class="border-t border-slate-100">
+        <td class="py-1 font-mono">${formatRelTime(e.started_at)}</td>
+        <td class="py-1">${e.status === 'completed' ? '<span class="text-emerald-600">✓ ' : e.status === 'partial' ? '<span class="text-amber-600">⚠ ' : '<span class="text-rose-600">✗ '}${e.status}</span></td>
+        <td class="py-1 text-right">${e.hotels_total || 0}</td>
+        <td class="py-1 text-right text-emerald-600">${e.hotels_ok || 0}</td>
+        <td class="py-1 text-right text-rose-600">${e.hotels_failed || 0}</td>
+        <td class="py-1 text-right">${e.duration_ms || 0}ms</td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+  } catch (e) { box.innerHTML = `<div class="text-rose-600">${escapeHtml(e.message)}</div>`; }
+});
+
+// Load secret status khi vào tab
+const _origOtaLoad = window.loadOtaConfig;
+window.loadOtaConfig = async function() {
+  if (_origOtaLoad) await _origOtaLoad();
+  loadOtaPushSecretStatus();
+  // Auto-load push log
+  setTimeout(() => document.getElementById('btn-ota-push-log')?.click(), 300);
+};
+
 document.getElementById('btn-ota-hotels')?.addEventListener('click', async () => {
   const container = document.getElementById('ota-hotels-list');
   container.textContent = '⏳ Đang tải...';
