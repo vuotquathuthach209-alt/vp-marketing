@@ -23,6 +23,12 @@ router.get('/senders', (req: AuthRequest, res) => {
     const role = req.user?.role;
     const hotelFilter = role === 'superadmin' ? '' : `AND EXISTS (SELECT 1 FROM pages p WHERE p.id = cm.page_id AND p.hotel_id = ${getHotelId(req)})`;
     const q = (req.query.q as string) || '';
+    // Channel filter: 'fb' | 'zalo' | 'sim' | 'all' (default)
+    const channel = String(req.query.channel || 'all').toLowerCase();
+    let channelClause = '';
+    if (channel === 'zalo') channelClause = `AND cm.sender_id LIKE 'zalo:%' AND cm.sender_id NOT LIKE 'zalo:zalo_sim_%'`;
+    else if (channel === 'sim') channelClause = `AND cm.sender_id LIKE 'zalo:zalo_sim_%'`;
+    else if (channel === 'fb') channelClause = `AND cm.sender_id NOT LIKE 'zalo:%'`;
 
     const sql = `
       SELECT
@@ -36,10 +42,16 @@ router.get('/senders', (req: AuthRequest, res) => {
         (SELECT message FROM conversation_memory WHERE sender_id = cm.sender_id ORDER BY id DESC LIMIT 1) AS last_msg,
         (SELECT role FROM conversation_memory WHERE sender_id = cm.sender_id ORDER BY id DESC LIMIT 1) AS last_role,
         (SELECT name FROM guest_profiles WHERE sender_id = cm.sender_id LIMIT 1) AS guest_name,
-        (SELECT phone FROM customer_contacts WHERE sender_id = cm.sender_id LIMIT 1) AS phone
+        (SELECT phone FROM customer_contacts WHERE sender_id = cm.sender_id LIMIT 1) AS phone,
+        (CASE
+          WHEN cm.sender_id LIKE 'zalo:zalo_sim_%' THEN 'sim'
+          WHEN cm.sender_id LIKE 'zalo:%' THEN 'zalo'
+          ELSE 'fb'
+        END) AS channel
       FROM conversation_memory cm
       WHERE cm.sender_id NOT LIKE 'playground_%'
         ${hotelFilter}
+        ${channelClause}
         ${q ? `AND (cm.sender_id LIKE '%' || ? || '%' OR cm.message LIKE '%' || ? || '%')` : ''}
       GROUP BY cm.sender_id
       ORDER BY last_ts DESC

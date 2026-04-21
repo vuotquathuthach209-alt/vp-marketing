@@ -742,6 +742,83 @@
             <div id="zalo-stats" class="text-xs"></div>
           </div>
         </div>
+
+        <!-- ZALO SIMULATOR — test bot mà không cần real Zalo -->
+        <div class="bg-white rounded-lg p-4 shadow-sm border-2 border-indigo-300 mb-4 max-w-6xl">
+          <h3 class="font-bold text-slate-800 mb-1">🧪 Zalo Simulator (test offline)</h3>
+          <p class="text-xs text-slate-500 mb-3">Test bot flow Zalo ngay mà KHÔNG cần config OA thật. Simulator sẽ giả lập webhook event → bot xử lý → return reply. Giống "Thử bot" nhưng với sender_id "zalo:*" (phân biệt kênh).</p>
+          <div class="grid grid-cols-3 gap-4" style="max-height: 500px;">
+            <div class="col-span-2 flex flex-col border rounded overflow-hidden" style="height: 420px;">
+              <div class="border-b p-2 bg-slate-50 flex justify-between text-xs">
+                <span>Sim user: <span id="zsim-sender">zalo_sim_admin</span></span>
+                <button id="zsim-reset" class="text-slate-500 hover:text-slate-700">🔄 Reset</button>
+              </div>
+              <div id="zsim-messages" class="flex-1 overflow-y-auto p-3 space-y-2 bg-slate-50 text-sm"></div>
+              <div class="border-t p-2 flex gap-1">
+                <input id="zsim-input" type="text" placeholder="Gõ tin như khách Zalo..." class="flex-1 border rounded px-2 py-1 text-sm"/>
+                <button id="zsim-send" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-sm">Gửi ↵</button>
+              </div>
+            </div>
+            <div class="border rounded p-2 overflow-y-auto text-xs" style="height: 420px;">
+              <h4 class="font-bold mb-2">🔍 Debug</h4>
+              <div id="zsim-debug" class="space-y-2">
+                <div class="text-slate-400">Gửi tin để xem intent + latency + channel info...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ZNS TEMPLATES MANAGEMENT -->
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
+          <div class="flex items-start justify-between mb-3">
+            <div>
+              <h3 class="font-bold text-slate-800">📬 ZNS (Zalo Notification Service) Templates</h3>
+              <p class="text-xs text-slate-500 mt-1">Gửi thông báo có chủ đích (booking confirm, check-in reminder, review request) — KỂ CẢ khi ngoài 48h window. Template phải được Zalo approve trước khi dùng. <a href="https://business.zalo.me" target="_blank" class="text-blue-600 hover:underline">Apply templates tại business.zalo.me</a></p>
+            </div>
+          </div>
+
+          <!-- Add template form -->
+          <div class="bg-slate-50 rounded p-3 mb-3">
+            <h4 class="font-semibold text-sm mb-2">➕ Thêm template</h4>
+            <div class="grid grid-cols-2 gap-2 mb-2">
+              <input id="zns-tpl-id" placeholder="Template ID (Zalo cấp)" class="border rounded px-2 py-1 text-sm font-mono"/>
+              <input id="zns-tpl-name" placeholder="Tên friendly (vd: Xác nhận đặt phòng)" class="border rounded px-2 py-1 text-sm"/>
+              <select id="zns-tpl-type" class="border rounded px-2 py-1 text-sm">
+                <option value="booking_confirm">booking_confirm — Xác nhận đặt phòng</option>
+                <option value="checkin_reminder">checkin_reminder — Nhắc check-in</option>
+                <option value="review_request">review_request — Xin review</option>
+                <option value="promo">promo — Khuyến mãi</option>
+                <option value="custom">custom — Khác</option>
+              </select>
+              <input id="zns-tpl-vars" placeholder="Variables (JSON vd: [\"name\",\"booking_id\",\"date\"])" class="border rounded px-2 py-1 text-sm font-mono"/>
+              <input id="zns-tpl-desc" placeholder="Description (tuỳ chọn)" class="col-span-2 border rounded px-2 py-1 text-sm"/>
+            </div>
+            <button id="zns-tpl-save" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1 rounded">💾 Save template</button>
+          </div>
+
+          <!-- Template list -->
+          <div id="zns-tpl-list" class="space-y-1 mb-3 text-xs"></div>
+
+          <!-- Send ZNS form -->
+          <div class="border-t border-slate-200 pt-3">
+            <h4 class="font-semibold text-sm mb-2">📤 Gửi ZNS</h4>
+            <div class="grid grid-cols-3 gap-2 mb-2">
+              <select id="zns-send-tpl" class="border rounded px-2 py-1 text-sm"></select>
+              <input id="zns-send-phone" placeholder="SĐT khách (0912xxx)" class="border rounded px-2 py-1 text-sm font-mono"/>
+              <button id="zns-send-btn" class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-3 py-1 rounded">📤 Gửi</button>
+            </div>
+            <textarea id="zns-send-data" rows="3" placeholder='Data JSON (key-value theo variables): {"name":"Anh Hùng","booking_id":"SDR-123","date":"2026-04-25"}' class="w-full border rounded px-2 py-1 text-sm font-mono"></textarea>
+          </div>
+
+          <!-- ZNS log -->
+          <div class="border-t border-slate-200 pt-3 mt-3">
+            <div class="flex justify-between mb-2">
+              <h4 class="font-semibold text-sm">📜 ZNS log gần đây</h4>
+              <button id="zns-log-refresh" class="text-xs text-slate-500 hover:text-slate-700">🔄</button>
+            </div>
+            <div id="zns-log" class="text-xs space-y-1 max-h-48 overflow-y-auto"></div>
+          </div>
+        </div>
       </section>
 
       <!-- OTA DATABASE CONNECTOR TAB -->
@@ -848,8 +925,14 @@
         <div class="grid grid-cols-3 gap-4 max-w-6xl" style="height: 75vh;">
           <!-- Sender list -->
           <div class="col-span-1 bg-white rounded-lg shadow-sm border border-slate-200 flex flex-col">
-            <div class="border-b border-slate-200 p-2">
+            <div class="border-b border-slate-200 p-2 space-y-1">
               <input id="convo-search" type="text" placeholder="Tìm sender..." class="w-full border rounded px-2 py-1 text-xs"/>
+              <div class="flex gap-1 text-[10px]">
+                <button class="convo-channel-btn bg-slate-800 text-white px-2 py-0.5 rounded" data-channel="all">Tất cả</button>
+                <button class="convo-channel-btn bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded" data-channel="fb">📘 FB</button>
+                <button class="convo-channel-btn bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded" data-channel="zalo">💬 Zalo</button>
+                <button class="convo-channel-btn bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded" data-channel="sim">🧪 Sim</button>
+              </div>
             </div>
             <div id="convo-senders" class="flex-1 overflow-y-auto"></div>
           </div>

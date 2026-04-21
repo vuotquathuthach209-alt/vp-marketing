@@ -4767,6 +4767,10 @@ setInterval(() => { if (document.visibilityState === 'visible') loadNewsStats().
 // ═══════════════════════════════════════════════════════════
 async function loadChannels() {
   await Promise.all([loadFbStatus(), loadZaloList(), loadZaloStats()]);
+  // ZNS + Simulator (guarded — functions defined later, may not exist in older cache)
+  try { if (typeof loadZnsTemplates === 'function') await loadZnsTemplates(); } catch {}
+  try { if (typeof loadZnsLog === 'function') await loadZnsLog(); } catch {}
+  try { if (typeof zsimRender === 'function') { zsimRender(); zsimRenderDebug(null); } } catch {}
 }
 
 async function loadFbStatus() {
@@ -5509,10 +5513,17 @@ function wireHotelDetailForm(hotelId, root) {
 // ═══════════════════════════════════════════════════════════
 const convoState = { selected: null };
 
+const convoFilterState = { channel: 'all' };
+
 async function loadConversations() {
   const q = document.getElementById('convo-search')?.value || '';
+  const ch = convoFilterState.channel;
   try {
-    const r = await api('/conversations/senders' + (q ? '?q=' + encodeURIComponent(q) : ''));
+    const qs = new URLSearchParams();
+    if (q) qs.set('q', q);
+    if (ch && ch !== 'all') qs.set('channel', ch);
+    const url = '/conversations/senders' + (qs.toString() ? '?' + qs.toString() : '');
+    const r = await api(url);
     renderConvoSenders(r.senders || []);
   } catch (e) {
     document.getElementById('convo-senders').innerHTML = `<div class="p-3 text-rose-600 text-xs">Lỗi: ${escapeHtml(e.message)}</div>`;
@@ -5525,11 +5536,14 @@ function renderConvoSenders(senders) {
     list.innerHTML = '<div class="p-4 text-slate-400 text-xs">Chưa có hội thoại.</div>';
     return;
   }
+  const chBadge = (c) => c === 'zalo' ? '<span class="text-[9px] bg-blue-100 text-blue-700 px-1 rounded">💬 Zalo</span>'
+    : c === 'sim' ? '<span class="text-[9px] bg-amber-100 text-amber-700 px-1 rounded">🧪 Sim</span>'
+    : '<span class="text-[9px] bg-indigo-100 text-indigo-700 px-1 rounded">📘 FB</span>';
   list.innerHTML = senders.map(s => `
     <div class="convo-item p-2 border-b border-slate-100 cursor-pointer hover:bg-slate-50" data-sender="${escapeHtml(s.sender_id)}">
-      <div class="flex items-center justify-between mb-1">
-        <span class="text-xs font-semibold text-slate-700">${escapeHtml(s.guest_name || s.sender_id.slice(-10))}</span>
-        <span class="text-[10px] text-slate-400">${formatRelTime(s.last_ts)}</span>
+      <div class="flex items-center justify-between mb-1 gap-1">
+        <span class="text-xs font-semibold text-slate-700 truncate">${escapeHtml(s.guest_name || s.sender_id.slice(-10))}</span>
+        <div class="flex items-center gap-1 flex-shrink-0">${chBadge(s.channel)}<span class="text-[10px] text-slate-400">${formatRelTime(s.last_ts)}</span></div>
       </div>
       <div class="text-[11px] text-slate-500 truncate">${s.last_role === 'bot' ? '🤖 ' : '👤 '}${escapeHtml((s.last_msg || '').slice(0, 80))}</div>
       <div class="text-[10px] text-slate-400">${s.user_msgs}u / ${s.bot_msgs}b${s.phone ? ' · 📞 ' + escapeHtml(s.phone) : ''}</div>
@@ -5586,10 +5600,270 @@ async function loadConvoMessages(senderId) {
 
 document.getElementById('convo-search')?.addEventListener('input', debounce(loadConversations, 300));
 
+// Channel filter buttons (FB / Zalo / Sim / All)
+document.querySelectorAll('.convo-channel-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    convoFilterState.channel = btn.dataset.channel;
+    document.querySelectorAll('.convo-channel-btn').forEach(b => {
+      const active = b.dataset.channel === convoFilterState.channel;
+      b.classList.toggle('bg-slate-800', active);
+      b.classList.toggle('text-white', active);
+      b.classList.toggle('bg-white', !active);
+      b.classList.toggle('border', !active);
+      b.classList.toggle('border-slate-200', !active);
+      b.classList.toggle('text-slate-600', !active);
+    });
+    loadConversations();
+  });
+});
+
 function debounce(fn, ms) {
   let t;
   return function(...args) { clearTimeout(t); t = setTimeout(() => fn.apply(this, args), ms); };
 }
+
+// ═══════════════════════════════════════════════════════════
+// Zalo Simulator — chat widget offline để test bot Zalo mà
+// không cần real OA (hiển thị tin + debug panel intent/tier/latency)
+// ═══════════════════════════════════════════════════════════
+const zsimState = { messages: [] };
+
+function zsimAppend(role, text, meta) {
+  zsimState.messages.push({ role, text, meta, ts: Date.now() });
+  zsimRender();
+}
+
+function zsimRender() {
+  const box = document.getElementById('zsim-messages');
+  if (!box) return;
+  if (!zsimState.messages.length) {
+    box.innerHTML = '<div class="text-slate-400 text-xs text-center py-6">💬 Gõ tin nhắn để test bot...</div>';
+    return;
+  }
+  box.innerHTML = zsimState.messages.map(m => {
+    const side = m.role === 'user' ? 'justify-end' : 'justify-start';
+    const bubble = m.role === 'user'
+      ? 'bg-indigo-500 text-white'
+      : 'bg-white border border-slate-200 text-slate-800';
+    const metaLine = m.meta ? `<div class="text-[10px] ${m.role === 'user' ? 'text-indigo-100' : 'text-slate-400'} mt-1">${escapeHtml(m.meta)}</div>` : '';
+    return `<div class="flex ${side}">
+      <div class="max-w-[75%] ${bubble} px-3 py-2 rounded-lg">
+        <div class="whitespace-pre-wrap text-sm">${escapeHtml(m.text || '')}</div>
+        ${metaLine}
+      </div>
+    </div>`;
+  }).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+function zsimRenderDebug(resp) {
+  const box = document.getElementById('zsim-debug');
+  if (!box) return;
+  if (!resp) {
+    box.innerHTML = '<div class="text-slate-400 text-xs">Chưa có tin nào.</div>';
+    return;
+  }
+  const latency = resp.total_latency_ms ?? resp.latency_ms ?? 0;
+  const latencyColor = latency < 1500 ? 'text-emerald-600' : latency < 3000 ? 'text-amber-600' : 'text-rose-600';
+  box.innerHTML = `
+    <div class="bg-white rounded p-2 border border-slate-200">
+      <div class="text-[10px] text-slate-400 uppercase">Intent</div>
+      <div class="text-sm font-mono text-slate-800">${escapeHtml(resp.intent || '-')}</div>
+    </div>
+    <div class="bg-white rounded p-2 border border-slate-200">
+      <div class="text-[10px] text-slate-400 uppercase">Tier</div>
+      <div class="text-sm font-mono text-slate-800">${escapeHtml(resp.tier || '-')}</div>
+    </div>
+    <div class="bg-white rounded p-2 border border-slate-200">
+      <div class="text-[10px] text-slate-400 uppercase">Latency</div>
+      <div class="text-sm font-mono font-bold ${latencyColor}">${latency}ms</div>
+    </div>
+    <div class="bg-white rounded p-2 border border-slate-200">
+      <div class="text-[10px] text-slate-400 uppercase">Sender key</div>
+      <div class="text-[11px] font-mono text-slate-600 break-all">${escapeHtml(resp.sender_key || '')}</div>
+    </div>`;
+}
+
+async function zsimSend() {
+  const input = document.getElementById('zsim-input');
+  const btn = document.getElementById('zsim-send');
+  const text = (input?.value || '').trim();
+  if (!text) return;
+  input.value = '';
+  btn.disabled = true;
+  zsimAppend('user', text);
+  try {
+    const r = await api('/zalo/simulate', { method: 'POST', body: JSON.stringify({ text }) });
+    if (r?.ok) {
+      zsimAppend('bot', r.reply || '(bot không có reply)', `${r.intent || '?'} · ${r.tier || '?'} · ${r.total_latency_ms || 0}ms`);
+      zsimRenderDebug(r);
+    } else {
+      zsimAppend('bot', '❌ Error: ' + (r?.error || 'unknown'), 'error');
+    }
+  } catch (e) {
+    zsimAppend('bot', '❌ ' + e.message, 'network-error');
+  } finally {
+    btn.disabled = false;
+    input.focus();
+  }
+}
+
+document.getElementById('zsim-send')?.addEventListener('click', zsimSend);
+document.getElementById('zsim-input')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); zsimSend(); }
+});
+document.getElementById('zsim-reset')?.addEventListener('click', async () => {
+  if (!confirm('Reset memory của sim user? Bot sẽ quên toàn bộ context.')) return;
+  try {
+    const r = await api('/zalo/simulate/reset', { method: 'POST', body: JSON.stringify({}) });
+    zsimState.messages = [];
+    zsimRender();
+    zsimRenderDebug(null);
+    zsimAppend('bot', `🔄 Đã reset (deleted ${r.deleted || 0} messages)`, 'system');
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
+
+// ═══════════════════════════════════════════════════════════
+// ZNS Templates (Zalo Notification Service)
+// ═══════════════════════════════════════════════════════════
+async function loadZnsTemplates() {
+  try {
+    const r = await api('/zalo/zns/templates');
+    const list = document.getElementById('zns-tpl-list');
+    const sendSelect = document.getElementById('zns-send-tpl');
+    if (!list) return;
+    if (!r.items?.length) {
+      list.innerHTML = '<div class="text-slate-400">Chưa có template. Lưu lần đầu phía trên.</div>';
+      if (sendSelect) sendSelect.innerHTML = '<option value="">(chưa có template)</option>';
+      return;
+    }
+    list.innerHTML = r.items.map(t => {
+      const vars = Array.isArray(t.variables) ? t.variables : [];
+      const typeBadge = {
+        booking_confirm: 'bg-emerald-100 text-emerald-700',
+        reminder: 'bg-amber-100 text-amber-700',
+        promotion: 'bg-indigo-100 text-indigo-700',
+        otp: 'bg-rose-100 text-rose-700',
+        general: 'bg-slate-100 text-slate-700'
+      }[t.template_type] || 'bg-slate-100 text-slate-700';
+      return `<div class="flex items-center justify-between bg-white border border-slate-200 rounded px-2 py-1">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-1 flex-wrap">
+            <span class="font-mono text-[10px] bg-slate-100 px-1 rounded">${escapeHtml(t.template_id)}</span>
+            <span class="text-[10px] ${typeBadge} px-1 rounded">${escapeHtml(t.template_type)}</span>
+            <span class="font-semibold">${escapeHtml(t.template_name)}</span>
+          </div>
+          <div class="text-[10px] text-slate-500">Vars: ${vars.length ? vars.map(v => `<code class="bg-slate-50 px-1">${escapeHtml(v)}</code>`).join(' ') : '(none)'}</div>
+          ${t.description ? `<div class="text-[10px] text-slate-400">${escapeHtml(t.description)}</div>` : ''}
+        </div>
+        <button class="zns-tpl-del text-rose-500 hover:text-rose-700 text-xs ml-2" data-id="${t.id}">🗑</button>
+      </div>`;
+    }).join('');
+    list.querySelectorAll('.zns-tpl-del').forEach(b => b.addEventListener('click', () => deleteZnsTemplate(b.dataset.id)));
+
+    if (sendSelect) {
+      sendSelect.innerHTML = r.items.map(t =>
+        `<option value="${escapeHtml(t.template_id)}" data-vars='${escapeHtml(JSON.stringify(t.variables || []))}'>${escapeHtml(t.template_name)} (${escapeHtml(t.template_id)})</option>`
+      ).join('');
+      const upd = () => {
+        const opt = sendSelect.options[sendSelect.selectedIndex];
+        const vars = JSON.parse(opt?.dataset.vars || '[]');
+        const dataArea = document.getElementById('zns-send-data');
+        if (dataArea && !dataArea.value.trim()) {
+          const sample = {}; vars.forEach(v => sample[v] = '');
+          dataArea.placeholder = 'Data JSON: ' + JSON.stringify(sample);
+        }
+      };
+      sendSelect.onchange = upd; upd();
+    }
+  } catch (e) {
+    const list = document.getElementById('zns-tpl-list');
+    if (list) list.innerHTML = `<div class="text-rose-600">Lỗi: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function deleteZnsTemplate(id) {
+  if (!confirm('Xoá template này?')) return;
+  try {
+    await api('/zalo/zns/templates/' + id, { method: 'DELETE' });
+    loadZnsTemplates();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+document.getElementById('zns-tpl-save')?.addEventListener('click', async () => {
+  const templateId = document.getElementById('zns-tpl-id').value.trim();
+  const name = document.getElementById('zns-tpl-name').value.trim();
+  const type = document.getElementById('zns-tpl-type').value;
+  const varsRaw = document.getElementById('zns-tpl-vars').value.trim();
+  const desc = document.getElementById('zns-tpl-desc').value.trim();
+  if (!templateId || !name) return alert('Cần Template ID + Tên');
+  let vars = [];
+  if (varsRaw) {
+    try { vars = JSON.parse(varsRaw); if (!Array.isArray(vars)) throw 0; }
+    catch { return alert('Variables phải là JSON array, vd: ["name","booking_id"]'); }
+  }
+  try {
+    await api('/zalo/zns/templates', {
+      method: 'POST',
+      body: JSON.stringify({ template_id: templateId, template_name: name, template_type: type, variables: vars, description: desc || null })
+    });
+    ['zns-tpl-id', 'zns-tpl-name', 'zns-tpl-vars', 'zns-tpl-desc'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    loadZnsTemplates();
+    alert('✓ Đã lưu template');
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
+
+document.getElementById('zns-send-btn')?.addEventListener('click', async () => {
+  const tpl = document.getElementById('zns-send-tpl').value;
+  const phone = document.getElementById('zns-send-phone').value.trim();
+  const dataRaw = document.getElementById('zns-send-data').value.trim();
+  if (!tpl || !phone || !dataRaw) return alert('Cần chọn template + SĐT + data JSON');
+  let data;
+  try { data = JSON.parse(dataRaw); }
+  catch { return alert('Data phải là JSON hợp lệ'); }
+  try {
+    const r = await api('/zalo/zns/send', { method: 'POST', body: JSON.stringify({ template_id: tpl, phone, data }) });
+    if (r.ok) {
+      alert(`✓ Đã gửi ZNS! Tracking: ${r.tracking_id}`);
+      document.getElementById('zns-send-data').value = '';
+      loadZnsLog();
+    } else {
+      alert('❌ ' + r.error);
+    }
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
+
+async function loadZnsLog() {
+  try {
+    const r = await api('/zalo/zns/log?limit=30');
+    const box = document.getElementById('zns-log');
+    if (!box) return;
+    if (!r.items?.length) {
+      box.innerHTML = '<div class="text-slate-400">Chưa có log ZNS.</div>';
+      return;
+    }
+    box.innerHTML = r.items.map(l => {
+      const statusColor = l.status === 'sent' ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50';
+      return `<div class="bg-white border border-slate-200 rounded px-2 py-1">
+        <div class="flex items-center justify-between flex-wrap gap-1">
+          <div class="flex items-center gap-1">
+            <span class="${statusColor} px-1 rounded text-[10px] uppercase font-bold">${escapeHtml(l.status)}</span>
+            <span class="font-mono text-[10px] bg-slate-100 px-1 rounded">${escapeHtml(l.template_id)}</span>
+            <span class="text-slate-600">📞 ${escapeHtml(l.phone)}</span>
+          </div>
+          <span class="text-[10px] text-slate-400">${formatRelTime(l.sent_at)}</span>
+        </div>
+        ${l.error ? `<div class="text-rose-600 text-[10px] mt-0.5">❌ ${escapeHtml(l.error)}</div>` : ''}
+        ${l.zalo_msg_id ? `<div class="text-[10px] text-slate-400">msg_id: ${escapeHtml(l.zalo_msg_id)}</div>` : ''}
+      </div>`;
+    }).join('');
+  } catch (e) {
+    const box = document.getElementById('zns-log');
+    if (box) box.innerHTML = `<div class="text-rose-600">Lỗi: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+document.getElementById('zns-log-refresh')?.addEventListener('click', loadZnsLog);
 
 // ====== Init ======
 checkAuth();
