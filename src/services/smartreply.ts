@@ -872,6 +872,7 @@ async function ragReply(
     }
   }
   // v7: inject Hotel Knowledge summary nếu đã synthesize
+  // v10 Đợt 2.2: inject brand_voice instructions vào system prompt
   try {
     const { hasKnowledge, getProfile, getRooms, getAmenities } = require('./hotel-knowledge');
     if (hasKnowledge(hotelId)) {
@@ -888,6 +889,15 @@ async function ragReply(
         `--- HẾT ---`,
       ].filter(Boolean).join('\n');
       systemPrompt += '\n\n' + kbChunk;
+
+      // v10 Đợt 2.2: Brand voice instructions (friendly by default cho Sonder)
+      const brandVoice = prof.brand_voice || 'friendly';
+      const voiceBlock = brandVoice === 'formal'
+        ? 'GIỌNG ĐIỆU: Chuyên nghiệp, trang trọng, dùng "quý khách". Không emoji.'
+        : brandVoice === 'luxury'
+        ? 'GIỌNG ĐIỆU: Sang trọng, tinh tế, nhấn mạnh trải nghiệm cao cấp. Tối đa 1 emoji.'
+        : 'GIỌNG ĐIỆU: Thân thiện, ấm áp, dùng "anh/chị", "ạ", "nhé" tự nhiên. Có thể thêm 1-2 emoji phù hợp (✨🌿💚📌).';
+      systemPrompt += '\n\n--- BRAND VOICE ---\n' + voiceBlock;
     }
   } catch {}
   try {
