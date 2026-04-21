@@ -258,7 +258,7 @@ export async function scrapeAllHotels(): Promise<OtaRawHotel[]> {
       ],
       // Custom scraped fields
       _scraped: {
-        product_group: 'long_term_apartment',
+        product_group: 'monthly_apartment',
         monthly_price_from: a.monthlyPriceFrom,
         monthly_price_to: a.monthlyPriceTo,
         min_stay_months: a.minStayMonths,

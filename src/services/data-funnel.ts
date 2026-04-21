@@ -20,7 +20,10 @@ import { classifyProduct } from './product-taxonomy';
 // STRUCTURED INPUT — định dạng chuẩn sau khi qua phễu
 // ═══════════════════════════════════════════════════════════
 
-export type ProductGroup = 'short_stay' | 'long_term_apartment';
+// v10 Đợt 1.3 fix: unified naming với product-taxonomy.ts + hotel_profile storage.
+// Trước: 'short_stay' | 'long_term_apartment' (không match → room upsert bị skip cho apartment).
+// Sau: match classifyProduct() output.
+export type ProductGroup = 'nightly_stay' | 'monthly_apartment';
 export type PropertyTier = 'budget' | 'mid' | 'premium' | 'luxury';
 export type TargetSegment = 'business' | 'family' | 'couple' | 'backpacker' | 'long_stay' | 'mixed';
 
@@ -153,10 +156,10 @@ function extractPricing(raw: any, scraped: any, productGroup: ProductGroup): Nor
   const nightlyPrices: number[] = [];
   for (const r of rooms) {
     const p = safeNum(r.price);
-    if (p && (productGroup === 'short_stay' || p < 1_000_000)) nightlyPrices.push(p);
+    if (p && (productGroup === 'nightly_stay' || p < 1_000_000)) nightlyPrices.push(p);
   }
   const minPrice = safeNum(scraped?.daily_price || raw.minPrice);
-  if (minPrice && productGroup === 'short_stay') {
+  if (minPrice && productGroup === 'nightly_stay') {
     nightlyPrices.push(minPrice);
   }
   if (nightlyPrices.length > 0) {
@@ -274,7 +277,7 @@ function classifyTier(input: Partial<StructuredInput>): PropertyTier {
 }
 
 function classifySegment(input: Partial<StructuredInput>): TargetSegment {
-  if (input.product_group === 'long_term_apartment') return 'long_stay';
+  if (input.product_group === 'monthly_apartment') return 'long_stay';
 
   const flags = input.flags;
   if (!flags) return 'mixed';
@@ -322,7 +325,7 @@ export function validate(input: Partial<StructuredInput>): StructuredInput {
   }
 
   // Apartment without monthly pricing → fallback
-  if (input.product_group === 'long_term_apartment' && !input.pricing?.monthly) {
+  if (input.product_group === 'monthly_apartment' && !input.pricing?.monthly) {
     issues.push('apartment_missing_monthly_price');
   }
 
@@ -346,7 +349,7 @@ export function validate(input: Partial<StructuredInput>): StructuredInput {
     images: input.images || [],
     cover_image: input.cover_image,
     property_type: input.property_type || 'hotel',
-    product_group: input.product_group || 'short_stay',
+    product_group: input.product_group || 'nightly_stay',
     rental_type: input.rental_type || 'per_night',
     property_tier: input.property_tier || 'mid',
     target_segment_hint: input.target_segment_hint || 'mixed',

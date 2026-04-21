@@ -369,7 +369,7 @@ export async function synthesizeHotel(raw: OtaRawHotel): Promise<{
 
     // Rooms derived from pricing (apartment) or raw rooms (short stay)
     parsed.rooms = [];
-    if (structured.product_group === 'long_term_apartment' && structured.pricing.monthly) {
+    if (structured.product_group === 'monthly_apartment' && structured.pricing.monthly) {
       parsed.rooms = [
         {
           room_key: `${structured.id}_monthly`,
