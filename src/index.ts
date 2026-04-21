@@ -31,6 +31,9 @@ import agentRouter from './routes/agent';
 import dataDeletionRouter from './routes/data-deletion';
 import trainingRouter from './routes/training';
 import newsRouter from './routes/news';
+import playgroundRouter from './routes/playground';
+import hotelsEditorRouter from './routes/hotels-editor';
+import conversationsRouter from './routes/conversations';
 import './services/agent-tools'; // init table + register tools
 import './services/ota-readonly-guard'; // self-test fires on boot (fail-fast if guard broken)
 // v8: Intent matcher self-test
@@ -118,6 +121,9 @@ app.use('/api/zalo', zaloRouter);
 app.use('/api/agent', agentRouter);
 app.use('/api/training', trainingRouter);
 app.use('/api/news', newsRouter);
+app.use('/api/playground', playgroundRouter);
+app.use('/api/hotels-editor', hotelsEditorRouter);
+app.use('/api/conversations', conversationsRouter);
 app.use('/api/data-deletion', dataDeletionRouter);
 app.use('/data-deletion', dataDeletionRouter); // also accept /data-deletion/status (URL returned to FB)
 app.use('/', zaloWebhookRouter); // POST /webhook/zalo

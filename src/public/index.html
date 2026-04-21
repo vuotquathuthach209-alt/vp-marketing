@@ -90,6 +90,9 @@
         <div class="pt-3 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold">Tự động</div>
         <button data-tab="campaigns" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="repeat"></i><span>Chiến dịch</span></button>
         <button data-tab="autoreply" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="message-circle"></i><span>Chatbot</span></button>
+        <button data-tab="playground" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="message-square-dashed"></i><span>Thử bot</span></button>
+        <button data-tab="hotels" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="building-2"></i><span>Khách sạn</span></button>
+        <button data-tab="conversations" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="messages-square"></i><span>Hội thoại</span></button>
         <button data-tab="training" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="graduation-cap"></i><span>Duyệt Training</span><span id="training-badge" class="ml-auto hidden text-xs bg-amber-500 text-slate-900 px-1.5 py-0.5 rounded-full font-bold"></span></button>
         <button data-tab="news" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="newspaper"></i><span>News → Post</span><span id="news-badge" class="ml-auto hidden text-xs bg-indigo-500 text-white px-1.5 py-0.5 rounded-full font-bold"></span></button>
         <button data-tab="room-images" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="camera"></i><span>Ảnh phòng</span></button>
@@ -436,6 +439,87 @@
 
         <h3 class="font-bold mb-3">📜 Lịch sử trả lời gần đây</h3>
         <div id="autoreply-log" class="space-y-2 max-w-3xl"></div>
+      </section>
+
+      <!-- BOT PLAYGROUND TAB -->
+      <section data-panel="playground" class="panel hidden">
+        <div class="mb-4 max-w-6xl">
+          <h2 class="text-2xl font-bold mb-2">💬 Thử bot (Playground)</h2>
+          <p class="text-slate-500 text-sm">Chat trực tiếp với bot như khách — không qua Facebook. Thấy đầy đủ debug: intent, cache hit, provider, latency, tokens. Hữu ích để test trước khi bot đi vào production.</p>
+        </div>
+
+        <div class="grid grid-cols-3 gap-4 max-w-6xl">
+          <!-- Chat area (col-span 2) -->
+          <div class="col-span-2 bg-white rounded-lg shadow-sm border border-slate-200 flex flex-col" style="height: 75vh;">
+            <!-- Header -->
+            <div class="border-b border-slate-200 p-3 flex items-center justify-between gap-2 flex-wrap">
+              <div class="flex gap-2 items-center">
+                <label class="text-xs font-semibold text-slate-600">Khách sạn:</label>
+                <select id="pg-hotel" class="border rounded px-2 py-1 text-sm"></select>
+                <span id="pg-hotel-info" class="text-xs text-slate-500"></span>
+              </div>
+              <div class="flex gap-2">
+                <input id="pg-sender-name" type="text" placeholder="Tên khách (tuỳ chọn)" class="border rounded px-2 py-1 text-sm" value="Anh Khánh"/>
+                <button id="pg-reset" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs px-3 py-1 rounded" title="Clear playground history">🔄 Reset</button>
+              </div>
+            </div>
+            <!-- Messages -->
+            <div id="pg-messages" class="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50"></div>
+            <!-- Input -->
+            <div class="border-t border-slate-200 p-3">
+              <div class="flex gap-2">
+                <input id="pg-input" type="text" placeholder="Gõ tin nhắn như khách thật..." class="flex-1 border rounded px-3 py-2 text-sm" autocomplete="off"/>
+                <button id="pg-send" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium">Gửi ↵</button>
+              </div>
+              <div class="flex gap-1 mt-2 flex-wrap">
+                <button class="pg-quick bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs px-2 py-1 rounded" data-msg="Khách sạn có wifi không?">Có wifi không?</button>
+                <button class="pg-quick bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs px-2 py-1 rounded" data-msg="Giá phòng bao nhiêu ạ?">Giá bao nhiêu?</button>
+                <button class="pg-quick bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs px-2 py-1 rounded" data-msg="Có chỗ đậu xe không?">Chỗ đậu xe?</button>
+                <button class="pg-quick bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs px-2 py-1 rounded" data-msg="Check-in mấy giờ?">Check-in mấy giờ?</button>
+                <button class="pg-quick bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs px-2 py-1 rounded" data-msg="Mình muốn thuê tháng 6, có không?">Thuê tháng 6?</button>
+                <button class="pg-quick bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs px-2 py-1 rounded" data-msg="Đắt quá, có giảm không?">Đắt quá!</button>
+              </div>
+            </div>
+          </div>
+          <!-- Debug panel (col-span 1) -->
+          <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-3 overflow-y-auto" style="height: 75vh;">
+            <h3 class="font-bold text-sm mb-3">🔍 Debug info</h3>
+            <div id="pg-debug" class="space-y-3 text-xs">
+              <div class="text-slate-400">Chưa có tin nhắn nào. Gửi thử để xem debug.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- HOTEL EDITOR TAB (Đợt 3.2) -->
+      <section data-panel="hotels" class="panel hidden">
+        <div class="mb-4 max-w-6xl">
+          <h2 class="text-2xl font-bold mb-2">🏨 Quản lý khách sạn</h2>
+          <p class="text-slate-500 text-sm">Xem & chỉnh sửa thông tin khách sạn mà bot dùng để tư vấn. Bật <b>manual_override</b> để ETL không ghi đè khi scraper chạy lại.</p>
+        </div>
+        <div id="hotels-list" class="space-y-3 max-w-6xl"></div>
+      </section>
+
+      <!-- CONVERSATIONS TAB (Đợt 3.3) -->
+      <section data-panel="conversations" class="panel hidden">
+        <div class="mb-4 max-w-6xl">
+          <h2 class="text-2xl font-bold mb-2">💬 Hội thoại</h2>
+          <p class="text-slate-500 text-sm">Xem toàn bộ chat bot đã tự động trả lời khách. Click vào 1 người để xem lịch sử đầy đủ.</p>
+        </div>
+        <div class="grid grid-cols-3 gap-4 max-w-6xl" style="height: 75vh;">
+          <!-- Sender list -->
+          <div class="col-span-1 bg-white rounded-lg shadow-sm border border-slate-200 flex flex-col">
+            <div class="border-b border-slate-200 p-2">
+              <input id="convo-search" type="text" placeholder="Tìm sender..." class="w-full border rounded px-2 py-1 text-xs"/>
+            </div>
+            <div id="convo-senders" class="flex-1 overflow-y-auto"></div>
+          </div>
+          <!-- Message viewer -->
+          <div class="col-span-2 bg-white rounded-lg shadow-sm border border-slate-200 flex flex-col">
+            <div id="convo-header" class="border-b border-slate-200 p-3 text-sm text-slate-600">Chưa chọn hội thoại nào</div>
+            <div id="convo-messages" class="flex-1 overflow-y-auto p-3 space-y-2 bg-slate-50"></div>
+          </div>
+        </div>
       </section>
 
       <!-- TRAINING REVIEW TAB -->

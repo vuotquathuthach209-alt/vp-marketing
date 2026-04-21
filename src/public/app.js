@@ -129,6 +129,9 @@ function switchTab(tab) {
   if (tab === 'knowledge-sync') loadKnowledgeSync();
   if (tab === 'training') loadTraining();
   if (tab === 'news') loadNews();
+  if (tab === 'playground') loadPlayground();
+  if (tab === 'hotels') loadHotelsEditor();
+  if (tab === 'conversations') loadConversations();
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
   b.addEventListener('click', () => switchTab(b.dataset.tab));
@@ -4149,6 +4152,462 @@ document.getElementById('news-gen-drafts-now')?.addEventListener('click', async 
 
 // Auto-refresh stats 60s
 setInterval(() => { if (document.visibilityState === 'visible') loadNewsStats().catch(() => {}); }, 60_000);
+
+// ═══════════════════════════════════════════════════════════
+// Đợt 3.1: Bot Playground
+// ═══════════════════════════════════════════════════════════
+const pgState = { hotelId: 1, history: [] };
+
+async function loadPlayground() {
+  try {
+    const r = await api('/playground/hotels');
+    const sel = document.getElementById('pg-hotel');
+    sel.innerHTML = r.hotels.map(h => `<option value="${h.mkt_hotel_id}">#${h.mkt_hotel_id} ${escapeHtml(h.name)} — ${escapeHtml(h.product_group || 'unknown')}</option>`).join('');
+    if (r.hotels[0]) { pgState.hotelId = r.hotels[0].mkt_hotel_id; updatePgHotelInfo(r.hotels[0]); }
+    sel.addEventListener('change', () => {
+      const h = r.hotels.find(x => x.mkt_hotel_id == sel.value);
+      pgState.hotelId = parseInt(sel.value, 10);
+      if (h) updatePgHotelInfo(h);
+    });
+  } catch (e) { console.warn('playground hotels fail:', e.message); }
+}
+
+function updatePgHotelInfo(h) {
+  const info = document.getElementById('pg-hotel-info');
+  const bits = [];
+  bits.push(h.brand_voice ? `🎭 ${h.brand_voice}` : '');
+  bits.push(h.rooms_count ? `🛏️ ${h.rooms_count} phòng` : '');
+  bits.push(h.amenities_count ? `✨ ${h.amenities_count} tiện nghi` : '');
+  bits.push(h.has_policies ? '📋 có policy' : '');
+  if (h.price_min_vnd) bits.push('💰 từ ' + (h.price_min_vnd/1000000).toFixed(1) + 'M');
+  else if (h.monthly_price_from) bits.push('🏠 ' + (h.monthly_price_from/1000000).toFixed(1) + 'M/tháng');
+  info.textContent = bits.filter(Boolean).join(' · ');
+}
+
+function pgAddMessage(role, text, meta) {
+  const box = document.getElementById('pg-messages');
+  const bubble = role === 'user'
+    ? `<div class="flex justify-end"><div class="max-w-[75%] bg-blue-500 text-white px-3 py-2 rounded-lg"><div class="text-sm whitespace-pre-wrap">${escapeHtml(text)}</div></div></div>`
+    : `<div class="flex justify-start"><div class="max-w-[75%] bg-white border border-slate-200 px-3 py-2 rounded-lg shadow-sm"><div class="text-sm text-slate-800 whitespace-pre-wrap">${escapeHtml(text)}</div>${meta ? `<div class="text-[10px] text-slate-400 mt-1">${meta}</div>` : ''}</div></div>`;
+  box.insertAdjacentHTML('beforeend', bubble);
+  box.scrollTop = box.scrollHeight;
+}
+
+function pgUpdateDebug(r) {
+  const box = document.getElementById('pg-debug');
+  const llm = r.debug?.llm_info;
+  const cache = r.debug?.cache_match;
+  const parts = [];
+  parts.push(`<div class="bg-slate-50 p-2 rounded border"><div class="font-semibold mb-1">📊 Dispatch</div>
+    <div>intent: <span class="font-mono text-blue-700">${escapeHtml(r.intent || '-')}</span></div>
+    <div>tier: <span class="font-mono">${escapeHtml(r.tier || '-')}</span></div>
+    <div>latency: ${r.latency_ms}ms (total ${r.total_latency_ms}ms)</div>
+    ${typeof r.confidence === 'number' ? `<div>confidence: ${r.confidence.toFixed(3)}</div>` : ''}
+  </div>`);
+  if (llm) parts.push(`<div class="bg-emerald-50 p-2 rounded border border-emerald-200"><div class="font-semibold mb-1">🤖 LLM dùng</div>
+    <div>provider: <span class="font-mono text-emerald-700">${escapeHtml(llm.provider)}</span></div>
+    <div>model: <span class="font-mono text-xs">${escapeHtml(llm.model || '-')}</span></div>
+    <div>tokens: in=${llm.tokens_in} out=${llm.tokens_out}</div>
+    ${llm.hops ? `<div class="text-amber-700">hops=${llm.hops} (đã fallback)</div>` : ''}
+  </div>`);
+  if (cache) {
+    const hitColor = cache.used_cached ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-200';
+    parts.push(`<div class="${hitColor} p-2 rounded border"><div class="font-semibold mb-1">💾 QA Cache</div>
+      <div>matched: ${cache.matched ? '✓' : '✗'} — conf=${cache.confidence?.toFixed(3) || '0'}</div>
+      <div>tier: <span class="font-mono">${escapeHtml(cache.tier || '-')}</span></div>
+      <div>used: ${cache.used_cached ? '<span class="text-emerald-600">YES (cached served)</span>' : '<span class="text-slate-500">no (LLM called)</span>'}</div>
+      ${cache.cached_question ? `<div class="mt-1 italic text-slate-600">match: "${escapeHtml(cache.cached_question.slice(0, 60))}"</div>` : ''}
+    </div>`);
+  }
+  box.innerHTML = parts.join('');
+}
+
+async function pgSend() {
+  const input = document.getElementById('pg-input');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+  pgAddMessage('user', msg);
+  pgAddMessage('bot', '⏳ đang suy nghĩ...', null);
+  try {
+    const r = await api('/playground/test', {
+      method: 'POST',
+      body: JSON.stringify({
+        hotel_id: pgState.hotelId,
+        message: msg,
+        sender_name: document.getElementById('pg-sender-name').value || 'PlaygroundAdmin',
+      }),
+    });
+    // Replace "đang suy nghĩ" with real reply
+    const box = document.getElementById('pg-messages');
+    box.lastElementChild?.remove();
+    const metaStr = `${r.intent || ''} · ${r.tier || ''} · ${r.latency_ms}ms`;
+    pgAddMessage('bot', r.reply || '(empty)', metaStr);
+    pgUpdateDebug(r);
+  } catch (e) {
+    const box = document.getElementById('pg-messages');
+    box.lastElementChild?.remove();
+    pgAddMessage('bot', '❌ Lỗi: ' + e.message);
+  }
+}
+
+document.getElementById('pg-send')?.addEventListener('click', pgSend);
+document.getElementById('pg-input')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); pgSend(); }
+});
+document.getElementById('pg-reset')?.addEventListener('click', async () => {
+  if (!confirm('Xoá hết lịch sử playground?')) return;
+  try {
+    await api('/playground/reset', { method: 'POST', body: JSON.stringify({ hotel_id: pgState.hotelId }) });
+    document.getElementById('pg-messages').innerHTML = '';
+    document.getElementById('pg-debug').innerHTML = '<div class="text-slate-400">Đã reset. Gửi tin nhắn mới để xem debug.</div>';
+  } catch (e) { alert('Lỗi reset: ' + e.message); }
+});
+document.querySelectorAll('.pg-quick').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.getElementById('pg-input').value = btn.dataset.msg;
+    pgSend();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Đợt 3.2: Hotel Editor
+// ═══════════════════════════════════════════════════════════
+async function loadHotelsEditor() {
+  const list = document.getElementById('hotels-list');
+  list.innerHTML = '<div class="text-slate-400 text-sm p-4">Đang tải...</div>';
+  try {
+    const r = await api('/hotels-editor/list');
+    if (!r.hotels?.length) {
+      list.innerHTML = '<div class="bg-white p-6 rounded-lg border border-slate-200 text-slate-500">Chưa có khách sạn nào.</div>';
+      return;
+    }
+    list.innerHTML = r.hotels.map(h => renderHotelRow(h)).join('');
+    // Wire click to expand
+    list.querySelectorAll('[data-hotel-id]').forEach(row => {
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('button, input, select, textarea, form')) return;
+        const id = parseInt(row.dataset.hotelId, 10);
+        toggleHotelDetail(id, row);
+      });
+    });
+    if (window.lucide) window.lucide.createIcons();
+  } catch (e) {
+    list.innerHTML = `<div class="text-rose-600 p-4">Lỗi: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderHotelRow(h) {
+  const vBadge = h.brand_voice ? `<span class="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">${escapeHtml(h.brand_voice)}</span>` : '';
+  const typeBadge = h.product_group ? `<span class="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">${escapeHtml(h.product_group)}</span>` : '';
+  const priceStr = h.monthly_price_from
+    ? `${(h.monthly_price_from/1000000).toFixed(1)}M - ${(h.monthly_price_to/1000000).toFixed(1)}M/tháng`
+    : h.price_min_vnd ? `từ ${h.price_min_vnd.toLocaleString('vi-VN')}đ/đêm` : '-';
+  return `
+    <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden" data-hotel-id="${h.mkt_hotel_id}">
+      <div class="p-4 cursor-pointer hover:bg-slate-50">
+        <div class="flex items-start justify-between gap-2">
+          <div class="flex-1">
+            <div class="flex items-center gap-2 flex-wrap mb-1">
+              <span class="font-bold text-slate-800">#${h.mkt_hotel_id} ${escapeHtml(h.name)}</span>
+              ${vBadge}${typeBadge}
+            </div>
+            <div class="text-xs text-slate-500">${escapeHtml(h.district || '')} ${escapeHtml(h.city || '')} · ${priceStr}</div>
+            <div class="text-xs text-slate-400 mt-1">🛏️ ${h.rooms_count} phòng · ✨ ${h.amenities_count} tiện nghi · ${h.has_policies ? '📋 có policy' : '⚠ chưa có policy'}</div>
+          </div>
+          <div class="text-xs text-slate-400">▼ xem chi tiết</div>
+        </div>
+      </div>
+      <div class="hotel-detail hidden border-t border-slate-200 p-4"></div>
+    </div>`;
+}
+
+async function toggleHotelDetail(id, row) {
+  const detail = row.querySelector('.hotel-detail');
+  if (!detail.classList.contains('hidden')) {
+    detail.classList.add('hidden');
+    detail.innerHTML = '';
+    return;
+  }
+  detail.innerHTML = '<div class="text-slate-400 text-sm">Đang tải chi tiết...</div>';
+  detail.classList.remove('hidden');
+  try {
+    const r = await api(`/hotels-editor/${id}`);
+    detail.innerHTML = renderHotelDetailForm(id, r);
+    wireHotelDetailForm(id, detail);
+  } catch (e) {
+    detail.innerHTML = `<div class="text-rose-600 text-sm">Lỗi: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderHotelDetailForm(id, data) {
+  const p = data.profile;
+  const rooms = data.rooms || [];
+  const amenities = data.amenities || [];
+  const policies = data.policies || {};
+  return `
+    <form class="hotel-form space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="block text-xs font-semibold mb-1">Tên khách sạn</label><input name="name_canonical" value="${escapeHtml(p.name_canonical || '')}" class="w-full border rounded px-2 py-1 text-sm"/></div>
+        <div><label class="block text-xs font-semibold mb-1">Điện thoại</label><input name="phone" value="${escapeHtml(p.phone || '')}" class="w-full border rounded px-2 py-1 text-sm"/></div>
+        <div><label class="block text-xs font-semibold mb-1">Tỉnh/Thành</label><input name="city" value="${escapeHtml(p.city || '')}" class="w-full border rounded px-2 py-1 text-sm"/></div>
+        <div><label class="block text-xs font-semibold mb-1">Quận/Huyện</label><input name="district" value="${escapeHtml(p.district || '')}" class="w-full border rounded px-2 py-1 text-sm"/></div>
+        <div class="col-span-2"><label class="block text-xs font-semibold mb-1">Địa chỉ</label><input name="address" value="${escapeHtml(p.address || '')}" class="w-full border rounded px-2 py-1 text-sm"/></div>
+        <div><label class="block text-xs font-semibold mb-1">Brand voice</label>
+          <select name="brand_voice" class="w-full border rounded px-2 py-1 text-sm">
+            <option value="friendly" ${p.brand_voice === 'friendly' ? 'selected' : ''}>Friendly (thân thiện)</option>
+            <option value="formal" ${p.brand_voice === 'formal' ? 'selected' : ''}>Formal (trang trọng)</option>
+            <option value="luxury" ${p.brand_voice === 'luxury' ? 'selected' : ''}>Luxury (sang trọng)</option>
+          </select>
+        </div>
+        <div><label class="block text-xs font-semibold mb-1">Product group</label>
+          <select name="product_group" class="w-full border rounded px-2 py-1 text-sm">
+            <option value="nightly_stay" ${p.product_group === 'nightly_stay' ? 'selected' : ''}>Nightly stay</option>
+            <option value="monthly_apartment" ${p.product_group === 'monthly_apartment' ? 'selected' : ''}>Monthly apartment</option>
+          </select>
+        </div>
+        <div class="col-span-2"><label class="block text-xs font-semibold mb-1">Tóm tắt (bot dùng khi tư vấn)</label>
+          <textarea name="ai_summary_vi" rows="3" class="w-full border rounded px-2 py-1 text-sm">${escapeHtml(p.ai_summary_vi || '')}</textarea>
+        </div>
+        <div class="col-span-2"><label class="block text-xs font-semibold mb-1">USP (top 3, mỗi dòng 1 cái)</label>
+          <textarea name="usp_top3_raw" rows="3" class="w-full border rounded px-2 py-1 text-sm">${escapeHtml((p.usp_top3 || []).join('\n'))}</textarea>
+        </div>
+        ${p.product_group === 'monthly_apartment' ? `
+        <div><label class="block text-xs font-semibold mb-1">Giá thuê tháng TỪ (VND)</label><input name="monthly_price_from" type="number" value="${p.monthly_price_from || ''}" class="w-full border rounded px-2 py-1 text-sm"/></div>
+        <div><label class="block text-xs font-semibold mb-1">Giá thuê tháng ĐẾN (VND)</label><input name="monthly_price_to" type="number" value="${p.monthly_price_to || ''}" class="w-full border rounded px-2 py-1 text-sm"/></div>
+        <div><label class="block text-xs font-semibold mb-1">Thuê tối thiểu (tháng)</label><input name="min_stay_months" type="number" value="${p.min_stay_months || ''}" class="w-full border rounded px-2 py-1 text-sm"/></div>
+        <div><label class="block text-xs font-semibold mb-1">Cọc (tháng)</label><input name="deposit_months" type="number" value="${p.deposit_months || ''}" class="w-full border rounded px-2 py-1 text-sm"/></div>
+        ` : ''}
+      </div>
+      <div class="flex gap-2 items-center pt-2 border-t border-slate-200">
+        <button type="button" class="hotel-save bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-4 py-1.5 rounded font-medium">💾 Lưu</button>
+        <label class="flex items-center gap-1 text-xs text-slate-600">
+          <input type="checkbox" name="manual_override" ${p.manual_override ? 'checked' : ''} class="hotel-override"/>
+          Manual override (ETL không ghi đè)
+        </label>
+      </div>
+
+      <div class="pt-3 border-t border-slate-200">
+        <h4 class="font-semibold text-sm mb-2">🛏️ Phòng (${rooms.length})</h4>
+        <div class="space-y-1 text-xs">
+          ${rooms.map(r => `<div class="flex items-center gap-2 bg-slate-50 p-2 rounded">
+            <span class="flex-1"><b>${escapeHtml(r.display_name_vi)}</b> — ${r.price_weekday?.toLocaleString('vi-VN') || '?'}đ · ${r.max_guests} khách${r.price_hourly ? ' · giờ ' + r.price_hourly.toLocaleString('vi-VN') + 'đ' : ''}</span>
+            <button type="button" class="room-delete text-rose-600 hover:underline" data-rid="${r.id}">xoá</button>
+          </div>`).join('') || '<div class="text-slate-400">Chưa có phòng nào. Add bằng form bên dưới ↓</div>'}
+        </div>
+        <div class="mt-2 flex gap-1 items-end text-xs">
+          <input class="room-new-name border rounded px-2 py-1 flex-1" placeholder="Tên phòng..."/>
+          <input class="room-new-price border rounded px-2 py-1 w-28" type="number" placeholder="Giá/đêm"/>
+          <input class="room-new-guests border rounded px-2 py-1 w-16" type="number" placeholder="Khách" value="2"/>
+          <button type="button" class="room-add bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded">+ Thêm</button>
+        </div>
+      </div>
+
+      <div class="pt-3 border-t border-slate-200">
+        <h4 class="font-semibold text-sm mb-2">✨ Tiện nghi (${amenities.length})</h4>
+        <div class="flex flex-wrap gap-1 text-xs">
+          ${amenities.map(a => `<span class="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded">${escapeHtml(a.name_vi)}${a.free ? ' 🆓' : ''} <button type="button" class="amenity-delete ml-1 text-rose-600" data-aid="${a.id}">✗</button></span>`).join('') || '<span class="text-slate-400">Chưa có.</span>'}
+        </div>
+        <div class="mt-2 flex gap-1 text-xs">
+          <input class="amenity-new-name border rounded px-2 py-1 flex-1" placeholder="Tên tiện nghi..."/>
+          <select class="amenity-new-cat border rounded px-2 py-1">
+            <option value="general">General</option>
+            <option value="room">Phòng</option>
+            <option value="pool">Hồ bơi</option>
+            <option value="gym">Gym</option>
+            <option value="spa">Spa</option>
+            <option value="food">F&B</option>
+          </select>
+          <label class="flex items-center gap-1"><input type="checkbox" class="amenity-new-free" checked/>Miễn phí</label>
+          <button type="button" class="amenity-add bg-blue-600 text-white px-3 py-1 rounded">+</button>
+        </div>
+      </div>
+
+      <div class="pt-3 border-t border-slate-200">
+        <h4 class="font-semibold text-sm mb-2">📋 Chính sách</h4>
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <input name="pol_checkin" value="${escapeHtml(policies.checkin_time || '')}" placeholder="Check-in (14:00)" class="border rounded px-2 py-1"/>
+          <input name="pol_checkout" value="${escapeHtml(policies.checkout_time || '')}" placeholder="Check-out (12:00)" class="border rounded px-2 py-1"/>
+          <input name="pol_deposit" type="number" value="${policies.deposit_percent || ''}" placeholder="Cọc %" class="border rounded px-2 py-1"/>
+          <label class="flex items-center gap-1"><input name="pol_pet" type="checkbox" ${policies.pet_allowed ? 'checked' : ''}/>Cho phép thú cưng</label>
+          <textarea name="pol_cancel" placeholder="Chính sách huỷ..." class="border rounded px-2 py-1 col-span-2" rows="2">${escapeHtml(policies.cancellation_text || '')}</textarea>
+        </div>
+        <button type="button" class="pol-save mt-2 bg-blue-600 hover:bg-blue-700 text-white text-sm px-3 py-1 rounded">Lưu policies</button>
+      </div>
+    </form>`;
+}
+
+function wireHotelDetailForm(hotelId, root) {
+  const form = root.querySelector('.hotel-form');
+  // Save profile
+  root.querySelector('.hotel-save')?.addEventListener('click', async () => {
+    const fd = new FormData(form);
+    const body = Object.fromEntries(fd.entries());
+    body.usp_top3 = (body.usp_top3_raw || '').split('\n').map(s => s.trim()).filter(Boolean);
+    delete body.usp_top3_raw;
+    ['monthly_price_from', 'monthly_price_to', 'min_stay_months', 'deposit_months'].forEach(k => {
+      if (body[k]) body[k] = parseInt(body[k], 10);
+    });
+    try {
+      await api(`/hotels-editor/${hotelId}`, { method: 'PUT', body: JSON.stringify(body) });
+      alert('✓ Đã lưu + bật manual_override');
+      loadHotelsEditor();
+    } catch (e) { alert('Lỗi: ' + e.message); }
+  });
+  // Toggle override
+  root.querySelector('.hotel-override')?.addEventListener('change', async (e) => {
+    try {
+      await api(`/hotels-editor/${hotelId}/toggle-override`, { method: 'POST', body: JSON.stringify({ enable: e.target.checked }) });
+    } catch (err) { alert('Lỗi: ' + err.message); }
+  });
+  // Add room
+  root.querySelector('.room-add')?.addEventListener('click', async () => {
+    const name = root.querySelector('.room-new-name').value.trim();
+    const price = parseInt(root.querySelector('.room-new-price').value || '0', 10);
+    const guests = parseInt(root.querySelector('.room-new-guests').value || '2', 10);
+    if (!name) return alert('Nhập tên phòng');
+    try {
+      await api(`/hotels-editor/${hotelId}/room`, { method: 'POST', body: JSON.stringify({ display_name_vi: name, price_weekday: price, price_weekend: price, max_guests: guests }) });
+      toggleHotelDetail(hotelId, root.closest('[data-hotel-id]'));
+      toggleHotelDetail(hotelId, root.closest('[data-hotel-id]'));
+    } catch (e) { alert('Lỗi: ' + e.message); }
+  });
+  // Delete room
+  root.querySelectorAll('.room-delete').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Xoá phòng này?')) return;
+      try {
+        await api(`/hotels-editor/${hotelId}/room/${btn.dataset.rid}`, { method: 'DELETE' });
+        toggleHotelDetail(hotelId, root.closest('[data-hotel-id]'));
+        toggleHotelDetail(hotelId, root.closest('[data-hotel-id]'));
+      } catch (e) { alert('Lỗi: ' + e.message); }
+    });
+  });
+  // Add amenity
+  root.querySelector('.amenity-add')?.addEventListener('click', async () => {
+    const name = root.querySelector('.amenity-new-name').value.trim();
+    if (!name) return;
+    const cat = root.querySelector('.amenity-new-cat').value;
+    const free = root.querySelector('.amenity-new-free').checked;
+    try {
+      await api(`/hotels-editor/${hotelId}/amenity`, { method: 'POST', body: JSON.stringify({ name_vi: name, category: cat, free }) });
+      toggleHotelDetail(hotelId, root.closest('[data-hotel-id]'));
+      toggleHotelDetail(hotelId, root.closest('[data-hotel-id]'));
+    } catch (e) { alert('Lỗi: ' + e.message); }
+  });
+  // Delete amenity
+  root.querySelectorAll('.amenity-delete').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      try {
+        await api(`/hotels-editor/${hotelId}/amenity/${btn.dataset.aid}`, { method: 'DELETE' });
+        toggleHotelDetail(hotelId, root.closest('[data-hotel-id]'));
+        toggleHotelDetail(hotelId, root.closest('[data-hotel-id]'));
+      } catch (e) { alert('Lỗi: ' + e.message); }
+    });
+  });
+  // Save policies
+  root.querySelector('.pol-save')?.addEventListener('click', async () => {
+    const fd = new FormData(form);
+    const body = {
+      checkin_time: fd.get('pol_checkin') || null,
+      checkout_time: fd.get('pol_checkout') || null,
+      deposit_percent: fd.get('pol_deposit') ? parseInt(fd.get('pol_deposit'), 10) : null,
+      pet_allowed: fd.get('pol_pet') === 'on',
+      cancellation_text: fd.get('pol_cancel') || null,
+    };
+    try {
+      await api(`/hotels-editor/${hotelId}/policies`, { method: 'PUT', body: JSON.stringify(body) });
+      alert('✓ Đã lưu policies');
+    } catch (e) { alert('Lỗi: ' + e.message); }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// Đợt 3.3: Conversations Viewer
+// ═══════════════════════════════════════════════════════════
+const convoState = { selected: null };
+
+async function loadConversations() {
+  const q = document.getElementById('convo-search')?.value || '';
+  try {
+    const r = await api('/conversations/senders' + (q ? '?q=' + encodeURIComponent(q) : ''));
+    renderConvoSenders(r.senders || []);
+  } catch (e) {
+    document.getElementById('convo-senders').innerHTML = `<div class="p-3 text-rose-600 text-xs">Lỗi: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderConvoSenders(senders) {
+  const list = document.getElementById('convo-senders');
+  if (!senders.length) {
+    list.innerHTML = '<div class="p-4 text-slate-400 text-xs">Chưa có hội thoại.</div>';
+    return;
+  }
+  list.innerHTML = senders.map(s => `
+    <div class="convo-item p-2 border-b border-slate-100 cursor-pointer hover:bg-slate-50" data-sender="${escapeHtml(s.sender_id)}">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-xs font-semibold text-slate-700">${escapeHtml(s.guest_name || s.sender_id.slice(-10))}</span>
+        <span class="text-[10px] text-slate-400">${formatRelTime(s.last_ts)}</span>
+      </div>
+      <div class="text-[11px] text-slate-500 truncate">${s.last_role === 'bot' ? '🤖 ' : '👤 '}${escapeHtml((s.last_msg || '').slice(0, 80))}</div>
+      <div class="text-[10px] text-slate-400">${s.user_msgs}u / ${s.bot_msgs}b${s.phone ? ' · 📞 ' + escapeHtml(s.phone) : ''}</div>
+    </div>
+  `).join('');
+  list.querySelectorAll('.convo-item').forEach(el => {
+    el.addEventListener('click', () => {
+      list.querySelectorAll('.convo-item').forEach(x => x.classList.remove('bg-blue-50'));
+      el.classList.add('bg-blue-50');
+      loadConvoMessages(el.dataset.sender);
+    });
+  });
+}
+
+async function loadConvoMessages(senderId) {
+  convoState.selected = senderId;
+  const header = document.getElementById('convo-header');
+  const box = document.getElementById('convo-messages');
+  header.textContent = 'Đang tải...';
+  box.innerHTML = '';
+  try {
+    const r = await api('/conversations/messages/' + encodeURIComponent(senderId));
+    const guest = r.guest;
+    const phone = r.phone;
+    header.innerHTML = `
+      <div class="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <b>${escapeHtml(guest?.name || senderId)}</b>
+          ${phone ? `<span class="ml-2 text-emerald-700 text-xs">📞 ${escapeHtml(phone.phone || phone)}</span>` : ''}
+          <span class="text-xs text-slate-400 ml-2">${r.messages?.length || 0} tin nhắn</span>
+        </div>
+        <div class="flex gap-1">
+          <button class="convo-pause bg-amber-500 hover:bg-amber-600 text-white text-xs px-2 py-1 rounded">⏸ Pause bot</button>
+        </div>
+      </div>`;
+    box.innerHTML = r.messages.map(m => `
+      <div class="flex ${m.role === 'user' ? 'justify-start' : 'justify-end'}">
+        <div class="max-w-[75%] ${m.role === 'user' ? 'bg-white border border-slate-200' : 'bg-blue-500 text-white'} px-3 py-2 rounded-lg">
+          <div class="text-sm whitespace-pre-wrap">${escapeHtml(m.message || '')}</div>
+          <div class="text-[10px] ${m.role === 'user' ? 'text-slate-400' : 'text-blue-100'} mt-1">${m.intent || ''} · ${formatRelTime(m.created_at)}</div>
+        </div>
+      </div>
+    `).join('');
+    box.scrollTop = box.scrollHeight;
+    header.querySelector('.convo-pause')?.addEventListener('click', async () => {
+      try { await api('/conversations/' + encodeURIComponent(senderId) + '/pause', { method: 'POST' });
+        alert('Bot đã pause cho sender này');
+      } catch (e) { alert('Lỗi: ' + e.message); }
+    });
+  } catch (e) {
+    header.innerHTML = `<span class="text-rose-600">Lỗi: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+document.getElementById('convo-search')?.addEventListener('input', debounce(loadConversations, 300));
+
+function debounce(fn, ms) {
+  let t;
+  return function(...args) { clearTimeout(t); t = setTimeout(() => fn.apply(this, args), ms); };
+}
 
 // ====== Init ======
 checkAuth();
