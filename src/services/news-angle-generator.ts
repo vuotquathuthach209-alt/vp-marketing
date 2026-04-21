@@ -20,6 +20,7 @@ import { smartCascade } from './smart-cascade';
 import { fetchOgImage } from './news-ingest';
 import { generateImagePollinations } from './pollinations';
 import { getSourceById } from './news-sources';
+import { runSafetyGate } from './news-safety';
 
 const BATCH_SIZE = 5;           // generate 5 drafts/run (Gemini free tier thoải mái)
 const SONDER_HOTEL_ID = 1;      // Default Sonder page owner cho multi-tenant sau
@@ -185,7 +186,8 @@ function buildImagePrompt(opts: { angleHint?: string; title: string; region?: st
 export interface DraftResult {
   article_id: number;
   draft_id?: number;
-  status: 'created' | 'angle_fail' | 'image_fail' | 'db_fail' | 'already_exists';
+  status: 'created' | 'safety_rejected' | 'angle_fail' | 'image_fail' | 'db_fail' | 'already_exists';
+  safety_reason?: string;
   error?: string;
 }
 
@@ -220,7 +222,36 @@ export async function generateDraftForArticle(articleId: number, hotelId: number
   // 2. Apply Sonder spin
   const spin = applySonderSpin(ang.angle);
 
-  // 3. Resolve image (fire-and-forget for now, don't block draft creation)
+  // 3. Phase N-4: SAFETY GATE trên bài đăng đầy đủ (angle + CTA + hashtags)
+  const safety = await runSafetyGate(spin.draft);
+  const now = Date.now();
+
+  if (!safety.passed) {
+    // Auto-reject: lưu draft để admin xem tại sao bị reject + học pattern
+    try {
+      const result = db.prepare(
+        `INSERT INTO news_post_drafts
+         (article_id, hotel_id, draft_angle, draft_post, hashtags,
+          ai_provider, ai_tokens_used, safety_flags, auto_rejected,
+          rejection_reason, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'rejected', ?)`
+      ).run(
+        articleId, hotelId, ang.angle, spin.draft, JSON.stringify(spin.hashtags),
+        ang.provider, ang.tokens, JSON.stringify(safety),
+        safety.failure_reason || 'safety_fail', now
+      );
+      const draftId = Number(result.lastInsertRowid);
+      db.prepare(
+        `UPDATE news_articles SET status='safety_failed', status_note=?, last_state_change_at=? WHERE id=?`
+      ).run(safety.failure_reason || 'safety_fail', now, articleId);
+      console.log(`[news-angle] SAFETY REJECT draft #${draftId} article #${articleId}: ${safety.failure_reason}`);
+      return { article_id: articleId, draft_id: draftId, status: 'safety_rejected', safety_reason: safety.failure_reason };
+    } catch (e: any) {
+      return { article_id: articleId, status: 'db_fail', error: e.message };
+    }
+  }
+
+  // 4. Resolve image (chỉ cho drafts passed safety — tiết kiệm Pollinations)
   const img = await resolveImage({
     articleUrl: article.url,
     sourceId: article.source,
@@ -229,18 +260,17 @@ export async function generateDraftForArticle(articleId: number, hotelId: number
     region: article.region,
   });
 
-  // 4. Insert draft
-  const now = Date.now();
+  // 5. Insert draft status='pending' (chờ admin review)
   try {
     const result = db.prepare(
       `INSERT INTO news_post_drafts
        (article_id, hotel_id, draft_angle, draft_post, image_url, hashtags,
-        ai_provider, ai_tokens_used, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`
+        ai_provider, ai_tokens_used, safety_flags, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`
     ).run(
       articleId, hotelId, ang.angle, spin.draft,
       img?.url || null, JSON.stringify(spin.hashtags),
-      ang.provider, ang.tokens, now
+      ang.provider, ang.tokens, JSON.stringify(safety), now
     );
     const draftId = Number(result.lastInsertRowid);
 
@@ -249,7 +279,7 @@ export async function generateDraftForArticle(articleId: number, hotelId: number
       `UPDATE news_articles SET status='pending_review', last_state_change_at=? WHERE id=?`
     ).run(now, articleId);
 
-    console.log(`[news-angle] draft #${draftId} created for article #${articleId} img=${img?.source || 'none'}`);
+    console.log(`[news-angle] draft #${draftId} created for article #${articleId} img=${img?.source || 'none'} safety=ok`);
     return { article_id: articleId, draft_id: draftId, status: 'created' };
   } catch (e: any) {
     return { article_id: articleId, status: 'db_fail', error: e.message };
@@ -260,11 +290,12 @@ export async function generateDraftForArticle(articleId: number, hotelId: number
 export async function generateDraftsBatch(limit = BATCH_SIZE, hotelId: number = SONDER_HOTEL_ID): Promise<{
   processed: number;
   created: number;
+  safety_rejected: number;
   angle_fail: number;
   db_fail: number;
   already_exists: number;
 }> {
-  const result = { processed: 0, created: 0, angle_fail: 0, db_fail: 0, already_exists: 0 };
+  const result = { processed: 0, created: 0, safety_rejected: 0, angle_fail: 0, db_fail: 0, already_exists: 0 };
   const pending = db.prepare(
     `SELECT id FROM news_articles WHERE status='angle_generated'
      ORDER BY impact_score DESC, published_at DESC LIMIT ?`
@@ -274,6 +305,7 @@ export async function generateDraftsBatch(limit = BATCH_SIZE, hotelId: number = 
     const r = await generateDraftForArticle(row.id, hotelId);
     result.processed++;
     if (r.status === 'created') result.created++;
+    else if (r.status === 'safety_rejected') result.safety_rejected++;
     else if (r.status === 'angle_fail') result.angle_fail++;
     else if (r.status === 'db_fail') result.db_fail++;
     else if (r.status === 'already_exists') result.already_exists++;
