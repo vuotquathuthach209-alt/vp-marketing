@@ -350,5 +350,32 @@ export function startScheduler() {
     }
   });
 
+  // Zalo OA token refresh — Zalo tokens live ~25h, refresh mỗi 20h cho safe
+  cron.schedule('0 */20 * * *', async () => {
+    try {
+      const { refreshZaloToken } = require('./zalo');
+      const rows = db.prepare(`SELECT * FROM zalo_oa WHERE enabled = 1`).all() as any[];
+      let refreshed = 0, failed = 0;
+      for (const row of rows) {
+        // Decrypt tokens từ row (refreshZaloToken expect raw ZaloOA with decrypted tokens)
+        const { decrypt } = require('./crypto');
+        const oa = {
+          ...row,
+          access_token: decrypt(row.access_token) || '',
+          refresh_token: decrypt(row.refresh_token),
+          app_secret: decrypt(row.app_secret),
+        };
+        const ok = await refreshZaloToken(oa);
+        if (ok) refreshed++;
+        else failed++;
+      }
+      if (rows.length > 0) {
+        console.log(`[scheduler] zalo-refresh: ${refreshed} OK, ${failed} failed (of ${rows.length})`);
+      }
+    } catch (e: any) {
+      console.error('[scheduler] zalo-refresh error:', e?.message);
+    }
+  });
+
   console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h');
 }

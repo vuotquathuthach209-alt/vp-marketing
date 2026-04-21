@@ -347,6 +347,53 @@ router.get('/low-confidence', (req: AuthRequest, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════
+// Zalo channel stats
+// ═══════════════════════════════════════════════════════════
+router.get('/zalo-stats', (req: AuthRequest, res) => {
+  try {
+    const { since } = getTimeRange(req);
+    const total = db.prepare(
+      `SELECT COUNT(*) as n FROM conversation_memory WHERE sender_id LIKE 'zalo:%' AND created_at >= ?`
+    ).get(since) as any;
+    const unique = db.prepare(
+      `SELECT COUNT(DISTINCT sender_id) as n FROM conversation_memory WHERE sender_id LIKE 'zalo:%' AND created_at >= ?`
+    ).get(since) as any;
+    const botReplies = db.prepare(
+      `SELECT COUNT(*) as n FROM conversation_memory WHERE sender_id LIKE 'zalo:%' AND role='bot' AND created_at >= ?`
+    ).get(since) as any;
+    // Avg latency: measure time between consecutive user → bot msgs for Zalo senders
+    const latencyRows = db.prepare(
+      `SELECT
+         u.sender_id, u.created_at as user_ts,
+         (SELECT MIN(b.created_at) FROM conversation_memory b
+          WHERE b.sender_id = u.sender_id AND b.role = 'bot' AND b.id > u.id) as bot_ts
+       FROM conversation_memory u
+       WHERE u.sender_id LIKE 'zalo:%' AND u.role = 'user' AND u.created_at >= ?
+       LIMIT 100`
+    ).all(since) as any[];
+    const latencies: number[] = [];
+    for (const r of latencyRows) {
+      if (r.bot_ts && r.user_ts) {
+        const diff = r.bot_ts - r.user_ts;
+        if (diff > 0 && diff < 30_000) latencies.push(diff);   // ignore outliers
+      }
+    }
+    const avgLatency = latencies.length > 0
+      ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)
+      : 0;
+    res.json({
+      period_days: Math.round((Date.now() - since) / 86400_000),
+      total_msgs: total?.n || 0,
+      unique_users: unique?.n || 0,
+      bot_replies: botReplies?.n || 0,
+      avg_latency_ms: avgLatency,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
 // TIMELINE — messages per hour last 24h
 // ═══════════════════════════════════════════════════════════
 router.get('/timeline', (req: AuthRequest, res) => {

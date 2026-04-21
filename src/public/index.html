@@ -96,6 +96,7 @@
         <button data-tab="conversations" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="messages-square"></i><span>Hội thoại</span></button>
         <button data-tab="botmonitor" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="activity"></i><span>Bot Monitor</span></button>
         <button data-tab="contentintel" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="sparkles"></i><span>Content Intel</span></button>
+        <button data-tab="channels" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="radio-tower"></i><span>Kênh liên lạc</span></button>
         <button data-tab="training" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="graduation-cap"></i><span>Duyệt Training</span><span id="training-badge" class="ml-auto hidden text-xs bg-amber-500 text-slate-900 px-1.5 py-0.5 rounded-full font-bold"></span></button>
         <button data-tab="news" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="newspaper"></i><span>News → Post</span><span id="news-badge" class="ml-auto hidden text-xs bg-indigo-500 text-white px-1.5 py-0.5 rounded-full font-bold"></span></button>
         <button data-tab="room-images" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="camera"></i><span>Ảnh phòng</span></button>
@@ -652,6 +653,94 @@
             </div>
           </div>
           <div id="ci-remix-list" class="space-y-3 max-w-6xl"></div>
+        </div>
+      </section>
+
+      <!-- CHANNELS TAB — FB + Zalo + Website + Google Business -->
+      <section data-panel="channels" class="panel hidden">
+        <div class="mb-4 max-w-6xl">
+          <h2 class="text-2xl font-bold mb-2">📡 Kênh liên lạc</h2>
+          <p class="text-slate-500 text-sm">Bot hoạt động đa kênh: Facebook Messenger + Zalo OA + Website widget + Google Business. Mỗi kênh độc lập config, bot reply giống nhau nhờ chung brain.</p>
+        </div>
+
+        <!-- Channel status overview -->
+        <div class="grid grid-cols-4 gap-3 mb-4 max-w-6xl">
+          <div class="bg-white rounded-lg p-3 border border-slate-200">
+            <div class="flex items-center gap-2 mb-1"><span class="text-2xl">📘</span><span class="font-bold text-sm">Facebook</span></div>
+            <div id="ch-fb-status" class="text-xs">⏳</div>
+          </div>
+          <div class="bg-white rounded-lg p-3 border-2 border-sky-300 bg-sky-50">
+            <div class="flex items-center gap-2 mb-1"><span class="text-2xl">💬</span><span class="font-bold text-sm">Zalo OA</span></div>
+            <div id="ch-zalo-status" class="text-xs">⏳</div>
+          </div>
+          <div class="bg-white rounded-lg p-3 border border-dashed border-slate-300 opacity-60">
+            <div class="flex items-center gap-2 mb-1"><span class="text-2xl">🌐</span><span class="font-bold text-sm">Website widget</span></div>
+            <div class="text-xs text-slate-400">Phase 2</div>
+          </div>
+          <div class="bg-white rounded-lg p-3 border border-dashed border-slate-300 opacity-60">
+            <div class="flex items-center gap-2 mb-1"><span class="text-2xl">📍</span><span class="font-bold text-sm">Google Business</span></div>
+            <div class="text-xs text-slate-400">Phase 2</div>
+          </div>
+        </div>
+
+        <!-- ZALO OA CONFIG -->
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
+          <div class="flex items-start justify-between mb-3">
+            <div>
+              <h3 class="font-bold text-slate-800">💬 Zalo Official Account</h3>
+              <p class="text-xs text-slate-500 mt-1">70% khách VN dùng Zalo. Setup 1 lần, bot tự nhận + trả tin nhắn Zalo giống FB. <a href="#" id="zalo-show-guide" class="text-blue-600 hover:underline">Xem hướng dẫn setup chi tiết</a></p>
+            </div>
+          </div>
+
+          <!-- Setup guide (toggle) -->
+          <div id="zalo-guide" class="hidden bg-amber-50 border border-amber-200 rounded p-3 mb-3 text-xs text-amber-900 space-y-2">
+            <h4 class="font-bold text-sm">🛠 Setup Zalo OA trong 5 bước</h4>
+            <ol class="list-decimal list-inside space-y-1">
+              <li><b>Register Zalo OA</b>: Vào <a href="https://oa.zalo.me" target="_blank" class="text-blue-700 underline">oa.zalo.me</a> → tạo Official Account cho khách sạn (free nếu < 300 fans, paid 99k/tháng ≥ 300 fans)</li>
+              <li><b>Create Zalo App</b>: Vào <a href="https://developers.zalo.me" target="_blank" class="text-blue-700 underline">developers.zalo.me</a> → tạo app → chọn OA vừa tạo → lấy <b>App ID</b> + <b>App Secret</b></li>
+              <li><b>Get Access Token + Refresh Token</b>: Trong Zalo Dev Console, tab "Official Account API" → Generate access_token 25h + refresh_token (dài hạn)</li>
+              <li><b>Set webhook URL</b>: Trong app config, set webhook: <code class="bg-white px-1 rounded font-mono">https://app.sondervn.com/webhook/zalo</code> → chọn events: <code>user_send_text</code>, <code>user_send_message</code>, <code>user_send_image</code></li>
+              <li><b>Điền form bên dưới</b>: OA ID, Access Token, Refresh Token, App Secret → Save → Test</li>
+            </ol>
+            <p class="pt-2 border-t border-amber-300"><b>⚡ Auto-refresh</b>: bot tự refresh access_token mỗi 20h qua cron — không cần manual.</p>
+          </div>
+
+          <!-- Add new Zalo OA form -->
+          <div class="grid grid-cols-2 gap-3 mb-3">
+            <div><label class="block text-xs font-semibold mb-1">OA ID <span class="text-rose-600">*</span></label><input id="zalo-oa-id" placeholder="VD: 1234567890" class="w-full border rounded px-2 py-1 text-sm font-mono"/></div>
+            <div><label class="block text-xs font-semibold mb-1">OA Name</label><input id="zalo-oa-name" placeholder="VD: Sonder Airport" class="w-full border rounded px-2 py-1 text-sm"/></div>
+            <div class="col-span-2"><label class="block text-xs font-semibold mb-1">Access Token <span class="text-rose-600">*</span></label><input id="zalo-access-token" type="password" placeholder="Từ Zalo Dev Console" class="w-full border rounded px-2 py-1 text-sm font-mono"/></div>
+            <div><label class="block text-xs font-semibold mb-1">Refresh Token</label><input id="zalo-refresh-token" type="password" placeholder="(để auto-refresh)" class="w-full border rounded px-2 py-1 text-sm font-mono"/></div>
+            <div><label class="block text-xs font-semibold mb-1">App Secret</label><input id="zalo-app-secret" type="password" placeholder="(để verify signature)" class="w-full border rounded px-2 py-1 text-sm font-mono"/></div>
+          </div>
+          <div class="flex gap-2 items-center">
+            <button id="btn-zalo-save" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-4 py-1.5 rounded font-medium">💾 Lưu</button>
+            <span id="zalo-save-status" class="text-sm text-slate-600"></span>
+          </div>
+
+          <!-- Zalo OA list -->
+          <div class="mt-4 border-t border-slate-200 pt-3">
+            <h4 class="font-semibold text-sm mb-2">📋 Zalo OA đã config:</h4>
+            <div id="zalo-list" class="space-y-2"></div>
+          </div>
+
+          <!-- Send test -->
+          <div class="mt-4 border-t border-slate-200 pt-3">
+            <h4 class="font-semibold text-sm mb-2">🧪 Gửi test:</h4>
+            <div class="flex gap-2">
+              <input id="zalo-test-user-id" placeholder="Zalo User ID của admin" class="flex-1 border rounded px-2 py-1 text-sm font-mono"/>
+              <input id="zalo-test-text" placeholder="Hello từ bot" class="flex-1 border rounded px-2 py-1 text-sm"/>
+              <select id="zalo-test-oa" class="border rounded px-2 py-1 text-sm"></select>
+              <button id="btn-zalo-send-test" class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-3 py-1 rounded">Gửi</button>
+            </div>
+            <p class="text-[10px] text-slate-400 mt-1">Tip: Lấy Zalo User ID = chat vào OA trước, xem webhook log để lấy sender.id</p>
+          </div>
+
+          <!-- Stats -->
+          <div class="mt-4 border-t border-slate-200 pt-3">
+            <h4 class="font-semibold text-sm mb-2">📊 Zalo conversations (last 7d):</h4>
+            <div id="zalo-stats" class="text-xs"></div>
+          </div>
         </div>
       </section>
 

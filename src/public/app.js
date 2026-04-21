@@ -134,6 +134,7 @@ function switchTab(tab) {
   if (tab === 'conversations') loadConversations();
   if (tab === 'botmonitor') loadBotMonitor();
   if (tab === 'contentintel') loadContentIntel();
+  if (tab === 'channels') loadChannels();
   if (tab === 'otadb') loadOtaConfig();
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
@@ -4760,6 +4761,160 @@ document.getElementById('news-gen-drafts-now')?.addEventListener('click', async 
 
 // Auto-refresh stats 60s
 setInterval(() => { if (document.visibilityState === 'visible') loadNewsStats().catch(() => {}); }, 60_000);
+
+// ═══════════════════════════════════════════════════════════
+// Channels tab — FB + Zalo + Website + Google Business
+// ═══════════════════════════════════════════════════════════
+async function loadChannels() {
+  await Promise.all([loadFbStatus(), loadZaloList(), loadZaloStats()]);
+}
+
+async function loadFbStatus() {
+  try {
+    const r = await api('/settings/pages');
+    const count = Array.isArray(r) ? r.length : 0;
+    document.getElementById('ch-fb-status').innerHTML = count > 0
+      ? `<span class="text-emerald-600 font-semibold">🟢 ${count} pages active</span>`
+      : `<span class="text-amber-600">⚠️ Chưa config page</span>`;
+  } catch (e) {
+    document.getElementById('ch-fb-status').innerHTML = '<span class="text-rose-600">Error</span>';
+  }
+}
+
+async function loadZaloList() {
+  try {
+    const r = await api('/zalo/list');
+    const list = document.getElementById('zalo-list');
+    const testSelect = document.getElementById('zalo-test-oa');
+    const status = document.getElementById('ch-zalo-status');
+
+    if (!r.items?.length) {
+      list.innerHTML = '<div class="text-slate-500 text-xs p-2">Chưa có OA nào. Điền form ở trên để config.</div>';
+      testSelect.innerHTML = '<option value="">(chưa có)</option>';
+      status.innerHTML = '<span class="text-amber-600">⚠️ Chưa config OA</span>';
+      return;
+    }
+
+    status.innerHTML = `<span class="text-emerald-600 font-semibold">🟢 ${r.items.length} OA active</span>`;
+
+    list.innerHTML = r.items.map(oa => `<div class="bg-slate-50 border border-slate-200 rounded p-2 flex items-center justify-between gap-2">
+      <div class="flex-1">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="font-mono text-xs bg-white px-2 py-0.5 rounded border">${escapeHtml(oa.oa_id)}</span>
+          ${oa.oa_name ? `<span class="text-sm font-semibold">${escapeHtml(oa.oa_name)}</span>` : ''}
+          ${oa.enabled ? '<span class="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 rounded">enabled</span>' : '<span class="text-[10px] bg-slate-200 px-1.5 rounded">disabled</span>'}
+          <span class="text-[10px] text-slate-400">token: ${escapeHtml(oa.access_token || '-')}</span>
+          ${oa.app_secret === '***' ? '<span class="text-[10px] bg-blue-100 text-blue-700 px-1.5 rounded">✓ signature verified</span>' : ''}
+        </div>
+      </div>
+      <div class="flex gap-1">
+        <button class="zalo-test bg-blue-600 hover:bg-blue-700 text-white text-xs px-2 py-1 rounded" data-id="${escapeHtml(oa.oa_id)}">🔌 Test</button>
+        <button class="zalo-disable bg-rose-100 hover:bg-rose-200 text-rose-700 text-xs px-2 py-1 rounded" data-id="${escapeHtml(oa.oa_id)}">Disable</button>
+      </div>
+    </div>`).join('');
+
+    testSelect.innerHTML = r.items.map(oa => `<option value="${escapeHtml(oa.oa_id)}">${escapeHtml(oa.oa_name || oa.oa_id)}</option>`).join('');
+
+    list.querySelectorAll('.zalo-test').forEach(btn => btn.addEventListener('click', () => testZalo(btn.dataset.id)));
+    list.querySelectorAll('.zalo-disable').forEach(btn => btn.addEventListener('click', () => disableZalo(btn.dataset.id)));
+  } catch (e) {
+    document.getElementById('zalo-list').innerHTML = `<div class="text-rose-600 text-xs">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function loadZaloStats() {
+  try {
+    const r = await api('/bot-monitor/zalo-stats?days=7');
+    const box = document.getElementById('zalo-stats');
+    if (!r.total_msgs) {
+      box.innerHTML = '<div class="text-slate-400">Chưa có tin nhắn Zalo nào.</div>';
+      return;
+    }
+    box.innerHTML = `<div class="grid grid-cols-4 gap-2">
+      <div class="bg-emerald-50 rounded p-2 border border-emerald-200">
+        <div class="text-[10px] text-emerald-600 uppercase">Tin nhắn</div>
+        <div class="text-lg font-bold text-emerald-700">${r.total_msgs}</div>
+      </div>
+      <div class="bg-blue-50 rounded p-2 border border-blue-200">
+        <div class="text-[10px] text-blue-600 uppercase">Users</div>
+        <div class="text-lg font-bold text-blue-700">${r.unique_users}</div>
+      </div>
+      <div class="bg-purple-50 rounded p-2 border border-purple-200">
+        <div class="text-[10px] text-purple-600 uppercase">Bot replied</div>
+        <div class="text-lg font-bold text-purple-700">${r.bot_replies}</div>
+      </div>
+      <div class="bg-amber-50 rounded p-2 border border-amber-200">
+        <div class="text-[10px] text-amber-600 uppercase">Avg latency</div>
+        <div class="text-lg font-bold text-amber-700">${r.avg_latency_ms}ms</div>
+      </div>
+    </div>`;
+  } catch (e) {
+    // Endpoint may not exist yet — silent fail
+  }
+}
+
+document.getElementById('btn-zalo-save')?.addEventListener('click', async () => {
+  const status = document.getElementById('zalo-save-status');
+  const oaId = document.getElementById('zalo-oa-id').value.trim();
+  const token = document.getElementById('zalo-access-token').value.trim();
+  if (!oaId || !token) { status.innerHTML = '<span class="text-rose-600">❌ Cần OA ID + Access Token</span>'; return; }
+  status.innerHTML = '⏳ Đang lưu...';
+  try {
+    await api('/zalo/save', {
+      method: 'POST',
+      body: JSON.stringify({
+        oa_id: oaId,
+        oa_name: document.getElementById('zalo-oa-name').value.trim() || null,
+        access_token: token,
+        refresh_token: document.getElementById('zalo-refresh-token').value.trim() || null,
+        app_secret: document.getElementById('zalo-app-secret').value.trim() || null,
+      }),
+    });
+    status.innerHTML = '<span class="text-emerald-600">✅ Đã lưu!</span>';
+    // Clear form
+    ['zalo-oa-id', 'zalo-oa-name', 'zalo-access-token', 'zalo-refresh-token', 'zalo-app-secret'].forEach(id => {
+      document.getElementById(id).value = '';
+    });
+    loadZaloList();
+  } catch (e) { status.innerHTML = `<span class="text-rose-600">❌ ${escapeHtml(e.message)}</span>`; }
+});
+
+async function testZalo(oaId) {
+  try {
+    const r = await api('/zalo/test', { method: 'POST', body: JSON.stringify({ oa_id: oaId }) });
+    if (r.ok) {
+      alert(`✅ Kết nối OK!\nOA: ${r.data?.name || oaId}\nCategory: ${r.data?.cate_name || '-'}\nDescription: ${r.data?.description || '-'}`);
+    } else {
+      alert(`❌ Lỗi: ${r.error} (code ${r.code})`);
+    }
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function disableZalo(oaId) {
+  if (!confirm(`Disable OA ${oaId}?`)) return;
+  try {
+    await api('/zalo/disable', { method: 'POST', body: JSON.stringify({ oa_id: oaId }) });
+    loadZaloList();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+document.getElementById('btn-zalo-send-test')?.addEventListener('click', async () => {
+  const oaId = document.getElementById('zalo-test-oa').value;
+  const userId = document.getElementById('zalo-test-user-id').value.trim();
+  const text = document.getElementById('zalo-test-text').value.trim() || 'Hello từ bot';
+  if (!oaId || !userId) return alert('Cần chọn OA + nhập User ID');
+  try {
+    const r = await api('/zalo/send-test', { method: 'POST', body: JSON.stringify({ oa_id: oaId, user_id: userId, text }) });
+    if (r.ok) alert('✓ Đã gửi!');
+    else alert('❌ ' + r.error);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
+
+document.getElementById('zalo-show-guide')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  const guide = document.getElementById('zalo-guide');
+  guide.classList.toggle('hidden');
+});
 
 // ═══════════════════════════════════════════════════════════
 // v12 Content Intelligence — "Standing on shoulders of giants"
