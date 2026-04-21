@@ -272,6 +272,158 @@ router.get('/feedback/stats', (req: AuthRequest, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// v11: FAQ Discovery + Bulk actions + Similar detection
+// ═══════════════════════════════════════════════════════════════════
+
+/** FAQ Discovery: phân tích câu khách hỏi → gợi ý admin duyệt */
+router.get('/discover-faqs', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const days = Math.min(30, Math.max(1, parseInt((req.query.days as string) || '14', 10)));
+    const minFreq = Math.max(2, parseInt((req.query.min_frequency as string) || '2', 10));
+    const { discoverFaqs } = require('../services/faq-discovery');
+    const r = await discoverFaqs({ hotelId, days, minFrequency: minFreq, limit: 30 });
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Admin click "Add to training" từ 1 FAQ cluster */
+router.post('/discover-faqs/add', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const { question, response, intent_category, notes } = req.body || {};
+    if (!question || typeof question !== 'string' || question.trim().length < 3)
+      return res.status(400).json({ error: 'question required' });
+    if (!response || typeof response !== 'string' || response.trim().length < 3)
+      return res.status(400).json({ error: 'response required' });
+
+    const saved = await saveNewQA({
+      hotelId,
+      question: question.trim(),
+      response: response.trim(),
+      provider: 'admin_edit',
+      intentCategory: intent_category || 'from_faq_discovery',
+      initialTier: 'approved',
+    });
+    if (saved.is_new) {
+      const now = Date.now();
+      db.prepare(`UPDATE qa_training_cache
+        SET approved_at=?, last_reviewed_at=?, admin_user_id=?, admin_notes=?
+        WHERE id = ?`).run(now, now, req.user?.userId || 0,
+          notes || 'Added from FAQ Discovery', saved.qa_cache_id);
+    }
+    res.json({ ok: true, ...saved });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Bulk approve nhiều entries cùng lúc */
+router.post('/bulk/approve', (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const { ids, notes } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids array required' });
+    if (ids.length > 100) return res.status(400).json({ error: 'max 100 ids per batch' });
+
+    const userId = req.user?.userId || 0;
+    const now = Date.now();
+    let approved = 0;
+    for (const rawId of ids) {
+      const id = parseInt(String(rawId), 10);
+      if (isNaN(id)) continue;
+      // Verify ownership
+      const owns = db.prepare(
+        `SELECT id FROM qa_training_cache WHERE id = ? AND hotel_id = ? AND tier = 'pending'`
+      ).get(id, hotelId);
+      if (!owns) continue;
+      approveQA(id, userId, notes || 'bulk approve');
+      approved++;
+    }
+    res.json({ ok: true, approved, requested: ids.length });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Bulk reject */
+router.post('/bulk/reject', (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const { ids, reason } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids array required' });
+    if (!reason || typeof reason !== 'string') return res.status(400).json({ error: 'reason required' });
+    if (ids.length > 100) return res.status(400).json({ error: 'max 100 ids per batch' });
+
+    const userId = req.user?.userId || 0;
+    let rejected = 0;
+    for (const rawId of ids) {
+      const id = parseInt(String(rawId), 10);
+      if (isNaN(id)) continue;
+      const owns = db.prepare(`SELECT id FROM qa_training_cache WHERE id = ? AND hotel_id = ?`).get(id, hotelId);
+      if (!owns) continue;
+      rejectQA(id, userId, reason);
+      rejected++;
+    }
+    res.json({ ok: true, rejected, requested: ids.length });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Detect similar entries — gợi ý admin merge */
+router.get('/similar', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const threshold = Math.max(0.7, Math.min(0.99, parseFloat((req.query.threshold as string) || '0.9')));
+    const { detectSimilarEntries } = require('../services/faq-discovery');
+    const pairs = await detectSimilarEntries(hotelId, threshold);
+    res.json({ threshold, pairs });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Merge 2 entries: giữ entry A, delete entry B, hits_count A += B */
+router.post('/merge', (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const { keep_id, remove_id } = req.body || {};
+    const kid = parseInt(String(keep_id), 10);
+    const rid = parseInt(String(remove_id), 10);
+    if (isNaN(kid) || isNaN(rid) || kid === rid) {
+      return res.status(400).json({ error: 'keep_id và remove_id required và phải khác nhau' });
+    }
+    const keep = db.prepare(`SELECT * FROM qa_training_cache WHERE id = ? AND hotel_id = ?`).get(kid, hotelId) as any;
+    const rem = db.prepare(`SELECT * FROM qa_training_cache WHERE id = ? AND hotel_id = ?`).get(rid, hotelId) as any;
+    if (!keep || !rem) return res.status(404).json({ error: 'entry not found' });
+
+    const now = Date.now();
+    // Merge hits + feedback scores
+    db.prepare(
+      `UPDATE qa_training_cache
+       SET hits_count = hits_count + ?,
+           positive_feedback = positive_feedback + ?,
+           negative_feedback = negative_feedback + ?,
+           last_hit_at = MAX(last_hit_at, ?),
+           last_reviewed_at = ?,
+           admin_notes = COALESCE(admin_notes || '; ', '') || 'Merged #' || ?
+       WHERE id = ?`
+    ).run(rem.hits_count || 0, rem.positive_feedback || 0, rem.negative_feedback || 0,
+      rem.last_hit_at || 0, now, rem.id, kid);
+
+    // Delete the removed entry
+    db.prepare(`DELETE FROM qa_training_cache WHERE id = ?`).run(rid);
+
+    res.json({ ok: true, kept: kid, removed: rid });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
 // Phase 4: Cost dashboard + Threshold tuning + Confidence distribution
 // ═══════════════════════════════════════════════════════════════════
 

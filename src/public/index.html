@@ -737,6 +737,57 @@
           <button id="training-refresh" class="bg-slate-800 hover:bg-slate-900 text-white text-sm px-4 py-1.5 rounded">🔄 Refresh</button>
           <button id="training-promote" class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-1.5 rounded" title="Promote approved → trusted (auto)">⬆️ Auto-promote</button>
           <button id="training-toggle-cost" class="bg-white border px-4 py-1.5 rounded text-sm hover:bg-slate-50">📊 Cost & Tuning</button>
+          <button id="training-toggle-discover" class="bg-purple-600 hover:bg-purple-700 text-white text-sm px-4 py-1.5 rounded">🔍 FAQ Discovery</button>
+          <button id="training-toggle-similar" class="bg-amber-600 hover:bg-amber-700 text-white text-sm px-4 py-1.5 rounded">🔗 Detect Similar</button>
+        </div>
+
+        <!-- FAQ DISCOVERY panel (v11) -->
+        <div id="faq-discover-panel" class="hidden bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
+          <div class="flex items-start justify-between mb-3">
+            <div>
+              <h3 class="font-bold text-slate-800">🔍 FAQ Discovery — câu khách hay hỏi mà bot CHƯA duyệt</h3>
+              <p class="text-xs text-slate-500 mt-1">Phân tích conversation_memory để tìm câu hỏi lặp nhiều lần. Click "➕ Thêm training" để admin soạn câu trả lời nhanh.</p>
+            </div>
+            <div class="flex gap-2">
+              <select id="faq-days" class="border rounded px-2 py-1 text-xs">
+                <option value="7">7d</option>
+                <option value="14" selected>14d</option>
+                <option value="30">30d</option>
+              </select>
+              <select id="faq-min-freq" class="border rounded px-2 py-1 text-xs">
+                <option value="2" selected>≥2 lần</option>
+                <option value="3">≥3 lần</option>
+                <option value="5">≥5 lần</option>
+              </select>
+              <button id="faq-refresh" class="bg-slate-800 hover:bg-slate-900 text-white text-xs px-3 py-1 rounded">🔄 Quét</button>
+            </div>
+          </div>
+          <div id="faq-stats" class="text-xs text-slate-600 mb-3"></div>
+          <div id="faq-clusters" class="space-y-2 max-h-[500px] overflow-y-auto"></div>
+        </div>
+
+        <!-- DETECT SIMILAR panel -->
+        <div id="similar-panel" class="hidden bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
+          <div class="flex items-start justify-between mb-3">
+            <div>
+              <h3 class="font-bold text-slate-800">🔗 Similar entries — gợi ý merge</h3>
+              <p class="text-xs text-slate-500 mt-1">Các cặp QA có nội dung tương tự ≥ 90%. Merge để bot có 1 entry chính xác + cộng dồn hits.</p>
+            </div>
+            <button id="similar-refresh" class="bg-slate-800 hover:bg-slate-900 text-white text-xs px-3 py-1 rounded">🔄 Quét</button>
+          </div>
+          <div id="similar-pairs" class="space-y-2 max-h-[500px] overflow-y-auto"></div>
+        </div>
+
+        <!-- BULK actions toolbar (xuất hiện khi chọn ≥ 1 entry) -->
+        <div id="bulk-toolbar" class="hidden bg-blue-50 border border-blue-300 rounded-lg p-3 mb-4 max-w-6xl flex items-center justify-between">
+          <div class="text-sm">
+            <span class="font-bold text-blue-700"><span id="bulk-count">0</span> entries được chọn</span>
+          </div>
+          <div class="flex gap-2">
+            <button id="bulk-approve" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-3 py-1.5 rounded font-medium">✓ Duyệt tất cả</button>
+            <button id="bulk-reject" class="bg-rose-600 hover:bg-rose-700 text-white text-sm px-3 py-1.5 rounded">✗ Từ chối tất cả</button>
+            <button id="bulk-clear" class="bg-slate-300 hover:bg-slate-400 text-slate-700 text-sm px-3 py-1.5 rounded">Bỏ chọn</button>
+          </div>
         </div>
 
         <!-- Cost & Threshold panel (Phase 4) — toggle hidden by default -->

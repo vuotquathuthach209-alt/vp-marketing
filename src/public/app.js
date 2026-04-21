@@ -3933,10 +3933,14 @@ function renderTrainingRow(row) {
   const feedbackSummary = (row.positive_feedback || row.negative_feedback)
     ? `<span class="text-xs ${scoreClass} font-semibold">★${row.feedback_score || 0} (<span class="text-emerald-600">+${row.positive_feedback}</span>/<span class="text-rose-600">-${row.negative_feedback}</span>)</span>`
     : '';
+  const checkbox = row.tier === 'pending'
+    ? `<input type="checkbox" class="bulk-checkbox mr-2" data-bulk-id="${row.id}" title="Chọn để bulk action"/>`
+    : '';
   return `
     <div class="bg-white rounded-lg shadow-sm p-4 border border-slate-200" data-id="${row.id}">
       <div class="flex items-start justify-between mb-2 gap-2">
         <div class="flex items-center gap-2 flex-wrap">
+          ${checkbox}
           ${tierBadge(row.tier)}
           <span class="text-xs text-slate-500">#${row.id}</span>
           <span class="text-xs text-slate-500">${escapeHtml(row.ai_provider || 'unknown')}</span>
@@ -4077,6 +4081,15 @@ document.getElementById('training-list')?.addEventListener('click', (ev) => {
   else if (ev.target.classList.contains('training-feedback-history') && panel) trainingFeedbackHistory(id, panel);
 });
 
+// v11: bulk checkbox events
+document.getElementById('training-list')?.addEventListener('change', (ev) => {
+  if (!ev.target.classList.contains('bulk-checkbox')) return;
+  const id = parseInt(ev.target.dataset.bulkId, 10);
+  if (ev.target.checked) bulkSelected.add(id);
+  else bulkSelected.delete(id);
+  toggleBulkToolbar();
+});
+
 // Filter changes
 document.getElementById('training-tier')?.addEventListener('change', (e) => {
   trainingState.tier = e.target.value; trainingState.offset = 0; loadTrainingList();
@@ -4118,6 +4131,200 @@ document.getElementById('training-seed-btn')?.addEventListener('click', async ()
     alert(r.is_new ? `Đã thêm Q&A #${r.qa_cache_id}` : 'Q&A này đã tồn tại (merge hits)');
     await loadTraining();
   } catch (e) { alert('Lỗi: ' + e.message); }
+});
+
+// ═══════════════════════════════════════════════════════════
+// v11: FAQ Discovery + Bulk actions + Similar detection
+// ═══════════════════════════════════════════════════════════
+const bulkSelected = new Set();
+
+function toggleBulkToolbar() {
+  const toolbar = document.getElementById('bulk-toolbar');
+  const count = document.getElementById('bulk-count');
+  if (bulkSelected.size > 0) {
+    toolbar.classList.remove('hidden');
+    count.textContent = bulkSelected.size;
+  } else {
+    toolbar.classList.add('hidden');
+  }
+}
+
+function toggleFaqPanel() {
+  const panel = document.getElementById('faq-discover-panel');
+  if (panel.classList.contains('hidden')) {
+    panel.classList.remove('hidden');
+    loadFaqDiscovery();
+  } else panel.classList.add('hidden');
+}
+
+function toggleSimilarPanel() {
+  const panel = document.getElementById('similar-panel');
+  if (panel.classList.contains('hidden')) {
+    panel.classList.remove('hidden');
+    loadSimilar();
+  } else panel.classList.add('hidden');
+}
+
+async function loadFaqDiscovery() {
+  const days = document.getElementById('faq-days').value;
+  const minFreq = document.getElementById('faq-min-freq').value;
+  const stats = document.getElementById('faq-stats');
+  const list = document.getElementById('faq-clusters');
+  stats.textContent = '⏳ Đang quét...';
+  list.innerHTML = '';
+  try {
+    const r = await api(`/training/discover-faqs?days=${days}&min_frequency=${minFreq}`);
+    stats.innerHTML = `<b>${r.total_user_questions}</b> câu hỏi / <b>${r.total_clusters}</b> clusters / ` +
+      `<span class="text-amber-600"><b>${r.uncached_clusters}</b> CHƯA có trong cache</span> / ` +
+      `<span class="text-blue-600"><b>${r.cached_but_pending_clusters}</b> đang pending</span>`;
+    if (!r.suggestions?.length) {
+      list.innerHTML = '<div class="text-slate-500 p-4 text-center">Chưa có FAQ nào với frequency ≥ ' + minFreq + '.</div>';
+      return;
+    }
+    list.innerHTML = r.suggestions.map(renderFaqCluster).join('');
+    wireFaqClusterActions();
+  } catch (e) {
+    stats.innerHTML = `<span class="text-rose-600">Lỗi: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function renderFaqCluster(c) {
+  const statusBadge = c.in_cache
+    ? `<span class="text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">✓ Đã có (${c.cache_match.tier})</span>`
+    : c.cache_match?.tier === 'pending'
+    ? `<span class="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">⏳ Pending #${c.cache_match.qa_cache_id}</span>`
+    : `<span class="text-xs bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded font-bold">⚠ CHƯA CÓ</span>`;
+
+  const freqColor = c.frequency >= 10 ? 'text-rose-600' : c.frequency >= 5 ? 'text-amber-600' : 'text-slate-600';
+
+  return `<div class="bg-slate-50 border border-slate-200 rounded p-3" data-faq-id="${c.id}">
+    <div class="flex items-start justify-between gap-2 mb-2">
+      <div class="flex-1">
+        <div class="flex items-center gap-2 flex-wrap mb-1">
+          ${statusBadge}
+          <span class="text-xs font-bold ${freqColor}">× ${c.frequency} lần</span>
+          <span class="text-xs text-slate-500">${c.unique_users} users</span>
+          <span class="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">${escapeHtml(c.suggested_intent)}</span>
+          <span class="text-xs text-slate-400">${formatRelTime(c.last_asked_at)}</span>
+        </div>
+        <div class="text-sm font-medium text-slate-800">"${escapeHtml(c.representative_question)}"</div>
+        ${c.variants.length > 1 ? `<details class="text-xs text-slate-500 mt-1">
+          <summary class="cursor-pointer">${c.variants.length} biến thể</summary>
+          <ul class="list-disc list-inside mt-1 space-y-0.5">
+            ${c.variants.map(v => `<li>${escapeHtml(v.slice(0, 120))}</li>`).join('')}
+          </ul>
+        </details>` : ''}
+      </div>
+      ${!c.in_cache ? `<button class="faq-add bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1 rounded font-medium" data-q="${escapeHtml(c.representative_question)}" data-intent="${escapeHtml(c.suggested_intent)}">➕ Thêm training</button>` : ''}
+    </div>
+  </div>`;
+}
+
+function wireFaqClusterActions() {
+  document.querySelectorAll('.faq-add').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const q = btn.dataset.q;
+      const intent = btn.dataset.intent;
+      const response = prompt(`Soạn câu trả lời cho:\n"${q}"\n\nAdmin nhập câu trả lời chuẩn để bot học:`);
+      if (!response || response.trim().length < 3) return;
+      try {
+        await api('/training/discover-faqs/add', {
+          method: 'POST',
+          body: JSON.stringify({
+            question: q,
+            response: response.trim(),
+            intent_category: intent,
+            notes: 'Added from FAQ Discovery',
+          }),
+        });
+        alert('✓ Đã thêm vào training (tier=approved). Bot sẽ dùng ngay.');
+        loadFaqDiscovery();
+        loadTrainingStats();
+      } catch (e) { alert('Lỗi: ' + e.message); }
+    });
+  });
+}
+
+async function loadSimilar() {
+  const list = document.getElementById('similar-pairs');
+  list.innerHTML = '<div class="text-slate-400 p-4">⏳ Đang quét...</div>';
+  try {
+    const r = await api('/training/similar?threshold=0.9');
+    if (!r.pairs?.length) {
+      list.innerHTML = '<div class="text-emerald-600 p-4">✓ Không có cặp nào trùng ≥ 90%.</div>';
+      return;
+    }
+    list.innerHTML = r.pairs.map(p => `
+      <div class="bg-amber-50 border border-amber-200 rounded p-3">
+        <div class="text-xs text-amber-700 mb-2">Độ tương tự: <b>${(p.similarity * 100).toFixed(1)}%</b></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="bg-white p-2 rounded border">
+            <div class="text-xs text-slate-500">Entry #${p.a.id} · tier ${p.a.tier}</div>
+            <div class="text-sm">${escapeHtml(p.a.question)}</div>
+            <button class="merge-btn bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-2 py-1 rounded mt-2" data-keep="${p.a.id}" data-remove="${p.b.id}">Giữ này, xoá #${p.b.id}</button>
+          </div>
+          <div class="bg-white p-2 rounded border">
+            <div class="text-xs text-slate-500">Entry #${p.b.id} · tier ${p.b.tier}</div>
+            <div class="text-sm">${escapeHtml(p.b.question)}</div>
+            <button class="merge-btn bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-2 py-1 rounded mt-2" data-keep="${p.b.id}" data-remove="${p.a.id}">Giữ này, xoá #${p.a.id}</button>
+          </div>
+        </div>
+      </div>
+    `).join('');
+    list.querySelectorAll('.merge-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm(`Merge: giữ #${btn.dataset.keep}, xoá #${btn.dataset.remove}?`)) return;
+        try {
+          await api('/training/merge', { method: 'POST', body: JSON.stringify({ keep_id: +btn.dataset.keep, remove_id: +btn.dataset.remove }) });
+          loadSimilar();
+          loadTrainingStats();
+          loadTrainingList();
+        } catch (e) { alert('Lỗi: ' + e.message); }
+      });
+    });
+  } catch (e) {
+    list.innerHTML = `<div class="text-rose-600 p-4">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+document.getElementById('training-toggle-discover')?.addEventListener('click', toggleFaqPanel);
+document.getElementById('training-toggle-similar')?.addEventListener('click', toggleSimilarPanel);
+document.getElementById('faq-refresh')?.addEventListener('click', loadFaqDiscovery);
+document.getElementById('faq-days')?.addEventListener('change', loadFaqDiscovery);
+document.getElementById('faq-min-freq')?.addEventListener('change', loadFaqDiscovery);
+document.getElementById('similar-refresh')?.addEventListener('click', loadSimilar);
+
+document.getElementById('bulk-approve')?.addEventListener('click', async () => {
+  if (bulkSelected.size === 0) return;
+  const notes = prompt(`Ghi chú cho ${bulkSelected.size} entries (tùy chọn):`);
+  try {
+    const r = await api('/training/bulk/approve', { method: 'POST', body: JSON.stringify({ ids: [...bulkSelected], notes: notes || 'bulk approve' }) });
+    alert(`✓ Duyệt ${r.approved}/${r.requested} entries`);
+    bulkSelected.clear();
+    toggleBulkToolbar();
+    loadTrainingList();
+    loadTrainingStats();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
+
+document.getElementById('bulk-reject')?.addEventListener('click', async () => {
+  if (bulkSelected.size === 0) return;
+  const reason = prompt(`Lý do từ chối ${bulkSelected.size} entries (bắt buộc):`);
+  if (!reason || reason.trim().length < 3) return;
+  try {
+    const r = await api('/training/bulk/reject', { method: 'POST', body: JSON.stringify({ ids: [...bulkSelected], reason: reason.trim() }) });
+    alert(`✗ Từ chối ${r.rejected}/${r.requested} entries`);
+    bulkSelected.clear();
+    toggleBulkToolbar();
+    loadTrainingList();
+    loadTrainingStats();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
+
+document.getElementById('bulk-clear')?.addEventListener('click', () => {
+  bulkSelected.clear();
+  document.querySelectorAll('.bulk-checkbox').forEach(cb => cb.checked = false);
+  toggleBulkToolbar();
 });
 
 // ─── Phase 4: Cost Dashboard + Threshold Tuning ──────────────────
