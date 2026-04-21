@@ -341,7 +341,7 @@ type Intent =
   | 'greeting' | 'price' | 'rooms' | 'room_images' | 'booking' | 'checkin'
   | 'check_dates' | 'location' | 'amenities' | 'payment' | 'cancel' | 'promo'
   | 'hourly' | 'contact' | 'pet' | 'review' | 'thanks' | 'branch_select'
-  | 'phone_provided' | 'complaint' | 'unknown';
+  | 'property_type_select' | 'phone_provided' | 'complaint' | 'unknown';
 
 interface IntentResult {
   intent: Intent;
@@ -499,29 +499,78 @@ interface HandlerResult {
   images?: Array<{ title: string; subtitle: string; image_url: string }>;
 }
 
-function handleGreeting(hotelName: string, senderName?: string, hotelId?: number): HandlerResult {
-  const greeting = senderName ? `Chào ${senderName}! 👋` : 'Chào bạn! 👋';
-
-  // Marketplace mode: current hotel là 1 tenant trong network có cả nightly + monthly
-  if (hotelId) {
-    const nightlyProps = getBrandSiblings(hotelId, 'nightly_stay');
-    const monthlyProps = getBrandSiblings(hotelId, 'monthly_apartment');
-    const { hotel: currentHotel } = getHotelCache(hotelId);
-    const currentProf = currentHotel?.ota_hotel_id
-      ? db.prepare(`SELECT product_group FROM hotel_profile WHERE hotel_id = ?`).get(currentHotel.ota_hotel_id) as any
+/**
+ * Liệt kê tất cả properties trong brand network, group theo property_type.
+ * Sonder = OTA platform → bot cần cho khách chọn loại hình TRƯỚC.
+ */
+function getNetworkPropertyTypes(hotelId: number): {
+  hotel: Array<{ name: string; district?: string; min_price?: number }>;
+  apartment: Array<{ name: string; district?: string; min_price?: number }>;
+  homestay: Array<{ name: string; district?: string; min_price?: number }>;
+  villa: Array<{ name: string; district?: string; min_price?: number }>;
+} {
+  const result = { hotel: [] as any[], apartment: [] as any[], homestay: [] as any[], villa: [] as any[] };
+  try {
+    const siblings = getBrandSiblings(hotelId, null);
+    // Include current hotel too
+    const { hotel: currentMkt } = getHotelCache(hotelId);
+    const currentProf = currentMkt?.ota_hotel_id
+      ? db.prepare(`SELECT hotel_id, name_canonical, property_type, district FROM hotel_profile WHERE hotel_id = ?`).get(currentMkt.ota_hotel_id) as any
       : null;
-    const currentGroup = currentProf?.product_group;
+    const currentMinPrice = currentMkt?.ota_hotel_id
+      ? (db.prepare(`SELECT MIN(base_price) AS mp FROM mkt_rooms_cache WHERE ota_hotel_id = ?`).get(currentMkt.ota_hotel_id) as any)?.mp
+      : undefined;
 
-    // Tổng cộng có cả 2 loại → hỏi khách cần loại nào
-    const hasNightly = nightlyProps.length > 0 || currentGroup === 'nightly_stay';
-    const hasMonthly = monthlyProps.length > 0 || currentGroup === 'monthly_apartment';
-    if (hasNightly && hasMonthly) {
+    const allProps = [
+      ...(currentProf ? [{
+        name: currentProf.name_canonical, property_type: currentProf.property_type,
+        district: currentProf.district, min_price: currentMinPrice,
+      }] : []),
+      ...siblings.map(s => ({
+        name: s.name,
+        property_type: s.property_type_label === 'căn hộ dịch vụ' ? 'apartment'
+          : s.property_type_label === 'homestay' ? 'homestay'
+          : s.property_type_label === 'villa' ? 'villa'
+          : 'hotel',
+        district: s.district, min_price: s.min_price,
+      })),
+    ];
+
+    for (const p of allProps) {
+      const bucket = p.property_type === 'apartment' ? 'apartment'
+        : p.property_type === 'homestay' ? 'homestay'
+        : p.property_type === 'villa' ? 'villa'
+        : 'hotel';
+      result[bucket].push({ name: p.name, district: p.district, min_price: p.min_price });
+    }
+  } catch {}
+  return result;
+}
+
+function handleGreeting(hotelName: string, senderName?: string, hotelId?: number): HandlerResult {
+  const greeting = senderName ? `Chào ${senderName}! 👋` : 'Chào anh/chị! 👋';
+
+  // Marketplace mode (Sonder platform): hỏi loại hình TRƯỚC
+  if (hotelId) {
+    const types = getNetworkPropertyTypes(hotelId);
+    const hasHotel = types.hotel.length > 0;
+    const hasApartment = types.apartment.length > 0;
+    const hasHomestay = types.homestay.length > 0;
+    const hasVilla = types.villa.length > 0;
+    const totalTypes = [hasHotel, hasApartment, hasHomestay, hasVilla].filter(Boolean).length;
+
+    if (totalTypes >= 2) {
+      const options: string[] = [];
+      if (hasHotel) options.push(`🏨 **Khách sạn** (${types.hotel.length} chỗ) — thuê đêm, tiện nghi chuẩn sao`);
+      if (hasHomestay) options.push(`🏡 **Homestay** (${types.homestay.length} chỗ) — ấm cúng, giá tốt`);
+      if (hasVilla) options.push(`🏖 **Villa** (${types.villa.length} chỗ) — rộng rãi, phù hợp nhóm/gia đình`);
+      if (hasApartment) options.push(`🏢 **Căn hộ dịch vụ (CHDV)** (${types.apartment.length} chỗ) — thuê dài, có bếp + máy giặt`);
+
       return {
-        reply: `${greeting} Em là bot tư vấn của **Sonder** — hệ thống khách sạn + căn hộ dịch vụ tại HCM ạ.\n\n` +
-          `Anh/chị cần:\n` +
-          `🏨 **Thuê đêm** (khách sạn, homestay) — phù hợp công tác, du lịch ngắn\n` +
-          `🏢 **Thuê tháng** (căn hộ dịch vụ) — phù hợp ở dài, full nội thất, có bếp\n\n` +
-          `Anh/chị thuộc nhu cầu nào ạ? Hoặc cho em biết ngày check-in + số khách, em tư vấn phù hợp nhất!`,
+        reply: `${greeting} Em là trợ lý tư vấn của **Sonder** — nền tảng đặt phòng trực tuyến.\n\n` +
+          `Anh/chị muốn thuê loại nào ạ?\n\n` +
+          options.join('\n') + `\n\n` +
+          `Cho em biết loại hình + ngày check-in + số khách, em tư vấn chỗ phù hợp nhất ạ! 🙌`,
         intent: 'greeting',
       };
     }
@@ -541,6 +590,55 @@ function handleGreeting(hotelName: string, senderName?: string, hotelId?: number
     reply: `${greeting} Cảm ơn bạn đã nhắn tin cho ${hotelName}!\n\nMình có thể giúp bạn:\n💰 Xem giá phòng\n📸 Xem hình phòng\n📅 Đặt phòng nhanh\n📍 Địa chỉ & tiện ích\n⏰ Check-in / Check-out\n\nBạn cần tư vấn gì ạ?`,
     intent: 'greeting',
   };
+}
+
+/**
+ * Handler khi khách trả lời loại hình (hotel/homestay/villa/apartment).
+ * List properties của loại đó + gợi ý bước tiếp theo.
+ */
+function handlePropertyTypeSelect(
+  hotelId: number,
+  selectedType: 'hotel' | 'homestay' | 'villa' | 'apartment',
+): HandlerResult {
+  const types = getNetworkPropertyTypes(hotelId);
+  const props = types[selectedType];
+  const labelMap = { hotel: 'Khách sạn', homestay: 'Homestay', villa: 'Villa', apartment: 'Căn hộ dịch vụ' };
+  const emojiMap = { hotel: '🏨', homestay: '🏡', villa: '🏖', apartment: '🏢' };
+  const unitMap = { hotel: '/đêm', homestay: '/đêm', villa: '/đêm', apartment: '/tháng' };
+
+  if (props.length === 0) {
+    // Không có → offer type khác
+    const available = Object.entries(types).filter(([k, v]) => v.length > 0).map(([k]) => labelMap[k as keyof typeof labelMap]);
+    return {
+      reply: `Dạ hiện bên em chưa có ${labelMap[selectedType]} trống anh/chị ơi 😔\n\n` +
+        `Hiện có: ${available.join(', ')}. Anh/chị muốn xem loại nào ạ?`,
+      intent: 'property_type_select',
+    };
+  }
+
+  const list = props.slice(0, 10).map((p, i) => {
+    const priceStr = p.min_price ? ` — từ ${p.min_price.toLocaleString('vi-VN')}₫${unitMap[selectedType]}` : '';
+    const locStr = p.district ? ` (${p.district})` : '';
+    return `${i + 1}. **${p.name}**${locStr}${priceStr}`;
+  }).join('\n');
+
+  return {
+    reply: `${emojiMap[selectedType]} **${labelMap[selectedType]}** — Sonder network có ${props.length} chỗ:\n\n${list}\n\n` +
+      `Anh/chị quan tâm chỗ nào? Cho em biết ngày check-in + số khách, em check giá và phòng trống ạ!`,
+    intent: 'property_type_select',
+  };
+}
+
+/**
+ * Detect property type from user message.
+ * Returns the selected type hoặc null nếu không detect được.
+ */
+function detectPropertyType(msgNorm: string): 'hotel' | 'homestay' | 'villa' | 'apartment' | null {
+  if (/\b(khach san|ks|hotel)\b/.test(msgNorm)) return 'hotel';
+  if (/\b(homestay|home stay|nha dan|b&b)\b/.test(msgNorm)) return 'homestay';
+  if (/\b(villa|biet thu)\b/.test(msgNorm)) return 'villa';
+  if (/\b(chdv|can ho|apartment|serviced)\b/.test(msgNorm)) return 'apartment';
+  return null;
 }
 
 async function handleDeterministic(
@@ -589,6 +687,20 @@ async function handleDeterministic(
   } catch {}
   if (kbUsed) console.log(`[smartreply] using kb #${hotelId}: ${rooms.length} rooms, group=${productGroup}, unit=/${rentalUnit}`);
   const hotelNameWithType = propertyTypeLabel ? `${propertyTypeLabel} ${hotelName}` : hotelName;
+
+  // ═══════════════════════════════════════════════════════════
+  // Marketplace intercept: detect property type in user message
+  // (Sonder = nền tảng OTA → ưu tiên hỏi loại hình TRƯỚC)
+  // ═══════════════════════════════════════════════════════════
+  const detectedType = detectPropertyType(msgNorm);
+  if (detectedType && ['rooms', 'price', 'hourly', 'amenities', 'greeting', 'unclear'].includes(intent)) {
+    // User explicitly chose property type → show listing for that type
+    const types = getNetworkPropertyTypes(hotelId);
+    const totalProps = types.hotel.length + types.homestay.length + types.villa.length + types.apartment.length;
+    if (totalProps > 0) {
+      return handlePropertyTypeSelect(hotelId, detectedType);
+    }
+  }
 
   switch (intent) {
     case 'greeting':
