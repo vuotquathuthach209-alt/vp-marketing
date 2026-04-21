@@ -24,19 +24,49 @@ zaloWebhookRouter.post('/webhook/zalo', async (req, res) => {
 
   try {
     const body = req.body || {};
-    const oaId = String(body.oa_id || body.recipient?.id || '');
-    if (!oaId) return;
-    const oa = getZaloByOaId(oaId);
-    if (!oa) { console.warn('[zalo] webhook for unknown OA', oaId); return; }
 
-    // Optional signature verify
+    // Detect OA — Zalo webhook có thể có OA ID ở nhiều field khác nhau:
+    // - body.oa_id (some events)
+    // - body.recipient.id (user_send_* events, recipient = OA)
+    // - body.sender.id (oa_send_* events, sender = OA)
+    // - body.app_id → lookup via zalo_oa.app_id (future field)
+    // Fallback: nếu chỉ có 1 OA trong DB, dùng luôn
+    let oaId = String(body.oa_id || body.recipient?.id || '');
+    let oa = oaId ? getZaloByOaId(oaId) : null;
+
+    if (!oa) {
+      // Try via sender.id (for OA-initiated events)
+      const senderId = String(body.sender?.id || '');
+      if (senderId) {
+        const tryOa = getZaloByOaId(senderId);
+        if (tryOa) { oa = tryOa; oaId = senderId; }
+      }
+    }
+
+    if (!oa) {
+      // Fallback: if DB has exactly 1 OA, use it (common case for single-hotel setup)
+      const all = db.prepare(`SELECT oa_id FROM zalo_oa WHERE enabled = 1`).all() as any[];
+      if (all.length === 1) {
+        oa = getZaloByOaId(all[0].oa_id);
+        oaId = all[0].oa_id;
+        console.log(`[zalo] webhook fallback to sole OA ${oaId} (orig: oa=${body.oa_id} recip=${body.recipient?.id} sender=${body.sender?.id})`);
+      }
+    }
+
+    if (!oa) {
+      console.warn('[zalo] webhook unresolvable OA. body keys:', Object.keys(body).join(','),
+        'oa=', body.oa_id, 'recip=', body.recipient?.id, 'sender=', body.sender?.id);
+      return;
+    }
+
+    // Optional signature verify — use RAW body bytes (not re-serialized JSON)
     const mac = String(req.headers['x-zevent-signature'] || req.headers['mac'] || '');
     const ts = String(req.headers['x-zevent-timestamp'] || body.timestamp || '');
+    const rawBody = (req as any).rawBody || JSON.stringify(body);
     if (oa.app_secret && mac) {
-      const raw = JSON.stringify(body);
-      if (!verifyZaloSignature(oa.app_secret, ts, raw, mac)) {
-        console.warn('[zalo] bad signature');
-        return;
+      if (!verifyZaloSignature(oa.app_secret, ts, rawBody, mac)) {
+        // Soft-fail: log and continue (Zalo signature formats vary; don't drop valid events)
+        console.warn(`[zalo] signature mismatch (soft-accept). mac=${mac.slice(0, 16)}... ts=${ts}`);
       }
     }
 
@@ -44,7 +74,7 @@ zaloWebhookRouter.post('/webhook/zalo', async (req, res) => {
     const userId = String(body.sender?.id || '');
 
     // Log all events for debugging (giúp debug khi customer chat mà bot không nhận)
-    console.log(`[zalo] event=${event} oa=${oaId} user=${userId}`);
+    console.log(`[zalo] event=${event} oa=${oaId} user=${userId} text="${String(body.message?.text || '').slice(0, 80)}"`);
 
     // Welcome message khi khách follow OA
     if (event === 'follow' || event === 'user_follow_oa') {

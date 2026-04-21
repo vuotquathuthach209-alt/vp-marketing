@@ -58,7 +58,13 @@ app.use((_req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '10mb' }));
+// Preserve raw body for webhook signature verification (Zalo needs exact bytes)
+app.use(express.json({
+  limit: '10mb',
+  verify: (req: any, _res, buf) => {
+    if (buf && buf.length) req.rawBody = buf.toString('utf8');
+  },
+}));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
