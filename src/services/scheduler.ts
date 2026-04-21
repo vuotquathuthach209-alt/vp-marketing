@@ -327,8 +327,7 @@ export function startScheduler() {
     }
   });
 
-  // Angle generator batch mỗi 45 phút (slow vì Pollinations image gen ~3s/draft)
-  // 5 drafts/run × 32 runs/day = 160 drafts/day capacity, đủ cho mức 3 bài/tuần
+  // Angle generator batch mỗi giờ (slow vì Pollinations image gen ~3s/draft)
   cron.schedule('15 */1 * * *', async () => {
     try {
       const { generateDraftsBatch } = require('./news-angle-generator');
@@ -336,6 +335,18 @@ export function startScheduler() {
       if (r.processed > 0) console.log(`[scheduler] news-angle: ${JSON.stringify(r)}`);
     } catch (e: any) {
       console.error('[scheduler] news-angle error:', e?.message);
+    }
+  });
+
+  // Publisher scheduler — mỗi 15 phút check drafts approved + due
+  // (Admin set scheduled_at theo khung T2/T4/T6 20h VN mặc định qua UI)
+  cron.schedule('*/15 * * * *', async () => {
+    try {
+      const { publishScheduledBatch } = require('./news-publisher');
+      const r = await publishScheduledBatch();
+      if (r.considered > 0) console.log(`[scheduler] news-publish: ${JSON.stringify(r)}`);
+    } catch (e: any) {
+      console.error('[scheduler] news-publish error:', e?.message);
     }
   });
 

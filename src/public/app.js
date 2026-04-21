@@ -128,6 +128,7 @@ function switchTab(tab) {
   if (tab === 'revenue') loadRevenue();
   if (tab === 'knowledge-sync') loadKnowledgeSync();
   if (tab === 'training') loadTraining();
+  if (tab === 'news') loadNews();
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
   b.addEventListener('click', () => switchTab(b.dataset.tab));
@@ -3827,6 +3828,234 @@ document.getElementById('training-seed-btn')?.addEventListener('click', async ()
 
 // Auto-refresh badge mỗi 60s khi đang ở tab khác (nhắc có pending mới)
 setInterval(() => { if (document.visibilityState === 'visible') loadTrainingStats().catch(() => {}); }, 60_000);
+
+// ====== News → Post ======
+const newsState = { status: 'pending', offset: 0, limit: 20, total: 0 };
+
+async function loadNews() {
+  newsState.offset = 0;
+  await Promise.all([loadNewsStats(), loadNewsList()]);
+}
+
+async function loadNewsStats() {
+  try {
+    const s = await api('/news/stats');
+    const byStatus = {};
+    (s.drafts_by_status || []).forEach(r => byStatus[r.status] = r.n);
+    document.getElementById('news-stat-articles24h').textContent = s.articles_24h || 0;
+    document.getElementById('news-stat-pending').textContent = byStatus.pending || 0;
+    document.getElementById('news-stat-approved').textContent = byStatus.approved || 0;
+    document.getElementById('news-stat-published').textContent = s.published_7d || 0;
+    document.getElementById('news-stat-rejected').textContent = s.auto_rejected_7d || 0;
+    document.getElementById('news-stat-sources').textContent = s.sources_enabled || 0;
+    const badge = document.getElementById('news-badge');
+    if (badge) {
+      const p = byStatus.pending || 0;
+      if (p > 0) { badge.textContent = p > 99 ? '99+' : p; badge.classList.remove('hidden'); }
+      else badge.classList.add('hidden');
+    }
+  } catch (e) { console.warn('news stats:', e.message); }
+}
+
+async function loadNewsList() {
+  const container = document.getElementById('news-list');
+  container.innerHTML = '<div class="text-slate-400 text-sm p-4">Đang tải...</div>';
+  try {
+    const qs = new URLSearchParams({
+      status: newsState.status, limit: newsState.limit, offset: newsState.offset,
+    }).toString();
+    const r = await api('/news/list?' + qs);
+    newsState.total = r.total;
+    if (r.items.length === 0) {
+      container.innerHTML = '<div class="bg-white rounded-lg shadow-sm p-8 text-center text-slate-500 border border-slate-200">Chưa có draft ở trạng thái <b>' + newsState.status + '</b>.</div>';
+    } else {
+      container.innerHTML = r.items.map(renderNewsCard).join('');
+    }
+    const info = document.getElementById('news-pager-info');
+    const start = newsState.offset + 1;
+    const end = Math.min(newsState.offset + newsState.limit, r.total);
+    info.textContent = r.total > 0 ? `Hiển thị ${start}-${end} / ${r.total} drafts` : '';
+    document.getElementById('news-prev').disabled = newsState.offset <= 0;
+    document.getElementById('news-next').disabled = end >= r.total;
+    if (window.lucide) window.lucide.createIcons();
+  } catch (e) {
+    container.innerHTML = '<div class="text-rose-600 text-sm p-4">Lỗi: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function newsStatusBadge(status) {
+  const m = {
+    pending: { bg: 'bg-amber-100', text: 'text-amber-800', label: 'Pending' },
+    approved: { bg: 'bg-emerald-100', text: 'text-emerald-800', label: 'Approved' },
+    published: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Published' },
+    rejected: { bg: 'bg-rose-100', text: 'text-rose-800', label: 'Rejected' },
+  };
+  const v = m[status] || { bg: 'bg-slate-100', text: 'text-slate-700', label: status };
+  return `<span class="text-xs font-medium ${v.bg} ${v.text} px-2 py-0.5 rounded">${v.label}</span>`;
+}
+
+function renderNewsCard(d) {
+  const actions = [];
+  const message = d.edited_post || d.draft_post;
+
+  if (d.status === 'pending') {
+    actions.push(`<button class="news-approve bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1 rounded font-medium">✓ Duyệt (lên lịch)</button>`);
+    actions.push(`<button class="news-publish-now bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1 rounded">▶️ Đăng ngay</button>`);
+    actions.push(`<button class="news-edit bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1 rounded">✎ Sửa</button>`);
+    actions.push(`<button class="news-regen bg-slate-600 hover:bg-slate-700 text-white text-xs px-3 py-1 rounded">🔁 Viết lại</button>`);
+    actions.push(`<button class="news-reject bg-rose-600 hover:bg-rose-700 text-white text-xs px-3 py-1 rounded">✗ Từ chối</button>`);
+  } else if (d.status === 'approved') {
+    actions.push(`<button class="news-publish-now bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1 rounded">▶️ Đăng ngay</button>`);
+    actions.push(`<button class="news-edit bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1 rounded">✎ Sửa</button>`);
+    actions.push(`<button class="news-reject bg-rose-600 hover:bg-rose-700 text-white text-xs px-3 py-1 rounded">✗ Hủy</button>`);
+  } else if (d.status === 'rejected') {
+    actions.push(`<button class="news-regen bg-slate-600 hover:bg-slate-700 text-white text-xs px-3 py-1 rounded">🔁 Viết lại</button>`);
+  }
+
+  const schLabel = d.scheduled_at ? new Date(d.scheduled_at).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }) : '';
+  const pubLabel = d.published_at ? new Date(d.published_at).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }) : '';
+  const fbLink = d.fb_post_id ? `<a href="https://facebook.com/${escapeHtml(d.fb_post_id)}" target="_blank" class="text-blue-600 hover:underline text-xs">Xem FB post ↗</a>` : '';
+
+  const safety = d.safety_flags || {};
+  const safetyBadge = safety.failure_reason
+    ? `<span class="text-xs bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded" title="${escapeHtml(safety.failure_reason)}">🛡️ ${escapeHtml(safety.failure_reason)}</span>`
+    : (safety.tone
+      ? `<span class="text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">🛡️ tone=${escapeHtml(safety.tone)}${safety.fact_source ? ' + ✓ source' : ''}</span>`
+      : '');
+
+  const imagePreview = d.image_url
+    ? `<img src="${escapeHtml(d.image_url)}" alt="" class="w-full max-h-48 object-cover rounded mt-2 border border-slate-200" onerror="this.style.display='none'">`
+    : '';
+
+  return `
+    <div class="bg-white rounded-lg shadow-sm p-4 border border-slate-200" data-id="${d.id}">
+      <div class="flex items-start justify-between mb-2 gap-2 flex-wrap">
+        <div class="flex items-center gap-2 flex-wrap">
+          ${newsStatusBadge(d.status)}
+          <span class="text-xs text-slate-500">#${d.id}</span>
+          <span class="text-xs bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">${escapeHtml(d.article_source || 'unknown')}</span>
+          ${d.region ? `<span class="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">${escapeHtml(d.region)}</span>` : ''}
+          ${typeof d.impact_score === 'number' ? `<span class="text-xs text-slate-500">impact=${d.impact_score}</span>` : ''}
+          ${safetyBadge}
+          <span class="text-xs text-slate-400">${formatRelTime(d.created_at)}</span>
+        </div>
+        <div class="flex gap-1 flex-wrap">${actions.join('')}</div>
+      </div>
+      <div class="mb-2 text-xs text-slate-500">
+        <a href="${escapeHtml(d.article_url || '#')}" target="_blank" class="hover:underline">📰 ${escapeHtml((d.article_title || '').slice(0, 120))}</a>
+      </div>
+      <div class="text-sm text-slate-800 bg-emerald-50 p-3 rounded border border-emerald-200 whitespace-pre-wrap news-message">${escapeHtml(message || '')}</div>
+      ${imagePreview}
+      ${schLabel && d.status === 'approved' ? `<div class="mt-2 text-xs text-blue-700 font-medium">📅 Đã lên lịch: ${schLabel}</div>` : ''}
+      ${pubLabel && d.status === 'published' ? `<div class="mt-2 text-xs text-blue-700 font-medium">✅ Đã đăng: ${pubLabel} ${fbLink}</div>` : ''}
+      ${d.rejection_reason ? `<div class="mt-2 text-xs text-rose-700 italic">Lý do từ chối: ${escapeHtml(d.rejection_reason)}</div>` : ''}
+    </div>`;
+}
+
+async function newsApprove(id) {
+  const custom = prompt('Giờ đăng (để trống = tự chọn khung T2/T4/T6 20h VN). Format: YYYY-MM-DD HH:MM', '');
+  let scheduled_at;
+  if (custom && custom.trim()) {
+    const t = Date.parse(custom.trim());
+    if (!isNaN(t)) scheduled_at = t;
+  }
+  try {
+    await api(`/news/draft/${id}/approve`, { method: 'POST', body: JSON.stringify({ scheduled_at }) });
+    await Promise.all([loadNewsStats(), loadNewsList()]);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function newsReject(id) {
+  const reason = prompt('Lý do từ chối:');
+  if (!reason) return;
+  try {
+    await api(`/news/draft/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
+    await Promise.all([loadNewsStats(), loadNewsList()]);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function newsEdit(id, currentText) {
+  const edited = prompt('Sửa nội dung bài đăng:', currentText);
+  if (edited === null) return;
+  if (edited.trim().length < 20) { alert('Bài quá ngắn'); return; }
+  try {
+    await api(`/news/draft/${id}/edit`, { method: 'POST', body: JSON.stringify({ edited_post: edited.trim() }) });
+    await loadNewsList();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function newsPublishNow(id) {
+  if (!confirm('Đăng BÀI NÀY ngay lập tức lên fanpage?')) return;
+  try {
+    const r = await api(`/news/draft/${id}/publish-now`, { method: 'POST' });
+    alert('Đã đăng thành công! FB post: ' + r.fb_post_id);
+    await Promise.all([loadNewsStats(), loadNewsList()]);
+  } catch (e) { alert('Lỗi đăng: ' + e.message); }
+}
+
+async function newsRegen(id) {
+  if (!confirm('Viết lại bài này với angle mới? (draft cũ sẽ bị xóa)')) return;
+  try {
+    const r = await api(`/news/draft/${id}/regen`, { method: 'POST' });
+    alert('Đã tạo draft mới. Status: ' + r.result?.status);
+    await Promise.all([loadNewsStats(), loadNewsList()]);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+// Event delegation
+document.getElementById('news-list')?.addEventListener('click', (ev) => {
+  const row = ev.target.closest('[data-id]');
+  if (!row) return;
+  const id = parseInt(row.dataset.id, 10);
+  const msgEl = row.querySelector('.news-message');
+  const currentText = msgEl ? msgEl.textContent : '';
+  if (ev.target.classList.contains('news-approve')) newsApprove(id);
+  else if (ev.target.classList.contains('news-reject')) newsReject(id);
+  else if (ev.target.classList.contains('news-edit')) newsEdit(id, currentText);
+  else if (ev.target.classList.contains('news-publish-now')) newsPublishNow(id);
+  else if (ev.target.classList.contains('news-regen')) newsRegen(id);
+});
+
+// Filters
+document.getElementById('news-status')?.addEventListener('change', (e) => {
+  newsState.status = e.target.value; newsState.offset = 0; loadNewsList();
+});
+document.getElementById('news-refresh')?.addEventListener('click', loadNews);
+document.getElementById('news-prev')?.addEventListener('click', () => {
+  newsState.offset = Math.max(0, newsState.offset - newsState.limit); loadNewsList();
+});
+document.getElementById('news-next')?.addEventListener('click', () => {
+  newsState.offset += newsState.limit; loadNewsList();
+});
+
+// Manual trigger buttons
+document.getElementById('news-ingest-now')?.addEventListener('click', async (e) => {
+  const btn = e.target; btn.disabled = true; btn.textContent = '⏳ Đang fetch...';
+  try { const r = await api('/news/ingest-now', { method: 'POST' });
+    alert(`Ingested: ${r.new} articles mới / ${r.fetched} fetched (${r.elapsed_ms}ms).`);
+    await loadNewsStats();
+  } catch (err) { alert('Lỗi: ' + err.message); }
+  finally { btn.disabled = false; btn.textContent = '🔄 Ingest ngay'; }
+});
+document.getElementById('news-classify-now')?.addEventListener('click', async (e) => {
+  const btn = e.target; btn.disabled = true; btn.textContent = '⏳ Đang classify...';
+  try { const r = await api('/news/classify-now', { method: 'POST', body: JSON.stringify({ limit: 20 }) });
+    alert(`Classified ${r.processed}: ${r.passed} passed, ${r.political_filtered} political, ${r.keyword_filtered} no-kw.`);
+    await loadNewsStats();
+  } catch (err) { alert('Lỗi: ' + err.message); }
+  finally { btn.disabled = false; btn.textContent = '⚡ Classify'; }
+});
+document.getElementById('news-gen-drafts-now')?.addEventListener('click', async (e) => {
+  const btn = e.target; btn.disabled = true; btn.textContent = '⏳ Đang viết...';
+  try { const r = await api('/news/generate-drafts-now', { method: 'POST', body: JSON.stringify({ limit: 5 }) });
+    alert(`Gen drafts: ${r.created} created, ${r.safety_rejected} safety-rejected, ${r.already_exists} dup.`);
+    await Promise.all([loadNewsStats(), loadNewsList()]);
+  } catch (err) { alert('Lỗi: ' + err.message); }
+  finally { btn.disabled = false; btn.textContent = '✍️ Gen drafts'; }
+});
+
+// Auto-refresh stats 60s
+setInterval(() => { if (document.visibilityState === 'visible') loadNewsStats().catch(() => {}); }, 60_000);
 
 // ====== Init ======
 checkAuth();

@@ -91,6 +91,7 @@
         <button data-tab="campaigns" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="repeat"></i><span>Chiến dịch</span></button>
         <button data-tab="autoreply" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="message-circle"></i><span>Chatbot</span></button>
         <button data-tab="training" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="graduation-cap"></i><span>Duyệt Training</span><span id="training-badge" class="ml-auto hidden text-xs bg-amber-500 text-slate-900 px-1.5 py-0.5 rounded-full font-bold"></span></button>
+        <button data-tab="news" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="newspaper"></i><span>News → Post</span><span id="news-badge" class="ml-auto hidden text-xs bg-indigo-500 text-white px-1.5 py-0.5 rounded-full font-bold"></span></button>
         <button data-tab="room-images" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="camera"></i><span>Ảnh phòng</span></button>
         <button data-tab="wiki" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="book-open"></i><span>Kiến thức AI</span></button>
         <button data-tab="feedback" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="star"></i><span>Chấm bot</span></button>
@@ -512,6 +513,81 @@
           <div class="space-x-2">
             <button id="training-prev" class="bg-white border px-3 py-1.5 rounded text-sm hover:bg-slate-50" disabled>← Trang trước</button>
             <button id="training-next" class="bg-white border px-3 py-1.5 rounded text-sm hover:bg-slate-50" disabled>Trang sau →</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- NEWS → POST TAB -->
+      <section data-panel="news" class="panel hidden">
+        <div class="flex items-start justify-between mb-4 max-w-6xl">
+          <div>
+            <h2 class="text-2xl font-bold mb-2">📰 News → FB Post</h2>
+            <p class="text-slate-500 text-sm">Tự động hút tin tức du lịch uy tín → Gemini viết góc trung lập → safety check 3 lớp → admin duyệt → đăng fanpage.</p>
+            <p class="text-slate-400 text-xs mt-1">Target: 3 bài/tuần (T2/T4/T6 20h VN). Tin nhạy cảm chính trị sẽ tự động bị lọc.</p>
+          </div>
+          <div class="flex gap-2">
+            <button id="news-ingest-now" class="bg-slate-200 hover:bg-slate-300 text-slate-800 text-sm px-3 py-2 rounded">🔄 Ingest ngay</button>
+            <button id="news-classify-now" class="bg-slate-200 hover:bg-slate-300 text-slate-800 text-sm px-3 py-2 rounded">⚡ Classify</button>
+            <button id="news-gen-drafts-now" class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-3 py-2 rounded">✍️ Gen drafts</button>
+          </div>
+        </div>
+
+        <!-- Stats cards -->
+        <div id="news-stats" class="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4 max-w-6xl">
+          <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200">
+            <div class="text-xs text-slate-500 uppercase tracking-wide">Articles 24h</div>
+            <div id="news-stat-articles24h" class="text-2xl font-bold text-indigo-600">—</div>
+          </div>
+          <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200">
+            <div class="text-xs text-slate-500 uppercase tracking-wide">Pending</div>
+            <div id="news-stat-pending" class="text-2xl font-bold text-amber-600">—</div>
+            <div class="text-xs text-slate-400 mt-1">chờ duyệt</div>
+          </div>
+          <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200">
+            <div class="text-xs text-slate-500 uppercase tracking-wide">Approved</div>
+            <div id="news-stat-approved" class="text-2xl font-bold text-emerald-600">—</div>
+            <div class="text-xs text-slate-400 mt-1">chờ lên lịch</div>
+          </div>
+          <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200">
+            <div class="text-xs text-slate-500 uppercase tracking-wide">Published 7d</div>
+            <div id="news-stat-published" class="text-2xl font-bold text-blue-600">—</div>
+            <div class="text-xs text-slate-400 mt-1">max 3/tuần</div>
+          </div>
+          <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200">
+            <div class="text-xs text-slate-500 uppercase tracking-wide">Auto-rejected 7d</div>
+            <div id="news-stat-rejected" class="text-2xl font-bold text-rose-600">—</div>
+            <div class="text-xs text-slate-400 mt-1">safety block</div>
+          </div>
+          <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200">
+            <div class="text-xs text-slate-500 uppercase tracking-wide">Sources</div>
+            <div id="news-stat-sources" class="text-2xl font-bold text-slate-700">—</div>
+            <div class="text-xs text-slate-400 mt-1">đang hoạt động</div>
+          </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="bg-white rounded-lg p-3 shadow-sm border border-slate-200 mb-4 max-w-6xl flex flex-wrap gap-3 items-end">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Status</label>
+            <select id="news-status" class="border rounded px-3 py-1.5 text-sm">
+              <option value="pending" selected>Pending (chờ duyệt)</option>
+              <option value="approved">Approved (đã lên lịch)</option>
+              <option value="published">Published</option>
+              <option value="rejected">Rejected</option>
+              <option value="all">Tất cả</option>
+            </select>
+          </div>
+          <button id="news-refresh" class="bg-slate-800 hover:bg-slate-900 text-white text-sm px-4 py-1.5 rounded">🔄 Refresh</button>
+          <div class="ml-auto text-xs text-slate-400">Cron ingest 2h • classify 30p • angle 1h • publish 15p</div>
+        </div>
+
+        <!-- List -->
+        <div id="news-list" class="space-y-4 max-w-6xl"></div>
+        <div class="flex justify-between items-center mt-4 max-w-6xl">
+          <div id="news-pager-info" class="text-sm text-slate-500"></div>
+          <div class="space-x-2">
+            <button id="news-prev" class="bg-white border px-3 py-1.5 rounded text-sm hover:bg-slate-50" disabled>← Trang trước</button>
+            <button id="news-next" class="bg-white border px-3 py-1.5 rounded text-sm hover:bg-slate-50" disabled>Trang sau →</button>
           </div>
         </div>
       </section>
