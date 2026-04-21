@@ -1575,16 +1575,26 @@ export async function smartReply(
 
   // ─── STEP 5: PHẢN HỒI TIÊU CỰC / KHÓ HIỂU / BỨC XÚC → XIN SĐT NGAY ───
   // Không đợi 3 lượt — bất cứ khi nào khách có dấu hiệu tiêu cực là chuyển người thật
-  // Guard: câu hỏi thông tin có trợ từ "không?" / "nào?" cuối câu KHÔNG phải tiêu cực
-  // (vd "có wifi không?" — Gemini hay nhầm thành frustrated)
+  // v10 FIX: Yêu cầu ≥ 2 tín hiệu đồng thuận để tránh false positive.
+  //   Trước đây: chỉ cần intent=complaint là fire → Gemini misclassify friendly
+  //   question như "còn phòng không bạn" là complaint → bot xin SĐT sai context.
+  //   Nay: complaint phải đi kèm negative markers HOẶC emotion=frustrated.
   const trimmed = msg.trim().toLowerCase();
-  const isInfoQuestion = /(không\??|nào\??|ạ\??|vậy\??|thế\??)\s*$/.test(trimmed) && msg.length < 100;
+  // Mở rộng pattern câu hỏi thông tin (thêm bạn/ad/nhé/shop/ơi cuối câu):
+  const isInfoQuestion =
+    /(không\??|khong\??|nào\??|nao\??|ạ\??|vậy\??|thế\??|mấy\??|bao nhiêu\??|gì\??|\?)\s*(bạn|ad|admin|shop|nhé|ạ|ơi)?\s*\??\s*$/
+      .test(trimmed) && msg.length < 150;
+
+  const hasNegativeMarker = isNegativeResponse(msg);
 
   const isNegative =
     !isInfoQuestion && (
-      intent === 'complaint' ||
-      (emotion === 'frustrated' && isNegativeResponse(msg)) ||  // cần đồng thuận 2 tín hiệu
-      isNegativeResponse(msg)
+      // Complaint: cần BOTH intent=complaint AND negative markers (2 signals)
+      (intent === 'complaint' && hasNegativeMarker) ||
+      // Frustrated emotion: cần đi kèm negative markers
+      (emotion === 'frustrated' && hasNegativeMarker) ||
+      // Pure negative markers: chỉ trigger cho câu SHORT (< 50 chars) — tránh match trong câu dài
+      (hasNegativeMarker && msg.length < 50)
     );
 
   if (isNegative && senderId && !alreadyCapturedPhone(senderId)) {
