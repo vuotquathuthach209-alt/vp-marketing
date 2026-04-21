@@ -119,6 +119,85 @@ function getHotelCache(hotelId: number) {
   return { hotel: mktHotel, rooms, hotelCache };
 }
 
+/**
+ * Lấy hotels "siblings" trong cùng brand network với mktHotelId.
+ * Siblings = các mkt_hotels khác có:
+ *   1. config.brand_network = <same brand> (explicit), HOẶC
+ *   2. slug có cùng prefix (fallback heuristic)
+ *   3. product_group = desiredGroup (vd current là monthly_apartment, want nightly_stay)
+ *
+ * Returns: array of { hotel_id (mkt), name, property_type_label, district, group, min_price }
+ */
+function getBrandSiblings(mktHotelId: number, desiredGroup: 'monthly_apartment' | 'nightly_stay' | null = null): Array<{
+  mkt_hotel_id: number;
+  hotel_id: number;
+  name: string;
+  property_type_label?: string;
+  district?: string;
+  group?: string;
+  min_price?: number;
+}> {
+  try {
+    // Get current hotel's brand network
+    const current = db.prepare(`SELECT id, slug, config FROM mkt_hotels WHERE id = ?`).get(mktHotelId) as any;
+    if (!current) return [];
+    let brandGroup: string | null = null;
+    try {
+      const cfg = current.config ? JSON.parse(current.config) : {};
+      brandGroup = cfg.brand_network || cfg.brand || null;
+    } catch {}
+    // Fallback: slug prefix (vd "sonder*" và "sonder-airport")
+    const slugPrefix = current.slug?.split('-')[0] || '';
+
+    // Query all other mkt_hotels
+    const others = db.prepare(`SELECT id, slug, name, ota_hotel_id, config FROM mkt_hotels WHERE id != ? AND status = 'active'`)
+      .all(mktHotelId) as any[];
+
+    const siblings: any[] = [];
+    for (const o of others) {
+      let oBrandGroup: string | null = null;
+      try {
+        const cfg = o.config ? JSON.parse(o.config) : {};
+        oBrandGroup = cfg.brand_network || cfg.brand || null;
+      } catch {}
+
+      const match = brandGroup && oBrandGroup === brandGroup;
+      const slugMatch = slugPrefix && o.slug?.startsWith(slugPrefix + '-');
+      if (!match && !slugMatch) continue;
+
+      // Check product_group via hotel_profile
+      const prof = o.ota_hotel_id
+        ? db.prepare(`SELECT hotel_id, name_canonical, property_type, district, product_group FROM hotel_profile WHERE hotel_id = ?`).get(o.ota_hotel_id) as any
+        : null;
+      if (desiredGroup && prof && prof.product_group !== desiredGroup) continue;
+
+      // Compute min_price from rooms
+      let minPrice: number | undefined;
+      if (o.ota_hotel_id) {
+        const r = db.prepare(`SELECT MIN(base_price) AS mp FROM mkt_rooms_cache WHERE ota_hotel_id = ?`).get(o.ota_hotel_id) as any;
+        minPrice = r?.mp || undefined;
+      }
+
+      const typeMap: Record<string, string> = {
+        hotel: 'khách sạn', apartment: 'căn hộ dịch vụ', homestay: 'homestay', villa: 'villa', resort: 'resort',
+      };
+
+      siblings.push({
+        mkt_hotel_id: o.id,
+        hotel_id: o.ota_hotel_id,
+        name: prof?.name_canonical || o.name,
+        property_type_label: prof?.property_type ? typeMap[prof.property_type] || prof.property_type : undefined,
+        district: prof?.district,
+        group: prof?.product_group,
+        min_price: minPrice,
+      });
+    }
+    return siblings;
+  } catch (e) {
+    return [];
+  }
+}
+
 function getRoomImages(hotelId: number) {
   return db.prepare(`SELECT * FROM room_images WHERE hotel_id = ? AND active = 1 ORDER BY display_order`).all(hotelId) as any[];
 }
@@ -420,9 +499,35 @@ interface HandlerResult {
   images?: Array<{ title: string; subtitle: string; image_url: string }>;
 }
 
-function handleGreeting(hotelName: string, senderName?: string): HandlerResult {
-  const branches = getAllBranches();
+function handleGreeting(hotelName: string, senderName?: string, hotelId?: number): HandlerResult {
   const greeting = senderName ? `Chào ${senderName}! 👋` : 'Chào bạn! 👋';
+
+  // Marketplace mode: current hotel là 1 tenant trong network có cả nightly + monthly
+  if (hotelId) {
+    const nightlyProps = getBrandSiblings(hotelId, 'nightly_stay');
+    const monthlyProps = getBrandSiblings(hotelId, 'monthly_apartment');
+    const { hotel: currentHotel } = getHotelCache(hotelId);
+    const currentProf = currentHotel?.ota_hotel_id
+      ? db.prepare(`SELECT product_group FROM hotel_profile WHERE hotel_id = ?`).get(currentHotel.ota_hotel_id) as any
+      : null;
+    const currentGroup = currentProf?.product_group;
+
+    // Tổng cộng có cả 2 loại → hỏi khách cần loại nào
+    const hasNightly = nightlyProps.length > 0 || currentGroup === 'nightly_stay';
+    const hasMonthly = monthlyProps.length > 0 || currentGroup === 'monthly_apartment';
+    if (hasNightly && hasMonthly) {
+      return {
+        reply: `${greeting} Em là bot tư vấn của **Sonder** — hệ thống khách sạn + căn hộ dịch vụ tại HCM ạ.\n\n` +
+          `Anh/chị cần:\n` +
+          `🏨 **Thuê đêm** (khách sạn, homestay) — phù hợp công tác, du lịch ngắn\n` +
+          `🏢 **Thuê tháng** (căn hộ dịch vụ) — phù hợp ở dài, full nội thất, có bếp\n\n` +
+          `Anh/chị thuộc nhu cầu nào ạ? Hoặc cho em biết ngày check-in + số khách, em tư vấn phù hợp nhất!`,
+        intent: 'greeting',
+      };
+    }
+  }
+
+  const branches = getAllBranches();
   if (branches.length > 1) {
     const branchList = branches.map((b, i) =>
       `${i + 1}️⃣ *${b.name}*${b.address ? `\n   📍 ${b.address}` : ''}${b.phone ? ` | 📞 ${b.phone}` : ''}`
@@ -487,7 +592,7 @@ async function handleDeterministic(
 
   switch (intent) {
     case 'greeting':
-      return handleGreeting(hotelName, senderName);
+      return handleGreeting(hotelName, senderName, hotelId);
 
     case 'branch_select': {
       const branches = getAllBranches();
@@ -606,7 +711,18 @@ async function handleDeterministic(
           if (r.bed_type) line += ` | ${r.bed_type}`;
           return line;
         }).join('\n');
-        return { reply: `🏨 Các loại phòng tại ${hotelNameWithType}:\n\n${roomList}\n\nGõ "giá" xem chi tiết hoặc "hình" xem ảnh phòng!`, intent: 'rooms' };
+
+        // Marketplace append: mention sibling hotels with opposite product_group
+        const otherGroup = productGroup === 'monthly_apartment' ? 'nightly_stay' : 'monthly_apartment';
+        const otherSiblings = getBrandSiblings(hotelId, otherGroup);
+        let siblingNote = '';
+        if (otherSiblings.length > 0) {
+          const sLabel = otherGroup === 'nightly_stay' ? 'thuê đêm' : 'thuê tháng';
+          const sNames = otherSiblings.slice(0, 2).map(s => `**${s.name}** (${s.property_type_label || 'property'}${s.district ? ', ' + s.district : ''})`).join(', ');
+          siblingNote = `\n\n💡 Nếu anh/chị cần ${sLabel}, bên em còn có ${sNames} — báo em biết em tư vấn nhé!`;
+        }
+
+        return { reply: `🏨 Các loại phòng tại ${hotelNameWithType}:\n\n${roomList}\n\nGõ "giá" xem chi tiết hoặc "hình" xem ảnh phòng!${siblingNote}`, intent: 'rooms' };
       }
       return null;
     }
@@ -723,7 +839,22 @@ async function handleDeterministic(
         const list = hourlyRooms.map((r: any) => `⏰ ${r.name}: ${r.hourly_price.toLocaleString('vi-VN')}₫/giờ`).join('\n');
         return { reply: `⏰ Theo giờ tại ${hotelName}:\n\n${list}\n\nNhắn ngày + giờ cần nhé!`, intent: 'hourly' };
       }
-      return { reply: `⏰ ${hotelName} hỗ trợ theo giờ! Nhắn ngày + giờ cần nhé!`, intent: 'hourly' };
+      // Current hotel không có hourly → cross-sell sibling hotel có hourly/nightly
+      const siblings = getBrandSiblings(hotelId, 'nightly_stay');
+      if (siblings.length > 0) {
+        const s = siblings[0];
+        const priceHint = s.min_price ? ` từ ${s.min_price.toLocaleString('vi-VN')}₫/đêm` : '';
+        return {
+          reply: `⏰ Dạ ${hotelNameWithType} cho thuê theo tháng, chưa có gói theo giờ ạ.\n\n` +
+            `Nếu anh/chị cần nghỉ ngắn, bên em có **${s.name}** — ${s.property_type_label || 'khách sạn'} ${s.district ? 'tại ' + s.district : ''}${priceHint}.\n\n` +
+            `Anh/chị muốn em gửi thêm thông tin hoặc đặt phòng luôn không ạ?`,
+          intent: 'hourly',
+        };
+      }
+      return {
+        reply: `⏰ Dạ ${hotelNameWithType} cho thuê theo tháng ạ. Chưa có gói thuê giờ hoặc theo đêm.\n\nAnh/chị có muốn em tư vấn thuê tháng không ạ?`,
+        intent: 'hourly',
+      };
     }
 
     case 'pet':
@@ -1555,7 +1686,7 @@ export async function smartReply(
   if (isFirst && (intent === 'greeting' || intent === 'unknown' || confidence < 0.5)) {
     const hotelRow = db.prepare(`SELECT name FROM mkt_hotels WHERE id = ?`).get(hotelId) as any;
     const hName = hotelRow?.name || 'Khách sạn';
-    const result = handleGreeting(hName, senderName);
+    const result = handleGreeting(hName, senderName, hotelId);
     if (senderId) saveMessage(senderId, pid, 'bot', result.reply, 'greeting');
     return { reply: result.reply, tier: 'rules', latency_ms: Date.now() - t0, intent: 'greeting', confidence };
   }
