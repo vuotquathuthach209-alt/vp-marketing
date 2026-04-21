@@ -415,13 +415,18 @@ export async function zaloSendRichMessage(
   }
 }
 
-/** Lấy danh sách user recent (đã chat OA trong 48h CS window)
- *  Dùng để broadcast — chỉ gửi được cho users trong CS window. */
-export async function zaloGetRecentChatUsers(oa: ZaloOA, limit = 200): Promise<Array<{ user_id: string; display_name?: string }>> {
+/** Lấy danh sách user recent (đã chat OA trong 48h CS window).
+ *  Source hỗn hợp:
+ *  1. Zalo API listrecentchat (nhanh, đúng CS window)
+ *  2. Fallback: DB conversation_memory (users đã từng chat bot)
+ *  Dedup bằng Map. */
+export async function zaloGetRecentChatUsers(oa: ZaloOA, limit = 500): Promise<Array<{ user_id: string; display_name?: string }>> {
   const users = new Map<string, string>();
+
+  // Source 1: Zalo API
   let offset = 0;
   const pageSize = 50;
-  while (offset < limit) {
+  while (offset < 200) {
     try {
       const r = await axios.get(
         `https://openapi.zalo.me/v2.0/oa/listrecentchat?data=${encodeURIComponent(JSON.stringify({ offset, count: pageSize }))}`,
@@ -430,18 +435,33 @@ export async function zaloGetRecentChatUsers(oa: ZaloOA, limit = 200): Promise<A
       const items = r.data?.data || [];
       if (!items.length) break;
       for (const msg of items) {
-        // to_id = user nhận tin (khi từ OA); from_id = user gửi (khi user → OA)
         const uid = msg.src === 1 ? msg.from_id : msg.to_id;
         const name = msg.src === 1 ? msg.from_display_name : msg.to_display_name;
         if (uid && uid !== oa.oa_id && !users.has(uid)) users.set(uid, name || '');
       }
       offset += pageSize;
       if (items.length < pageSize) break;
-    } catch {
-      break;
-    }
+    } catch { break; }
   }
-  return Array.from(users, ([user_id, display_name]) => ({ user_id, display_name }));
+
+  // Source 2: DB (users đã nhắn bot trong 48h)
+  const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+  try {
+    const rows = db.prepare(
+      `SELECT DISTINCT SUBSTR(sender_id, 6) AS user_id, MAX(created_at) AS last_ts
+       FROM conversation_memory
+       WHERE sender_id LIKE 'zalo:%'
+         AND sender_id NOT LIKE 'zalo:zalo_sim_%'
+         AND created_at >= ?
+       GROUP BY sender_id
+       ORDER BY last_ts DESC`,
+    ).all(cutoff) as any[];
+    for (const r of rows) {
+      if (r.user_id && !users.has(r.user_id)) users.set(r.user_id, '');
+    }
+  } catch {}
+
+  return Array.from(users, ([user_id, display_name]) => ({ user_id, display_name })).slice(0, limit);
 }
 
 /** Gửi broadcast: upload ảnh 1 lần + gửi rich message tới danh sách user.

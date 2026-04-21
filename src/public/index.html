@@ -822,13 +822,15 @@
           </div>
         </div>
 
-        <!-- Zalo OA Articles — đăng bài lên feed OA như FB post -->
+        <!-- Zalo OA Broadcast — gửi rich message (ảnh+caption) tới users trong CS window -->
         <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
           <div class="flex items-center justify-between mb-3">
-            <h3 class="font-bold text-slate-800">📰 Zalo OA Articles — Đăng bài lên feed OA</h3>
-            <button id="zalo-article-new" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-3 py-1 rounded">+ Soạn bài mới</button>
+            <h3 class="font-bold text-slate-800">📢 Zalo Broadcast — Gửi tin marketing hàng loạt</h3>
+            <button id="zalo-article-new" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-3 py-1 rounded">+ Soạn tin mới</button>
           </div>
-          <p class="text-xs text-slate-500 mb-3">Đăng bài lên newsfeed OA Sonder. Followers sẽ thấy trên Zalo app. Bot hỗ trợ AI draft + schedule.</p>
+          <div class="bg-amber-50 border border-amber-200 rounded p-2 mb-3 text-xs text-amber-800">
+            ℹ️ <b>Cách hoạt động</b>: Zalo OA Article public đã deprecate. Thay vào đó, bot gửi <b>rich message (ảnh + caption + CTA)</b> tới tất cả users đã chat OA trong <b>48h gần đây</b> (CS window). Hiệu quả tương tự post feed: khách thấy ngay trong conversation. Bot throttle 100ms/msg tránh rate limit.
+          </div>
 
           <!-- Article list -->
           <div id="zalo-articles-list" class="space-y-2 text-sm">
@@ -840,7 +842,7 @@
         <div id="zalo-article-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50 p-4">
           <div class="bg-white rounded-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto">
             <div class="flex items-center justify-between border-b px-4 py-3">
-              <h3 class="font-bold text-lg" id="zalo-article-modal-title">Soạn bài Zalo OA</h3>
+              <h3 class="font-bold text-lg" id="zalo-article-modal-title">📢 Soạn tin Broadcast Zalo</h3>
               <button id="zalo-article-close" class="text-slate-400 hover:text-slate-700 text-xl">×</button>
             </div>
             <div class="p-4 space-y-3">
@@ -868,13 +870,14 @@
                 <input id="zalo-article-desc" type="text" maxlength="200" class="w-full border rounded px-2 py-1.5 text-sm"/>
               </div>
               <div>
-                <label class="text-xs font-semibold text-slate-600">Ảnh cover * (HTTPS URL)</label>
+                <label class="text-xs font-semibold text-slate-600">Ảnh broadcast * (HTTPS URL)</label>
                 <input id="zalo-article-cover" type="url" placeholder="https://..." class="w-full border rounded px-2 py-1.5 text-sm font-mono"/>
-                <div class="text-[10px] text-slate-400 mt-0.5">Ảnh tỷ lệ 16:9 hoặc 1:1, tối thiểu 600px rộng. Zalo bắt buộc cover.</div>
+                <div class="text-[10px] text-slate-400 mt-0.5">Bot sẽ download → upload lên Zalo CDN → đính kèm trong rich message. 16:9 hoặc 1:1, min 600px.</div>
               </div>
               <div>
-                <label class="text-xs font-semibold text-slate-600">Nội dung bài *</label>
-                <textarea id="zalo-article-body" rows="10" placeholder="Viết content chính ở đây. Chia đoạn bằng dòng trống. Có thể dùng emoji 🏨🌟" class="w-full border rounded px-2 py-1.5 text-sm font-mono"></textarea>
+                <label class="text-xs font-semibold text-slate-600">Caption (nội dung tin) *</label>
+                <textarea id="zalo-article-body" rows="8" placeholder="Viết nội dung tin. Gồm tiêu đề, mô tả, CTA. Có emoji. Max ~2000 ký tự. Ví dụ:&#10;🏨 Sonder Airport — Ưu đãi tháng 4!&#10;&#10;Giảm 20% phòng Deluxe...&#10;&#10;📞 Hotline: 0348 644 833" class="w-full border rounded px-2 py-1.5 text-sm font-mono"></textarea>
+                <div class="text-[10px] text-slate-400 mt-0.5">Bot sẽ ghép title + description + body thành 1 caption đơn.</div>
               </div>
               <div>
                 <label class="text-xs font-semibold text-slate-600">Lịch đăng (để trống = đăng ngay khi nhấn Publish)</label>
@@ -887,7 +890,7 @@
               <div class="flex gap-2">
                 <button id="zalo-article-save-draft" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm px-3 py-1.5 rounded">💾 Lưu draft</button>
                 <button id="zalo-article-schedule-save" class="bg-amber-500 hover:bg-amber-600 text-white text-sm px-3 py-1.5 rounded">⏰ Lên lịch</button>
-                <button id="zalo-article-publish-now" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-3 py-1.5 rounded">🚀 Đăng ngay</button>
+                <button id="zalo-article-publish-now" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-3 py-1.5 rounded">📢 Broadcast ngay</button>
               </div>
             </div>
           </div>
