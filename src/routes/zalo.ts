@@ -40,9 +40,37 @@ zaloWebhookRouter.post('/webhook/zalo', async (req, res) => {
     }
 
     const event = body.event_name || body.event;
-    if (event !== 'user_send_text' && event !== 'user_send_message') return;
-
     const userId = String(body.sender?.id || '');
+
+    // Log all events for debugging (giúp debug khi customer chat mà bot không nhận)
+    console.log(`[zalo] event=${event} oa=${oaId} user=${userId}`);
+
+    // Welcome message khi khách follow OA
+    if (event === 'follow' || event === 'user_follow_oa') {
+      if (!userId) return;
+      try {
+        await zaloSendText(oa, userId,
+          `Xin chào! 👋 Cảm ơn anh/chị đã quan tâm ${oa.oa_name || 'Sonder'}.\n\n` +
+          `Sonder là chuỗi khách sạn & căn hộ chuẩn 3★ tại HCM (gần sân bay, quận 1, Bình Thạnh). ` +
+          `Anh/chị cần hỗ trợ:\n` +
+          `• 🏨 Đặt phòng / check giá\n` +
+          `• 📍 Xem vị trí khách sạn\n` +
+          `• 🛏 Tư vấn loại phòng\n\n` +
+          `Nhắn em để được hỗ trợ ngay ạ!`
+        );
+      } catch (e: any) { console.error('[zalo] follow welcome fail:', e?.message); }
+      return;
+    }
+
+    // Text message events (follower + anonymous đều xử lý giống nhau)
+    const textEvents = new Set([
+      'user_send_text',
+      'user_send_message',
+      'anonymous_send_text',
+      'user_submit_info',
+    ]);
+    if (!textEvents.has(event)) return;
+
     const text = String(body.message?.text || '').trim();
     if (!userId || !text) return;
 
