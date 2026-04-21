@@ -340,99 +340,190 @@ export function verifyZaloSignature(appSecret: string, timestamp: string, body: 
 }
 
 // ═══════════════════════════════════════════════════════════
-// OA Article / Post (đăng bài lên feed OA Sonder)
-// Docs: https://developers.zalo.me/docs/official-account-api/tra-cuu-thong-tin/bai-viet-cua-oa
+// OA Broadcast (gửi rich message ảnh+text tới users)
+// Zalo Article API (/article/create) đã deprecate cho tier tiêu chuẩn,
+// thay bằng rich message broadcast qua /oa/message/cs.
 // ═══════════════════════════════════════════════════════════
 
-/** Upload ảnh từ URL → upload_id để dùng trong article body hoặc cover */
-export async function zaloUploadImageByUrl(oa: ZaloOA, imageUrl: string): Promise<string | null> {
+import FormData from 'form-data';
+
+/** Upload ảnh lên Zalo, trả về attachment_id.
+ *  Zalo chỉ accept ảnh đã upload (không accept URL external trong message).
+ */
+export async function zaloUploadImage(oa: ZaloOA, imageBuffer: Buffer, filename = 'image.jpg', contentType = 'image/jpeg'): Promise<string | null> {
   try {
-    // Zalo cho phép pass URL trực tiếp trong field cover/body content nếu URL HTTPS public
-    // Hoặc dùng endpoint upload để get upload_id. Để đơn giản + reliable ta dùng URL approach.
-    // Nếu cần upload_id thật, gọi: POST /v2.0/article/upload_image với multipart form-data
-    return imageUrl;  // v2 article API accepts direct URL in most cases
-  } catch (e) {
-    return null;
+    const form = new FormData();
+    form.append('file', imageBuffer, { filename, contentType });
+    const r = await axios.post(
+      'https://openapi.zalo.me/v2.0/oa/upload/image',
+      form,
+      {
+        headers: { ...form.getHeaders(), access_token: oa.access_token },
+        timeout: 30000,
+        maxContentLength: 20 * 1024 * 1024,
+        maxBodyLength: 20 * 1024 * 1024,
+      },
+    );
+    if (r.data?.error !== 0) {
+      throw new Error(`Zalo upload ${r.data.error}: ${r.data.message}`);
+    }
+    return r.data?.data?.attachment_id || null;
+  } catch (e: any) {
+    console.error('[zalo] upload fail:', e?.response?.data || e?.message);
+    throw e;
   }
 }
 
-/** Đăng bài article lên Zalo OA feed.
- *  cover: HTTPS public URL (mandatory by Zalo)
- *  bodyBlocks: mảng { type: 'text'|'image', content: string, desc?: string }
- *    - type=text: content là HTML (vd "<p>Text here</p>")
- *    - type=image: content là URL hoặc upload_id
- *  Returns: { article_id, url } nếu OK, throw Error nếu fail.
- */
+/** Upload ảnh từ URL (bot download rồi upload lại cho Zalo) */
+export async function zaloUploadImageFromUrl(oa: ZaloOA, imageUrl: string): Promise<string | null> {
+  const resp = await axios.get(imageUrl, { responseType: 'arraybuffer', timeout: 20000, maxContentLength: 20 * 1024 * 1024 });
+  const buf = Buffer.from(resp.data);
+  const ct = resp.headers['content-type'] || 'image/jpeg';
+  const ext = ct.includes('png') ? 'png' : ct.includes('webp') ? 'webp' : 'jpg';
+  return zaloUploadImage(oa, buf, `cover.${ext}`, ct);
+}
+
+/** Gửi 1 rich message (ảnh + caption) tới 1 user. */
+export async function zaloSendRichMessage(
+  oa: ZaloOA,
+  userId: string,
+  opts: { caption: string; attachmentId?: string; imageUrl?: string },
+): Promise<{ ok: boolean; message_id?: string; error?: string }> {
+  try {
+    let attId = opts.attachmentId;
+    if (!attId && opts.imageUrl) {
+      attId = (await zaloUploadImageFromUrl(oa, opts.imageUrl)) || undefined;
+    }
+    const message: any = { text: opts.caption.slice(0, 2000) };
+    if (attId) {
+      message.attachment = {
+        type: 'template',
+        payload: { template_type: 'media', elements: [{ media_type: 'image', attachment_id: attId }] },
+      };
+    }
+    const r = await axios.post(
+      'https://openapi.zalo.me/v3.0/oa/message/cs',
+      { recipient: { user_id: userId }, message },
+      { headers: { access_token: oa.access_token, 'Content-Type': 'application/json' }, timeout: 15000 },
+    );
+    if (r.data?.error !== 0) {
+      return { ok: false, error: `Zalo ${r.data.error}: ${r.data.message}` };
+    }
+    return { ok: true, message_id: r.data?.data?.message_id };
+  } catch (e: any) {
+    return { ok: false, error: e?.response?.data?.message || e?.message };
+  }
+}
+
+/** Lấy danh sách user recent (đã chat OA trong 48h CS window)
+ *  Dùng để broadcast — chỉ gửi được cho users trong CS window. */
+export async function zaloGetRecentChatUsers(oa: ZaloOA, limit = 200): Promise<Array<{ user_id: string; display_name?: string }>> {
+  const users = new Map<string, string>();
+  let offset = 0;
+  const pageSize = 50;
+  while (offset < limit) {
+    try {
+      const r = await axios.get(
+        `https://openapi.zalo.me/v2.0/oa/listrecentchat?data=${encodeURIComponent(JSON.stringify({ offset, count: pageSize }))}`,
+        { headers: { access_token: oa.access_token }, timeout: 15000 },
+      );
+      const items = r.data?.data || [];
+      if (!items.length) break;
+      for (const msg of items) {
+        // to_id = user nhận tin (khi từ OA); from_id = user gửi (khi user → OA)
+        const uid = msg.src === 1 ? msg.from_id : msg.to_id;
+        const name = msg.src === 1 ? msg.from_display_name : msg.to_display_name;
+        if (uid && uid !== oa.oa_id && !users.has(uid)) users.set(uid, name || '');
+      }
+      offset += pageSize;
+      if (items.length < pageSize) break;
+    } catch {
+      break;
+    }
+  }
+  return Array.from(users, ([user_id, display_name]) => ({ user_id, display_name }));
+}
+
+/** Gửi broadcast: upload ảnh 1 lần + gửi rich message tới danh sách user.
+ *  Rate limit: Zalo khoảng 30 msg/second, tôi throttle 100ms giữa các request.
+ *  Returns { sent, failed, errors } per user. */
+export async function zaloBroadcastRichMessage(
+  oa: ZaloOA,
+  opts: {
+    caption: string;
+    imageUrl?: string;
+    attachmentId?: string;
+    userIds?: string[];         // nếu không truyền, dùng recent chat users
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<{ sent: number; failed: number; errors: Array<{ user_id: string; error: string }>; attachment_id?: string; recipient_count: number }> {
+  // 1. Upload cover nếu cần
+  let attId = opts.attachmentId;
+  if (!attId && opts.imageUrl) {
+    attId = (await zaloUploadImageFromUrl(oa, opts.imageUrl)) || undefined;
+  }
+
+  // 2. Lấy danh sách users
+  let targets = opts.userIds;
+  if (!targets || targets.length === 0) {
+    const recent = await zaloGetRecentChatUsers(oa, 500);
+    targets = recent.map(u => u.user_id);
+  }
+
+  const errors: Array<{ user_id: string; error: string }> = [];
+  let sent = 0, failed = 0;
+  for (let i = 0; i < targets.length; i++) {
+    const uid = targets[i];
+    const r = await zaloSendRichMessage(oa, uid, { caption: opts.caption, attachmentId: attId });
+    if (r.ok) sent++;
+    else { failed++; errors.push({ user_id: uid, error: r.error || 'unknown' }); }
+    opts.onProgress?.(i + 1, targets.length);
+    // Throttle 100ms để tránh rate limit
+    if (i < targets.length - 1) await new Promise(r => setTimeout(r, 100));
+  }
+  return { sent, failed, errors, attachment_id: attId, recipient_count: targets.length };
+}
+
+/** Backwards compat: legacy name used in routes */
 export async function zaloCreateArticle(
   oa: ZaloOA,
   opts: {
     title: string;
     description?: string;
-    cover: string;              // URL ảnh cover (bắt buộc)
+    cover: string;
     bodyBlocks: Array<{ type: 'text' | 'image'; content: string; desc?: string }>;
     author?: string;
     status?: 'show' | 'hide';
     comment?: 'enable' | 'disable';
   },
 ): Promise<{ article_id?: string; url?: string; raw: any }> {
-  const payload: any = {
-    type: 'normal',
-    title: opts.title.slice(0, 120),
-    desc: (opts.description || opts.title).slice(0, 200),
-    cover: opts.cover,
-    body: opts.bodyBlocks.map(b => ({
-      type: b.type,
-      content: b.content,
-      ...(b.desc ? { desc: b.desc } : {}),
-    })),
-    status: opts.status || 'show',
-    comment: opts.comment || 'enable',
-  };
-  if (opts.author) payload.author = opts.author;
+  // Convert article format → broadcast format
+  const caption = [
+    opts.title,
+    opts.description || '',
+    opts.bodyBlocks.filter(b => b.type === 'text').map(b => b.content.replace(/<[^>]+>/g, '')).join('\n\n'),
+  ].filter(Boolean).join('\n\n').slice(0, 2000);
 
-  try {
-    const r = await axios.post(
-      'https://openapi.zalo.me/v2.0/article/create',
-      payload,
-      {
-        headers: { access_token: oa.access_token, 'Content-Type': 'application/json' },
-        timeout: 30000,
-      },
-    );
-    if (r.data?.error && r.data.error !== 0) {
-      throw new Error(`Zalo article ${r.data.error}: ${r.data.message}`);
-    }
-    return {
-      article_id: r.data?.data?.id || r.data?.data?.article_id,
-      url: r.data?.data?.url,
-      raw: r.data,
-    };
-  } catch (e: any) {
-    console.error('[zalo] createArticle fail:', e?.response?.data || e?.message);
-    throw e;
+  const result = await zaloBroadcastRichMessage(oa, { caption, imageUrl: opts.cover });
+
+  if (result.sent === 0) {
+    throw new Error(`Zalo broadcast: 0 sent, ${result.failed} failed${result.errors[0] ? ' (first: ' + result.errors[0].error + ')' : ''}`);
   }
+  return {
+    article_id: result.attachment_id,
+    url: `broadcast:${result.sent}/${result.recipient_count}`,
+    raw: result,
+  };
 }
 
-/** Convert markdown/plain text → HTML blocks cho Zalo article body. */
+/** Convert plain text → body blocks (giữ để compat với legacy code) */
 export function textToZaloBodyBlocks(text: string, imageUrls?: string[]): Array<{ type: 'text' | 'image'; content: string; desc?: string }> {
   const blocks: Array<{ type: 'text' | 'image'; content: string; desc?: string }> = [];
-  // Simple: mỗi paragraph (phân cách bằng \n\n) thành 1 block text, sau đó chèn ảnh
   const paragraphs = text.split(/\n{2,}/).filter(p => p.trim());
   for (const p of paragraphs) {
-    // Convert newlines trong paragraph thành <br>, escape HTML basic
-    const html = '<p>' + p
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/\n/g, '<br>') + '</p>';
-    blocks.push({ type: 'text', content: html });
+    blocks.push({ type: 'text', content: p });
   }
-  // Append images as separate blocks
-  if (imageUrls && imageUrls.length) {
-    for (const url of imageUrls) {
-      blocks.push({ type: 'image', content: url });
-    }
-  }
+  if (imageUrls) for (const url of imageUrls) blocks.push({ type: 'image', content: url });
   return blocks;
 }
 
