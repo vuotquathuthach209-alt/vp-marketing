@@ -821,6 +821,77 @@
             <div id="zns-log" class="text-xs space-y-1 max-h-48 overflow-y-auto"></div>
           </div>
         </div>
+
+        <!-- Zalo OA Articles — đăng bài lên feed OA như FB post -->
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-bold text-slate-800">📰 Zalo OA Articles — Đăng bài lên feed OA</h3>
+            <button id="zalo-article-new" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-3 py-1 rounded">+ Soạn bài mới</button>
+          </div>
+          <p class="text-xs text-slate-500 mb-3">Đăng bài lên newsfeed OA Sonder. Followers sẽ thấy trên Zalo app. Bot hỗ trợ AI draft + schedule.</p>
+
+          <!-- Article list -->
+          <div id="zalo-articles-list" class="space-y-2 text-sm">
+            <div class="text-slate-400 text-center py-4">⏳ Đang tải...</div>
+          </div>
+        </div>
+
+        <!-- Article compose modal (hidden by default) -->
+        <div id="zalo-article-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50 p-4">
+          <div class="bg-white rounded-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b px-4 py-3">
+              <h3 class="font-bold text-lg" id="zalo-article-modal-title">Soạn bài Zalo OA</h3>
+              <button id="zalo-article-close" class="text-slate-400 hover:text-slate-700 text-xl">×</button>
+            </div>
+            <div class="p-4 space-y-3">
+              <!-- AI assist -->
+              <div class="bg-emerald-50 border border-emerald-200 rounded p-3">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="font-semibold text-emerald-800 text-sm">✨ AI tạo draft</span>
+                </div>
+                <div class="flex gap-2">
+                  <input id="zalo-article-ai-prompt" type="text" placeholder="Vd: 'Khuyến mãi tháng 5 giảm 20% phòng deluxe' hoặc 'Giới thiệu tiện nghi hồ bơi mới'" class="flex-1 border rounded px-2 py-1.5 text-sm"/>
+                  <button id="zalo-article-ai-go" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-3 py-1.5 rounded whitespace-nowrap">AI viết</button>
+                </div>
+                <div id="zalo-article-ai-status" class="text-xs text-emerald-700 mt-1"></div>
+              </div>
+
+              <!-- Fields -->
+              <input type="hidden" id="zalo-article-id"/>
+              <div>
+                <label class="text-xs font-semibold text-slate-600">Tiêu đề *</label>
+                <input id="zalo-article-title" type="text" maxlength="120" class="w-full border rounded px-2 py-1.5 text-sm"/>
+                <div class="text-[10px] text-slate-400 mt-0.5"><span id="zalo-article-title-count">0</span>/120 ký tự</div>
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-slate-600">Mô tả ngắn (description)</label>
+                <input id="zalo-article-desc" type="text" maxlength="200" class="w-full border rounded px-2 py-1.5 text-sm"/>
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-slate-600">Ảnh cover * (HTTPS URL)</label>
+                <input id="zalo-article-cover" type="url" placeholder="https://..." class="w-full border rounded px-2 py-1.5 text-sm font-mono"/>
+                <div class="text-[10px] text-slate-400 mt-0.5">Ảnh tỷ lệ 16:9 hoặc 1:1, tối thiểu 600px rộng. Zalo bắt buộc cover.</div>
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-slate-600">Nội dung bài *</label>
+                <textarea id="zalo-article-body" rows="10" placeholder="Viết content chính ở đây. Chia đoạn bằng dòng trống. Có thể dùng emoji 🏨🌟" class="w-full border rounded px-2 py-1.5 text-sm font-mono"></textarea>
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-slate-600">Lịch đăng (để trống = đăng ngay khi nhấn Publish)</label>
+                <input id="zalo-article-schedule" type="datetime-local" class="w-full border rounded px-2 py-1.5 text-sm"/>
+                <div class="text-[10px] text-slate-400 mt-0.5">Cron scheduler sẽ auto-publish mỗi 2 phút.</div>
+              </div>
+            </div>
+            <div class="border-t px-4 py-3 flex items-center justify-between gap-2">
+              <div id="zalo-article-modal-status" class="text-xs text-slate-500"></div>
+              <div class="flex gap-2">
+                <button id="zalo-article-save-draft" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm px-3 py-1.5 rounded">💾 Lưu draft</button>
+                <button id="zalo-article-schedule-save" class="bg-amber-500 hover:bg-amber-600 text-white text-sm px-3 py-1.5 rounded">⏰ Lên lịch</button>
+                <button id="zalo-article-publish-now" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-3 py-1.5 rounded">🚀 Đăng ngay</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- OTA DATABASE CONNECTOR TAB -->

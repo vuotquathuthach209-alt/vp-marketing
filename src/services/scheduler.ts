@@ -377,5 +377,65 @@ export function startScheduler() {
     }
   });
 
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h');
+  // Zalo OA Article publish — mỗi 2p check scheduled articles → publish
+  cron.schedule('*/2 * * * *', async () => {
+    try {
+      const { zaloCreateArticle, textToZaloBodyBlocks } = require('./zalo');
+      const { decrypt } = require('./crypto');
+      const now = Date.now();
+      const due = db.prepare(
+        `SELECT a.*, oa.access_token, oa.refresh_token, oa.app_secret, oa.oa_name, oa.enabled, oa.hotel_id as oa_hotel_id
+         FROM zalo_articles a
+         LEFT JOIN zalo_oa oa ON a.oa_id = oa.oa_id AND oa.enabled = 1
+         WHERE a.status = 'scheduled' AND a.scheduled_at IS NOT NULL AND a.scheduled_at <= ?
+         LIMIT 10`
+      ).all(now) as any[];
+      if (due.length === 0) return;
+      let ok = 0, fail = 0;
+      for (const art of due) {
+        if (!art.access_token) {
+          db.prepare(`UPDATE zalo_articles SET status='failed', error='OA disabled/missing', updated_at=? WHERE id=?`)
+            .run(now, art.id);
+          fail++; continue;
+        }
+        db.prepare(`UPDATE zalo_articles SET status='publishing', updated_at=? WHERE id=?`).run(now, art.id);
+        try {
+          const oa = {
+            id: art.oa_hotel_id,
+            hotel_id: art.hotel_id,
+            oa_id: art.oa_id,
+            oa_name: art.oa_name,
+            access_token: decrypt(art.access_token) || '',
+            refresh_token: decrypt(art.refresh_token),
+            app_secret: decrypt(art.app_secret),
+            token_expires_at: null,
+            enabled: 1,
+          };
+          const blocks = textToZaloBodyBlocks(art.body_html);
+          const result = await zaloCreateArticle(oa, {
+            title: art.title,
+            description: art.description,
+            cover: art.cover_url,
+            bodyBlocks: blocks,
+            status: 'show',
+            comment: 'enable',
+          });
+          db.prepare(
+            `UPDATE zalo_articles SET status='published', zalo_article_id=?, zalo_article_url=?,
+             published_at=?, error=NULL, updated_at=? WHERE id=?`
+          ).run(result.article_id || null, result.url || null, Date.now(), Date.now(), art.id);
+          ok++;
+        } catch (e: any) {
+          db.prepare(`UPDATE zalo_articles SET status='failed', error=?, updated_at=? WHERE id=?`)
+            .run(e?.message || 'unknown', Date.now(), art.id);
+          fail++;
+        }
+      }
+      if (due.length > 0) console.log(`[scheduler] zalo-articles-publish: ${ok} OK, ${fail} failed`);
+    } catch (e: any) {
+      console.error('[scheduler] zalo-articles-publish error:', e?.message);
+    }
+  });
+
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h, zalo-refresh 20h, zalo-articles 2p');
 }

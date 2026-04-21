@@ -4767,10 +4767,11 @@ setInterval(() => { if (document.visibilityState === 'visible') loadNewsStats().
 // ═══════════════════════════════════════════════════════════
 async function loadChannels() {
   await Promise.all([loadFbStatus(), loadZaloList(), loadZaloStats()]);
-  // ZNS + Simulator (guarded — functions defined later, may not exist in older cache)
+  // ZNS + Simulator + Articles (guarded — functions defined later, may not exist in older cache)
   try { if (typeof loadZnsTemplates === 'function') await loadZnsTemplates(); } catch {}
   try { if (typeof loadZnsLog === 'function') await loadZnsLog(); } catch {}
   try { if (typeof zsimRender === 'function') { zsimRender(); zsimRenderDebug(null); } } catch {}
+  try { if (typeof loadZaloArticles === 'function') await loadZaloArticles(); } catch {}
 }
 
 async function loadFbStatus() {
@@ -5894,6 +5895,230 @@ async function loadZnsLog() {
 }
 
 document.getElementById('zns-log-refresh')?.addEventListener('click', loadZnsLog);
+
+// ═══════════════════════════════════════════════════════════
+// Zalo OA Articles — đăng bài lên feed OA (như FB post)
+// ═══════════════════════════════════════════════════════════
+
+async function loadZaloArticles() {
+  const box = document.getElementById('zalo-articles-list');
+  if (!box) return;
+  try {
+    const r = await api('/zalo/articles?limit=30');
+    const items = r.items || [];
+    if (!items.length) {
+      box.innerHTML = '<div class="text-slate-400 text-center py-4">Chưa có bài nào. Click "+ Soạn bài mới" để bắt đầu.</div>';
+      return;
+    }
+    box.innerHTML = items.map(a => {
+      const statusBadge = {
+        draft: 'bg-slate-100 text-slate-700',
+        scheduled: 'bg-amber-100 text-amber-700',
+        publishing: 'bg-blue-100 text-blue-700 animate-pulse',
+        published: 'bg-emerald-100 text-emerald-700',
+        failed: 'bg-rose-100 text-rose-700',
+      }[a.status] || 'bg-slate-100';
+      const statusText = {
+        draft: '📝 Draft', scheduled: '⏰ Lên lịch', publishing: '🔄 Đang đăng',
+        published: '✅ Đã đăng', failed: '❌ Failed'
+      }[a.status] || a.status;
+      const meta = [];
+      if (a.status === 'scheduled' && a.scheduled_at) meta.push(`🗓 ${new Date(a.scheduled_at).toLocaleString('vi-VN')}`);
+      if (a.status === 'published' && a.published_at) meta.push(`✅ ${formatRelTime(a.published_at)}`);
+      if (a.status === 'failed' && a.error) meta.push(`⚠️ ${a.error.slice(0, 100)}`);
+      const actions = [];
+      if (a.status !== 'published' && a.status !== 'publishing') {
+        actions.push(`<button class="zalo-art-edit text-blue-600 hover:text-blue-800 text-xs" data-id="${a.id}">✏️ Sửa</button>`);
+        actions.push(`<button class="zalo-art-publish text-emerald-600 hover:text-emerald-800 text-xs" data-id="${a.id}">🚀 Đăng ngay</button>`);
+        actions.push(`<button class="zalo-art-del text-rose-600 hover:text-rose-800 text-xs" data-id="${a.id}">🗑</button>`);
+      }
+      if (a.zalo_article_url) actions.push(`<a href="${escapeHtml(a.zalo_article_url)}" target="_blank" class="text-indigo-600 hover:text-indigo-800 text-xs">🔗 Xem</a>`);
+      return `<div class="bg-white border border-slate-200 rounded p-3 flex gap-3">
+        ${a.cover_url ? `<img src="${escapeHtml(a.cover_url)}" class="w-20 h-20 object-cover rounded flex-shrink-0" onerror="this.style.display='none'"/>` : '<div class="w-20 h-20 bg-slate-100 rounded flex-shrink-0 flex items-center justify-center text-slate-400">📰</div>'}
+        <div class="flex-1 min-w-0">
+          <div class="flex items-start justify-between gap-2 mb-1">
+            <h4 class="font-semibold text-sm truncate">${escapeHtml(a.title)}</h4>
+            <span class="text-[10px] ${statusBadge} px-1.5 py-0.5 rounded whitespace-nowrap">${statusText}</span>
+          </div>
+          ${a.description ? `<div class="text-xs text-slate-500 line-clamp-2">${escapeHtml(a.description)}</div>` : ''}
+          ${meta.length ? `<div class="text-[10px] text-slate-400 mt-1">${meta.join(' · ')}</div>` : ''}
+          <div class="flex gap-3 mt-2">${actions.join('')}</div>
+        </div>
+      </div>`;
+    }).join('');
+
+    box.querySelectorAll('.zalo-art-edit').forEach(b => b.addEventListener('click', () => openZaloArticleModal(parseInt(b.dataset.id))));
+    box.querySelectorAll('.zalo-art-del').forEach(b => b.addEventListener('click', () => deleteZaloArticle(parseInt(b.dataset.id))));
+    box.querySelectorAll('.zalo-art-publish').forEach(b => b.addEventListener('click', () => publishZaloArticleNow(parseInt(b.dataset.id))));
+  } catch (e) {
+    box.innerHTML = `<div class="text-rose-600 p-3">Lỗi: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function openZaloArticleModal(id) {
+  const modal = document.getElementById('zalo-article-modal');
+  const title = document.getElementById('zalo-article-modal-title');
+  ['zalo-article-id', 'zalo-article-title', 'zalo-article-desc', 'zalo-article-cover', 'zalo-article-body', 'zalo-article-schedule'].forEach(f => {
+    const el = document.getElementById(f);
+    if (el) el.value = '';
+  });
+  document.getElementById('zalo-article-title-count').textContent = '0';
+  document.getElementById('zalo-article-modal-status').textContent = '';
+  document.getElementById('zalo-article-ai-status').textContent = '';
+
+  if (id) {
+    try {
+      const a = await api('/zalo/articles/' + id);
+      document.getElementById('zalo-article-id').value = a.id;
+      document.getElementById('zalo-article-title').value = a.title || '';
+      document.getElementById('zalo-article-desc').value = a.description || '';
+      document.getElementById('zalo-article-cover').value = a.cover_url || '';
+      document.getElementById('zalo-article-body').value = a.body_html || '';
+      if (a.scheduled_at) {
+        const dt = new Date(a.scheduled_at);
+        const pad = n => String(n).padStart(2, '0');
+        document.getElementById('zalo-article-schedule').value =
+          `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+      }
+      document.getElementById('zalo-article-title-count').textContent = (a.title || '').length;
+      title.textContent = `✏️ Sửa bài #${a.id}`;
+    } catch (e) { alert('Lỗi load: ' + e.message); return; }
+  } else {
+    title.textContent = '📝 Soạn bài Zalo OA mới';
+  }
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+}
+
+function closeZaloArticleModal() {
+  const modal = document.getElementById('zalo-article-modal');
+  modal.classList.add('hidden');
+  modal.classList.remove('flex');
+}
+
+document.getElementById('zalo-article-new')?.addEventListener('click', () => openZaloArticleModal(null));
+document.getElementById('zalo-article-close')?.addEventListener('click', closeZaloArticleModal);
+document.getElementById('zalo-article-title')?.addEventListener('input', (e) => {
+  document.getElementById('zalo-article-title-count').textContent = e.target.value.length;
+});
+
+async function saveOrPublishZaloArticle(action) {
+  const id = document.getElementById('zalo-article-id').value;
+  const title = document.getElementById('zalo-article-title').value.trim();
+  const description = document.getElementById('zalo-article-desc').value.trim();
+  const cover_url = document.getElementById('zalo-article-cover').value.trim();
+  const body_html = document.getElementById('zalo-article-body').value.trim();
+  const scheduleVal = document.getElementById('zalo-article-schedule').value;
+  const scheduled_at = scheduleVal ? new Date(scheduleVal).getTime() : null;
+  const status = document.getElementById('zalo-article-modal-status');
+
+  if (!title || !cover_url || !body_html) {
+    status.textContent = '⚠️ Cần nhập tiêu đề + cover URL + nội dung';
+    status.className = 'text-xs text-rose-600';
+    return;
+  }
+
+  status.textContent = '⏳ Đang lưu...';
+  status.className = 'text-xs text-slate-500';
+
+  try {
+    let articleId = id ? parseInt(id) : null;
+    if (articleId) {
+      await api('/zalo/articles/' + articleId, {
+        method: 'PUT',
+        body: JSON.stringify({ title, description, cover_url, body_html, scheduled_at: action === 'schedule' ? scheduled_at : null })
+      });
+    } else {
+      const r = await api('/zalo/articles', {
+        method: 'POST',
+        body: JSON.stringify({ title, description, cover_url, body_html, scheduled_at: action === 'schedule' ? scheduled_at : null })
+      });
+      articleId = r.id;
+    }
+
+    if (action === 'publish_now') {
+      status.textContent = '⏳ Đang đăng lên Zalo OA...';
+      const r = await api('/zalo/articles/' + articleId + '/publish', { method: 'POST' });
+      if (r.ok) {
+        status.textContent = `✅ Đã đăng! ${r.url ? `Xem: ${r.url}` : ''}`;
+        status.className = 'text-xs text-emerald-700';
+        setTimeout(() => { closeZaloArticleModal(); loadZaloArticles(); }, 1500);
+      } else {
+        status.textContent = `❌ Publish fail: ${r.error}`;
+        status.className = 'text-xs text-rose-600';
+      }
+    } else {
+      status.textContent = action === 'schedule'
+        ? `✅ Đã lên lịch ${scheduled_at ? new Date(scheduled_at).toLocaleString('vi-VN') : ''}`
+        : '✅ Đã lưu draft';
+      status.className = 'text-xs text-emerald-700';
+      setTimeout(() => { closeZaloArticleModal(); loadZaloArticles(); }, 1200);
+    }
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+    status.className = 'text-xs text-rose-600';
+  }
+}
+
+document.getElementById('zalo-article-save-draft')?.addEventListener('click', () => saveOrPublishZaloArticle('draft'));
+document.getElementById('zalo-article-schedule-save')?.addEventListener('click', () => {
+  if (!document.getElementById('zalo-article-schedule').value) {
+    alert('Vui lòng chọn thời gian lên lịch trước.');
+    return;
+  }
+  saveOrPublishZaloArticle('schedule');
+});
+document.getElementById('zalo-article-publish-now')?.addEventListener('click', () => saveOrPublishZaloArticle('publish_now'));
+
+// AI generate draft
+document.getElementById('zalo-article-ai-go')?.addEventListener('click', async () => {
+  const prompt = document.getElementById('zalo-article-ai-prompt').value.trim();
+  if (!prompt) return alert('Nhập topic/prompt trước');
+  const statusEl = document.getElementById('zalo-article-ai-status');
+  const btn = document.getElementById('zalo-article-ai-go');
+  btn.disabled = true;
+  statusEl.textContent = '⏳ AI đang viết...';
+  try {
+    const r = await api('/zalo/articles/generate', {
+      method: 'POST',
+      body: JSON.stringify({ prompt, hotel_name: 'Sonder Airport' })
+    });
+    if (r.ok && r.content) {
+      document.getElementById('zalo-article-title').value = r.content.title || '';
+      document.getElementById('zalo-article-desc').value = r.content.description || '';
+      document.getElementById('zalo-article-body').value = r.content.body || '';
+      document.getElementById('zalo-article-title-count').textContent = (r.content.title || '').length;
+      statusEl.textContent = `✅ AI viết xong (${r.provider || 'ai'}, ${r.latency_ms || 0}ms). Xem + chỉnh + nhập cover URL + publish!`;
+    } else {
+      statusEl.textContent = `❌ ${r.error || 'AI fail'}`;
+    }
+  } catch (e) {
+    statusEl.textContent = '❌ ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function deleteZaloArticle(id) {
+  if (!confirm('Xoá bài này?')) return;
+  try {
+    await api('/zalo/articles/' + id, { method: 'DELETE' });
+    loadZaloArticles();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function publishZaloArticleNow(id) {
+  if (!confirm('Đăng bài này lên Zalo OA NGAY?')) return;
+  try {
+    const r = await api('/zalo/articles/' + id + '/publish', { method: 'POST' });
+    if (r.ok) {
+      alert(`✅ Đã đăng!${r.url ? '\nURL: ' + r.url : ''}`);
+    } else {
+      alert('❌ ' + r.error);
+    }
+    loadZaloArticles();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
 
 // ====== Init ======
 checkAuth();

@@ -10,6 +10,7 @@ import {
   getZaloByOaId, listZaloForHotel, saveZaloOA,
   zaloSendText, zaloSendImage, zaloSendQuickReply, zaloGetUserProfile,
   zaloSendZNS, verifyZaloSignature, refreshZaloToken, ZaloOA,
+  zaloCreateArticle, textToZaloBodyBlocks,
 } from '../services/zalo';
 import { smartReplyWithSender } from '../services/smartreply';
 import { db } from '../db';
@@ -382,6 +383,167 @@ router.post('/simulate/reset', (req: AuthRequest, res) => {
   const senderKey = `zalo:zalo_sim_${userId}`;
   const r = db.prepare(`DELETE FROM conversation_memory WHERE sender_id = ?`).run(senderKey);
   res.json({ ok: true, deleted: r.changes });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Zalo OA Articles — đăng bài lên feed OA (như FB post)
+// ═══════════════════════════════════════════════════════════
+
+/** List articles (có filter status) */
+router.get('/articles', (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
+  const status = req.query.status as string | undefined;
+  const limit = Math.min(100, parseInt((req.query.limit as string) || '30', 10));
+  let sql = `SELECT id, hotel_id, oa_id, title, description, cover_url, status,
+             zalo_article_id, zalo_article_url, scheduled_at, published_at, error, created_at, updated_at
+             FROM zalo_articles WHERE hotel_id = ?`;
+  const params: any[] = [hotelId];
+  if (status) { sql += ` AND status = ?`; params.push(status); }
+  sql += ` ORDER BY created_at DESC LIMIT ?`;
+  params.push(limit);
+  const rows = db.prepare(sql).all(...params);
+  res.json({ items: rows });
+});
+
+/** Get 1 article full (bao gồm body_html) */
+router.get('/articles/:id', (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
+  const id = parseInt(String(req.params.id), 10);
+  const row = db.prepare(`SELECT * FROM zalo_articles WHERE id = ? AND hotel_id = ?`).get(id, hotelId);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  res.json(row);
+});
+
+/** Create draft or scheduled article */
+router.post('/articles', (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
+  const { title, description, cover_url, body_html, oa_id, scheduled_at } = req.body || {};
+  if (!title || !body_html || !cover_url) {
+    return res.status(400).json({ error: 'title + cover_url + body_html required' });
+  }
+  // Resolve OA: nếu không truyền oa_id, lấy OA đầu tiên của hotel
+  const oa = oa_id
+    ? listZaloForHotel(hotelId).find(o => o.oa_id === oa_id)
+    : listZaloForHotel(hotelId)[0];
+  if (!oa) return res.status(400).json({ error: 'No Zalo OA configured for this hotel' });
+
+  const now = Date.now();
+  const status = scheduled_at && scheduled_at > now ? 'scheduled' : 'draft';
+  const r = db.prepare(
+    `INSERT INTO zalo_articles
+     (hotel_id, oa_id, title, description, cover_url, body_html, status,
+      scheduled_at, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    hotelId, oa.oa_id, title, description || null, cover_url, body_html, status,
+    scheduled_at || null, req.user?.userId || null, now, now
+  );
+  res.json({ ok: true, id: Number(r.lastInsertRowid), status });
+});
+
+/** Update article (only draft/scheduled) */
+router.put('/articles/:id', (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
+  const id = parseInt(String(req.params.id), 10);
+  const existing = db.prepare(`SELECT status FROM zalo_articles WHERE id = ? AND hotel_id = ?`).get(id, hotelId) as any;
+  if (!existing) return res.status(404).json({ error: 'not found' });
+  if (existing.status === 'published') return res.status(400).json({ error: 'cannot edit published article' });
+
+  const { title, description, cover_url, body_html, scheduled_at } = req.body || {};
+  const updates: string[] = [];
+  const params: any[] = [];
+  if (title !== undefined) { updates.push('title = ?'); params.push(title); }
+  if (description !== undefined) { updates.push('description = ?'); params.push(description); }
+  if (cover_url !== undefined) { updates.push('cover_url = ?'); params.push(cover_url); }
+  if (body_html !== undefined) { updates.push('body_html = ?'); params.push(body_html); }
+  if (scheduled_at !== undefined) {
+    updates.push('scheduled_at = ?, status = ?');
+    params.push(scheduled_at || null);
+    params.push(scheduled_at && scheduled_at > Date.now() ? 'scheduled' : 'draft');
+  }
+  if (!updates.length) return res.json({ ok: true, changed: 0 });
+  updates.push('updated_at = ?'); params.push(Date.now());
+  params.push(id, hotelId);
+  const r = db.prepare(`UPDATE zalo_articles SET ${updates.join(', ')} WHERE id = ? AND hotel_id = ?`).run(...params);
+  res.json({ ok: true, changed: r.changes });
+});
+
+/** Delete draft/scheduled article */
+router.delete('/articles/:id', (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
+  const id = parseInt(String(req.params.id), 10);
+  const existing = db.prepare(`SELECT status FROM zalo_articles WHERE id = ? AND hotel_id = ?`).get(id, hotelId) as any;
+  if (!existing) return res.status(404).json({ error: 'not found' });
+  if (existing.status === 'published') return res.status(400).json({ error: 'cannot delete published article' });
+  db.prepare(`DELETE FROM zalo_articles WHERE id = ? AND hotel_id = ?`).run(id, hotelId);
+  res.json({ ok: true });
+});
+
+/** Publish article ngay (either draft → published, hoặc scheduled bị force) */
+router.post('/articles/:id/publish', async (req: AuthRequest, res) => {
+  const hotelId = getHotelId(req);
+  const id = parseInt(String(req.params.id), 10);
+  const art = db.prepare(`SELECT * FROM zalo_articles WHERE id = ? AND hotel_id = ?`).get(id, hotelId) as any;
+  if (!art) return res.status(404).json({ error: 'not found' });
+  if (art.status === 'published') return res.status(400).json({ error: 'already published', url: art.zalo_article_url });
+
+  const oa = listZaloForHotel(hotelId).find(o => o.oa_id === art.oa_id);
+  if (!oa) return res.status(400).json({ error: 'OA not found for this article' });
+
+  db.prepare(`UPDATE zalo_articles SET status='publishing', updated_at=? WHERE id=?`).run(Date.now(), id);
+
+  try {
+    // body_html may be plain text with paragraphs, or full HTML.
+    // textToZaloBodyBlocks converts plain text → blocks. If user passed HTML, it'll still be wrapped.
+    const blocks = textToZaloBodyBlocks(art.body_html);
+    const result = await zaloCreateArticle(oa, {
+      title: art.title,
+      description: art.description,
+      cover: art.cover_url,
+      bodyBlocks: blocks,
+      status: 'show',
+      comment: 'enable',
+    });
+    db.prepare(
+      `UPDATE zalo_articles SET status='published', zalo_article_id=?, zalo_article_url=?,
+       published_at=?, error=NULL, updated_at=? WHERE id=?`
+    ).run(result.article_id || null, result.url || null, Date.now(), Date.now(), id);
+    res.json({ ok: true, article_id: result.article_id, url: result.url, raw: result.raw });
+  } catch (e: any) {
+    const errMsg = e?.message || 'unknown';
+    db.prepare(`UPDATE zalo_articles SET status='failed', error=?, updated_at=? WHERE id=?`)
+      .run(errMsg, Date.now(), id);
+    res.status(500).json({ ok: false, error: errMsg });
+  }
+});
+
+/** Generate AI content cho Zalo article (title + description + body) */
+router.post('/articles/generate', async (req: AuthRequest, res) => {
+  const { prompt, hotel_name } = req.body || {};
+  if (!prompt) return res.status(400).json({ error: 'prompt required' });
+  try {
+    const { smartCascade } = require('../services/smart-cascade');
+    const system = `Bạn là copywriter cho OA Zalo của khách sạn Sonder. Viết 1 bài đăng (~200-400 từ) phong cách thân thiện, có emoji phù hợp. Tuân thủ:
+- Tiêu đề ngắn <60 ký tự
+- Description ngắn <150 ký tự (tóm tắt)
+- Body: 2-4 đoạn, mỗi đoạn cách nhau 1 dòng trống
+- Kết bằng CTA rõ (gọi hotline, đặt phòng, inbox)
+- Không dùng hashtag (Zalo không support)
+- Dùng tone thân thiện, có emoji
+Output JSON schema: {"title":"...", "description":"...", "body":"..."}`;
+    const user = `Hotel: ${hotel_name || 'Sonder Airport'}\nTopic: ${prompt}`;
+    const result = await smartCascade({ system, user, json: true, temperature: 0.7, maxTokens: 1500 });
+    let content: any = null;
+    try {
+      content = JSON.parse(result.text);
+    } catch {
+      // If AI didn't return valid JSON, fallback: treat all as body
+      content = { title: prompt.slice(0, 60), description: prompt.slice(0, 150), body: result.text };
+    }
+    res.json({ ok: true, content, provider: result.provider, latency_ms: result.latency_ms });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message });
+  }
 });
 
 export default router;

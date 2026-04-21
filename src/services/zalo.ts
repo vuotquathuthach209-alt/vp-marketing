@@ -65,6 +65,29 @@ CREATE TABLE IF NOT EXISTS zalo_zns_log (
   sent_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_zns_log_hotel ON zalo_zns_log(hotel_id, sent_at DESC);
+
+-- Zalo OA Articles — bài đăng lên feed OA Sonder (giống FB post)
+CREATE TABLE IF NOT EXISTS zalo_articles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  oa_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  cover_url TEXT,                     -- URL ảnh cover (HTTPS public)
+  body_html TEXT NOT NULL,            -- Rich text content (HTML hoặc markdown chuyển HTML)
+  status TEXT DEFAULT 'draft',        -- draft | scheduled | publishing | published | failed
+  zalo_article_id TEXT,               -- ID từ Zalo sau khi publish OK
+  zalo_article_url TEXT,              -- public URL của bài trên Zalo
+  scheduled_at INTEGER,               -- null nếu publish ngay
+  published_at INTEGER,
+  error TEXT,                         -- message khi fail
+  post_id INTEGER,                    -- FK tới posts.id nếu cross-post từ FB
+  created_by INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_zalo_articles_hotel ON zalo_articles(hotel_id, status, scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_zalo_articles_scheduled ON zalo_articles(status, scheduled_at) WHERE status IN ('scheduled','publishing');
 `);
 
 export interface ZaloOA {
@@ -314,6 +337,103 @@ export function verifyZaloSignature(appSecret: string, timestamp: string, body: 
     .update(appSecret + body + timestamp)
     .digest('hex');
   return expected === mac;
+}
+
+// ═══════════════════════════════════════════════════════════
+// OA Article / Post (đăng bài lên feed OA Sonder)
+// Docs: https://developers.zalo.me/docs/official-account-api/tra-cuu-thong-tin/bai-viet-cua-oa
+// ═══════════════════════════════════════════════════════════
+
+/** Upload ảnh từ URL → upload_id để dùng trong article body hoặc cover */
+export async function zaloUploadImageByUrl(oa: ZaloOA, imageUrl: string): Promise<string | null> {
+  try {
+    // Zalo cho phép pass URL trực tiếp trong field cover/body content nếu URL HTTPS public
+    // Hoặc dùng endpoint upload để get upload_id. Để đơn giản + reliable ta dùng URL approach.
+    // Nếu cần upload_id thật, gọi: POST /v2.0/article/upload_image với multipart form-data
+    return imageUrl;  // v2 article API accepts direct URL in most cases
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Đăng bài article lên Zalo OA feed.
+ *  cover: HTTPS public URL (mandatory by Zalo)
+ *  bodyBlocks: mảng { type: 'text'|'image', content: string, desc?: string }
+ *    - type=text: content là HTML (vd "<p>Text here</p>")
+ *    - type=image: content là URL hoặc upload_id
+ *  Returns: { article_id, url } nếu OK, throw Error nếu fail.
+ */
+export async function zaloCreateArticle(
+  oa: ZaloOA,
+  opts: {
+    title: string;
+    description?: string;
+    cover: string;              // URL ảnh cover (bắt buộc)
+    bodyBlocks: Array<{ type: 'text' | 'image'; content: string; desc?: string }>;
+    author?: string;
+    status?: 'show' | 'hide';
+    comment?: 'enable' | 'disable';
+  },
+): Promise<{ article_id?: string; url?: string; raw: any }> {
+  const payload: any = {
+    type: 'normal',
+    title: opts.title.slice(0, 120),
+    desc: (opts.description || opts.title).slice(0, 200),
+    cover: opts.cover,
+    body: opts.bodyBlocks.map(b => ({
+      type: b.type,
+      content: b.content,
+      ...(b.desc ? { desc: b.desc } : {}),
+    })),
+    status: opts.status || 'show',
+    comment: opts.comment || 'enable',
+  };
+  if (opts.author) payload.author = opts.author;
+
+  try {
+    const r = await axios.post(
+      'https://openapi.zalo.me/v2.0/article/create',
+      payload,
+      {
+        headers: { access_token: oa.access_token, 'Content-Type': 'application/json' },
+        timeout: 30000,
+      },
+    );
+    if (r.data?.error && r.data.error !== 0) {
+      throw new Error(`Zalo article ${r.data.error}: ${r.data.message}`);
+    }
+    return {
+      article_id: r.data?.data?.id || r.data?.data?.article_id,
+      url: r.data?.data?.url,
+      raw: r.data,
+    };
+  } catch (e: any) {
+    console.error('[zalo] createArticle fail:', e?.response?.data || e?.message);
+    throw e;
+  }
+}
+
+/** Convert markdown/plain text → HTML blocks cho Zalo article body. */
+export function textToZaloBodyBlocks(text: string, imageUrls?: string[]): Array<{ type: 'text' | 'image'; content: string; desc?: string }> {
+  const blocks: Array<{ type: 'text' | 'image'; content: string; desc?: string }> = [];
+  // Simple: mỗi paragraph (phân cách bằng \n\n) thành 1 block text, sau đó chèn ảnh
+  const paragraphs = text.split(/\n{2,}/).filter(p => p.trim());
+  for (const p of paragraphs) {
+    // Convert newlines trong paragraph thành <br>, escape HTML basic
+    const html = '<p>' + p
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br>') + '</p>';
+    blocks.push({ type: 'text', content: html });
+  }
+  // Append images as separate blocks
+  if (imageUrls && imageUrls.length) {
+    for (const url of imageUrls) {
+      blocks.push({ type: 'image', content: url });
+    }
+  }
+  return blocks;
 }
 
 /**
