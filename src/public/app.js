@@ -132,6 +132,7 @@ function switchTab(tab) {
   if (tab === 'playground') loadPlayground();
   if (tab === 'hotels') loadHotelsEditor();
   if (tab === 'conversations') loadConversations();
+  if (tab === 'botmonitor') loadBotMonitor();
   if (tab === 'otadb') loadOtaConfig();
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
@@ -2194,6 +2195,137 @@ async function otaSample(schema, name) {
 document.getElementById('ota-sample-close')?.addEventListener('click', () => {
   document.getElementById('ota-sample').classList.add('hidden');
 });
+
+// ═══════════════════════════════════════════════════════════
+// Bot Monitor dashboard
+// ═══════════════════════════════════════════════════════════
+async function loadBotMonitor() {
+  const days = document.getElementById('bm-days')?.value || '7';
+  await Promise.all([
+    bmLoadOverview(days),
+    bmLoadIntents(days),
+    bmLoadProblems(days),
+    bmLoadProviders(days),
+  ]);
+}
+
+async function bmLoadOverview(days) {
+  try {
+    const r = await api('/bot-monitor/overview?days=' + days);
+    const kpi = document.getElementById('bm-kpi');
+    kpi.innerHTML = [
+      bmCard('💬 Tin nhắn', r.messages.total.toLocaleString(), `${r.messages.unique_users} users · ${r.messages.last_24h} in 24h`, 'bg-blue-50 text-blue-700'),
+      bmCard('💾 Cache hit rate', (r.cache.hit_rate * 100).toFixed(1) + '%', `${r.cache.hits} hits (saved LLM)`, 'bg-emerald-50 text-emerald-700'),
+      bmCard('📞 SĐT thu', r.conversions.phones, 'conversions', 'bg-amber-50 text-amber-700'),
+      bmCard('💰 AI cost', '$' + r.ai_cost.cost_usd.toFixed(4), `${r.ai_cost.calls} calls · ${r.ai_cost.tokens.toLocaleString()} tok`, 'bg-indigo-50 text-indigo-700'),
+      bmCard('🎓 Training pending', r.training.pending, `${r.training.approved_or_trusted} approved`, 'bg-purple-50 text-purple-700'),
+    ].join('');
+  } catch (e) { console.warn('bm overview:', e.message); }
+}
+
+function bmCard(label, value, sub, bg) {
+  return `<div class="${bg || 'bg-white'} rounded-lg p-3 border">
+    <div class="text-[10px] uppercase opacity-70">${label}</div>
+    <div class="text-2xl font-bold">${value}</div>
+    <div class="text-[10px] opacity-60 mt-1">${sub || ''}</div>
+  </div>`;
+}
+
+async function bmLoadIntents(days) {
+  try {
+    const r = await api('/bot-monitor/intents?days=' + days);
+    const box = document.getElementById('bm-intents');
+    if (!r.intents?.length) {
+      box.innerHTML = '<div class="text-slate-400">Chưa có dữ liệu.</div>';
+      return;
+    }
+    const max = Math.max(...r.intents.map(i => i.n));
+    box.innerHTML = r.intents.map(i => {
+      const pct = (i.n / max) * 100;
+      const bad = ['negative_phone_request', 'auto_handoff', 'bot_paused'].includes(i.intent);
+      const barColor = bad ? 'bg-rose-400' : 'bg-emerald-500';
+      return `<div class="flex items-center gap-2">
+        <span class="w-32 truncate font-mono ${bad ? 'text-rose-700' : 'text-slate-700'}">${escapeHtml(i.intent)}</span>
+        <div class="flex-1 bg-slate-100 rounded-full h-4 relative">
+          <div class="${barColor} h-4 rounded-full" style="width: ${pct}%"></div>
+          <span class="absolute left-2 top-0 text-[10px] leading-4 font-semibold">${i.n}</span>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) { console.warn('bm intents:', e.message); }
+}
+
+async function bmLoadProblems(days) {
+  try {
+    const r = await api('/bot-monitor/problems?days=' + days);
+    // Problem intents summary
+    const pBox = document.getElementById('bm-problems');
+    pBox.innerHTML = r.problem_intents?.length
+      ? r.problem_intents.map(p => `<div class="flex justify-between bg-rose-50 border border-rose-200 px-2 py-1 rounded">
+          <span class="font-mono text-rose-700">${escapeHtml(p.intent)}</span>
+          <span class="font-bold text-rose-700">${p.n}</span>
+        </div>`).join('')
+      : '<div class="text-emerald-600">✓ Không có vấn đề nào!</div>';
+
+    // Repeater users
+    const rBox = document.getElementById('bm-repeaters');
+    rBox.innerHTML = r.confused_users?.length
+      ? r.confused_users.map(u => `<div class="bg-amber-50 border border-amber-200 px-2 py-1 rounded">
+          <div class="font-mono text-amber-800">${escapeHtml(u.sender_id.slice(-10))}</div>
+          <div class="text-amber-700">${u.total_msgs} msgs · ${u.unique_msgs} unique (${Math.round(u.unique_msgs/u.total_msgs*100)}% diversity)</div>
+        </div>`).join('')
+      : '<div class="text-emerald-600">✓ Không có user nào hỏi lặp bất thường.</div>';
+
+    // Recent examples
+    const eBox = document.getElementById('bm-examples');
+    eBox.innerHTML = r.recent_examples?.length
+      ? r.recent_examples.map(e => `<div class="bg-slate-50 border border-slate-200 p-2 rounded">
+          <div class="font-mono text-[10px] text-rose-600">${escapeHtml(e.intent)} · ${formatRelTime(e.created_at)}</div>
+          ${e.user_msg ? `<div class="text-slate-700 mt-1">👤 ${escapeHtml(e.user_msg.slice(0, 100))}</div>` : ''}
+          <div class="text-blue-700 mt-1">🤖 ${escapeHtml((e.bot_msg || '').slice(0, 100))}</div>
+        </div>`).join('')
+      : '<div class="text-slate-400">Không có ví dụ.</div>';
+  } catch (e) { console.warn('bm problems:', e.message); }
+}
+
+async function bmLoadProviders(days) {
+  try {
+    const r = await api('/bot-monitor/providers?days=' + days);
+    const box = document.getElementById('bm-providers');
+    if (!r.providers?.length) {
+      box.innerHTML = '<div class="text-slate-400 text-xs">Chưa có dữ liệu AI usage.</div>';
+      return;
+    }
+    box.innerHTML = `<table class="w-full text-xs">
+      <thead class="text-slate-500"><tr>
+        <th class="text-left font-normal py-1">Provider</th>
+        <th class="text-left font-normal py-1">Model</th>
+        <th class="text-right font-normal py-1">Calls</th>
+        <th class="text-right font-normal py-1">Fails</th>
+        <th class="text-right font-normal py-1">In tok</th>
+        <th class="text-right font-normal py-1">Out tok</th>
+        <th class="text-right font-normal py-1">Cost</th>
+      </tr></thead>
+      <tbody>${r.providers.map(p => `<tr class="border-t border-slate-100">
+        <td class="py-1 font-mono">${escapeHtml(p.provider || '-')}</td>
+        <td class="py-1 font-mono text-[10px]">${escapeHtml(p.model || '-')}</td>
+        <td class="py-1 text-right">${(p.calls || 0).toLocaleString()}</td>
+        <td class="py-1 text-right ${p.failures > 0 ? 'text-rose-600' : ''}">${p.failures || 0}</td>
+        <td class="py-1 text-right">${(p.in_tok || 0).toLocaleString()}</td>
+        <td class="py-1 text-right">${(p.out_tok || 0).toLocaleString()}</td>
+        <td class="py-1 text-right font-semibold">$${(p.cost_usd || 0).toFixed(4)}</td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+  } catch (e) { console.warn('bm providers:', e.message); }
+}
+
+document.getElementById('bm-days')?.addEventListener('change', loadBotMonitor);
+document.getElementById('bm-refresh')?.addEventListener('click', loadBotMonitor);
+setInterval(() => {
+  if (document.visibilityState === 'visible' && !document.querySelector('[data-panel="botmonitor"].hidden')) {
+    loadBotMonitor();  // Auto-refresh mỗi 60s khi đang xem tab
+  }
+}, 60_000);
 
 // ───── OTA Push API admin ─────
 async function loadOtaPushSecretStatus() {
