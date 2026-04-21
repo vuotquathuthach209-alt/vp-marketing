@@ -59,6 +59,30 @@ router.post('/test', async (_req, res) => {
   res.json(result);
 });
 
+// Enumerate all tables + views — đặc biệt hữu ích để xem marketing bot views
+router.get('/schema', async (_req, res) => {
+  try {
+    const { enumerateOtaSchema } = require('../services/ota-db');
+    const r = await enumerateOtaSchema();
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Sample 1-5 rows từ 1 relation để inspect structure
+router.post('/sample', async (req, res) => {
+  try {
+    const { schema, name, limit } = req.body || {};
+    if (!schema || !name) return res.status(400).json({ error: 'schema + name required' });
+    const { sampleOtaRelation } = require('../services/ota-db');
+    const r = await sampleOtaRelation(schema, name, limit || 3);
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ═══════════ HOTELS ═══════════
 
 // GET /api/ota/hotels

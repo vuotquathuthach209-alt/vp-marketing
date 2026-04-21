@@ -92,6 +92,7 @@
         <button data-tab="autoreply" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="message-circle"></i><span>Chatbot</span></button>
         <button data-tab="playground" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="message-square-dashed"></i><span>Thử bot</span></button>
         <button data-tab="hotels" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="building-2"></i><span>Khách sạn</span></button>
+        <button data-tab="otadb" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="database-zap"></i><span>OTA DB</span></button>
         <button data-tab="conversations" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="messages-square"></i><span>Hội thoại</span></button>
         <button data-tab="training" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="graduation-cap"></i><span>Duyệt Training</span><span id="training-badge" class="ml-auto hidden text-xs bg-amber-500 text-slate-900 px-1.5 py-0.5 rounded-full font-bold"></span></button>
         <button data-tab="news" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="newspaper"></i><span>News → Post</span><span id="news-badge" class="ml-auto hidden text-xs bg-indigo-500 text-white px-1.5 py-0.5 rounded-full font-bold"></span></button>
@@ -498,6 +499,60 @@
           <p class="text-slate-500 text-sm">Xem & chỉnh sửa thông tin khách sạn mà bot dùng để tư vấn. Bật <b>manual_override</b> để ETL không ghi đè khi scraper chạy lại.</p>
         </div>
         <div id="hotels-list" class="space-y-3 max-w-6xl"></div>
+      </section>
+
+      <!-- OTA DATABASE CONNECTOR TAB -->
+      <section data-panel="otadb" class="panel hidden">
+        <div class="mb-4 max-w-6xl">
+          <h2 class="text-2xl font-bold mb-2">🗄️ OTA Database</h2>
+          <p class="text-slate-500 text-sm">Kết nối đến OTA PostgreSQL (read-only). Khi đã kết nối, bạn có thể xem schema + views mà OTA team đã tạo riêng cho marketing bot.</p>
+        </div>
+        <!-- Config form -->
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-4xl">
+          <h3 class="font-bold mb-3">⚙️ Cấu hình kết nối</h3>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="block text-xs font-semibold mb-1">Host</label><input id="ota-host" placeholder="103.153.73.97 hoặc pg-host.example" class="w-full border rounded px-2 py-1 text-sm"/></div>
+            <div><label class="block text-xs font-semibold mb-1">Port</label><input id="ota-port" type="number" placeholder="5432" class="w-full border rounded px-2 py-1 text-sm" value="5432"/></div>
+            <div><label class="block text-xs font-semibold mb-1">Database</label><input id="ota-database" placeholder="ota_prod / sonder_db / ..." class="w-full border rounded px-2 py-1 text-sm"/></div>
+            <div><label class="block text-xs font-semibold mb-1">User</label><input id="ota-user" placeholder="readonly_user" class="w-full border rounded px-2 py-1 text-sm"/></div>
+            <div><label class="block text-xs font-semibold mb-1">Password</label><input id="ota-password" type="password" placeholder="..." class="w-full border rounded px-2 py-1 text-sm"/></div>
+            <div class="flex items-center gap-2 pt-5">
+              <input id="ota-ssl" type="checkbox" checked/>
+              <label for="ota-ssl" class="text-sm">Bật SSL (khuyến nghị)</label>
+            </div>
+          </div>
+          <div class="flex gap-2 mt-3 items-center">
+            <button id="btn-ota-save" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-4 py-1.5 rounded font-medium">💾 Lưu</button>
+            <button id="btn-ota-test" class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-1.5 rounded">🔌 Test kết nối</button>
+            <button id="btn-ota-enum" class="bg-slate-800 hover:bg-slate-900 text-white text-sm px-4 py-1.5 rounded">🔍 Liệt kê schema</button>
+            <span id="ota-status" class="text-sm text-slate-600"></span>
+          </div>
+        </div>
+
+        <!-- Schema list -->
+        <div class="grid grid-cols-2 gap-4 max-w-6xl">
+          <div class="bg-white rounded-lg p-3 shadow-sm border border-slate-200">
+            <h3 class="font-bold mb-2">📋 Tables <span id="ota-tables-count" class="text-xs text-slate-400"></span></h3>
+            <div id="ota-tables" class="space-y-1 text-xs max-h-96 overflow-y-auto">
+              <div class="text-slate-400">Nhấn "🔍 Liệt kê schema" để xem.</div>
+            </div>
+          </div>
+          <div class="bg-white rounded-lg p-3 shadow-sm border border-slate-200">
+            <h3 class="font-bold mb-2">🪟 Views <span id="ota-views-count" class="text-xs text-slate-400"></span> <span class="text-xs text-emerald-600 font-normal">(thường là bot-view)</span></h3>
+            <div id="ota-views" class="space-y-1 text-xs max-h-96 overflow-y-auto">
+              <div class="text-slate-400">Nhấn "🔍 Liệt kê schema" để xem.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sample data -->
+        <div id="ota-sample" class="bg-white rounded-lg p-3 shadow-sm border border-slate-200 mt-4 max-w-6xl hidden">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="font-bold text-sm">📊 Sample: <span id="ota-sample-name"></span></h3>
+            <button id="ota-sample-close" class="text-xs text-slate-500 hover:text-slate-700">✗ Đóng</button>
+          </div>
+          <pre id="ota-sample-data" class="bg-slate-900 text-emerald-300 p-3 rounded text-xs overflow-x-auto" style="max-height: 400px;"></pre>
+        </div>
       </section>
 
       <!-- CONVERSATIONS TAB (Đợt 3.3) -->

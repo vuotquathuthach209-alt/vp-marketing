@@ -132,6 +132,7 @@ function switchTab(tab) {
   if (tab === 'playground') loadPlayground();
   if (tab === 'hotels') loadHotelsEditor();
   if (tab === 'conversations') loadConversations();
+  if (tab === 'otadb') loadOtaConfig();
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
   b.addEventListener('click', () => switchTab(b.dataset.tab));
@@ -2116,8 +2117,82 @@ document.getElementById('btn-ota-test')?.addEventListener('click', async () => {
   st.textContent = '⏳ Đang test kết nối...';
   try {
     const r = await api('/ota/test', { method: 'POST' });
-    st.innerHTML = r.ok ? `✅ ${r.message}` : `❌ ${r.message}`;
+    st.innerHTML = r.ok ? `✅ ${r.message} <span class="text-xs text-slate-500">(${escapeHtml((r.version || '').slice(0, 50))})</span>` : `❌ ${r.message}`;
   } catch (e) { st.textContent = '❌ ' + e.message; }
+});
+
+// Đợt 4: Enumerate schema
+document.getElementById('btn-ota-enum')?.addEventListener('click', async () => {
+  const st = document.getElementById('ota-status');
+  st.textContent = '⏳ Đang liệt kê schema...';
+  try {
+    const r = await api('/ota/schema');
+    if (!r.ok) { st.textContent = '❌ ' + (r.error || 'lỗi'); return; }
+    renderOtaSchema(r.tables, r.views);
+    st.innerHTML = `✅ ${r.tables.length} tables + ${r.views.length} views`;
+  } catch (e) { st.textContent = '❌ ' + e.message; }
+});
+
+function isLikelyBotView(name, cols) {
+  const n = (name || '').toLowerCase();
+  const colJoin = (cols || []).join(' ').toLowerCase();
+  if (/bot|marketing|mkt|sonder|public|v_|preview/.test(n)) return true;
+  if (/summary|description|usp|brand|ai_|profile/.test(colJoin)) return true;
+  return false;
+}
+
+function renderOtaSchema(tables, views) {
+  document.getElementById('ota-tables-count').textContent = '(' + tables.length + ')';
+  document.getElementById('ota-views-count').textContent = '(' + views.length + ')';
+
+  // Views rendered FIRST with highlighting for marketing candidates
+  const vBox = document.getElementById('ota-views');
+  if (!views.length) {
+    vBox.innerHTML = '<div class="text-slate-400">Không có view nào.</div>';
+  } else {
+    vBox.innerHTML = views.map(v => {
+      const botLike = isLikelyBotView(v.name, v.columns);
+      const bg = botLike ? 'bg-emerald-50 border-emerald-300' : 'bg-slate-50 border-slate-200';
+      const badge = botLike ? '<span class="text-[10px] bg-emerald-600 text-white px-1 rounded">BOT?</span>' : '';
+      return `<div class="${bg} border rounded p-2 cursor-pointer hover:shadow-sm ota-view-item" data-schema="${escapeHtml(v.schema)}" data-name="${escapeHtml(v.name)}">
+        <div class="flex items-center gap-1 font-semibold text-slate-800">${badge} ${escapeHtml(v.schema)}.${escapeHtml(v.name)}</div>
+        <div class="text-[10px] text-slate-500 mt-0.5">${(v.columns || []).length} cols: ${escapeHtml((v.columns || []).slice(0, 8).join(', '))}${(v.columns || []).length > 8 ? '...' : ''}</div>
+      </div>`;
+    }).join('');
+  }
+
+  const tBox = document.getElementById('ota-tables');
+  if (!tables.length) {
+    tBox.innerHTML = '<div class="text-slate-400">Không có table nào.</div>';
+  } else {
+    tBox.innerHTML = tables.map(t => `<div class="bg-slate-50 border border-slate-200 rounded p-2 cursor-pointer hover:shadow-sm ota-view-item" data-schema="${escapeHtml(t.schema)}" data-name="${escapeHtml(t.name)}">
+      <div class="font-semibold text-slate-800">${escapeHtml(t.schema)}.${escapeHtml(t.name)} <span class="text-slate-500 text-[10px] font-normal">${t.row_count ? (+t.row_count).toLocaleString() + ' rows' : ''}</span></div>
+      <div class="text-[10px] text-slate-500 mt-0.5">${(t.columns || []).length} cols: ${escapeHtml((t.columns || []).slice(0, 6).join(', '))}${(t.columns || []).length > 6 ? '...' : ''}</div>
+    </div>`).join('');
+  }
+
+  // Wire click to sample
+  document.querySelectorAll('.ota-view-item').forEach(el => {
+    el.addEventListener('click', () => otaSample(el.dataset.schema, el.dataset.name));
+  });
+}
+
+async function otaSample(schema, name) {
+  const box = document.getElementById('ota-sample');
+  const nameEl = document.getElementById('ota-sample-name');
+  const dataEl = document.getElementById('ota-sample-data');
+  box.classList.remove('hidden');
+  nameEl.textContent = schema + '.' + name;
+  dataEl.textContent = '⏳ Đang lấy mẫu...';
+  try {
+    const r = await api('/ota/sample', { method: 'POST', body: JSON.stringify({ schema, name, limit: 3 }) });
+    if (r.ok) dataEl.textContent = JSON.stringify(r.rows, null, 2);
+    else dataEl.textContent = '❌ ' + (r.error || 'lỗi');
+  } catch (e) { dataEl.textContent = '❌ ' + e.message; }
+}
+
+document.getElementById('ota-sample-close')?.addEventListener('click', () => {
+  document.getElementById('ota-sample').classList.add('hidden');
 });
 
 document.getElementById('btn-ota-hotels')?.addEventListener('click', async () => {

@@ -112,6 +112,88 @@ export async function testOtaConnection(): Promise<{ ok: boolean; message: strin
   }
 }
 
+/**
+ * Enumerate all tables + views trong OTA DB (PostgreSQL).
+ * Dùng để admin thấy schema user đã tạo, đặc biệt là views cho marketing bot.
+ */
+export async function enumerateOtaSchema(): Promise<{
+  ok: boolean;
+  tables: Array<{ name: string; schema: string; type: string; row_count?: number; columns?: string[] }>;
+  views: Array<{ name: string; schema: string; definition?: string; columns?: string[] }>;
+  error?: string;
+}> {
+  try {
+    // Tables + row count estimate
+    const tables = await query<any>(`
+      SELECT
+        t.table_schema AS schema,
+        t.table_name AS name,
+        t.table_type AS type,
+        COALESCE(s.n_live_tup, 0)::bigint AS row_count
+      FROM information_schema.tables t
+      LEFT JOIN pg_stat_user_tables s ON s.schemaname = t.table_schema AND s.relname = t.table_name
+      WHERE t.table_schema NOT IN ('pg_catalog', 'information_schema')
+        AND t.table_type = 'BASE TABLE'
+      ORDER BY t.table_name
+      LIMIT 200
+    `);
+
+    // Views (with definitions)
+    const views = await query<any>(`
+      SELECT
+        v.table_schema AS schema,
+        v.table_name AS name,
+        pg_get_viewdef(format('%I.%I', v.table_schema, v.table_name)::regclass, true) AS definition
+      FROM information_schema.views v
+      WHERE v.table_schema NOT IN ('pg_catalog', 'information_schema')
+      ORDER BY v.table_name
+      LIMIT 100
+    `);
+
+    // Columns per table/view
+    for (const t of tables) {
+      const cols = await query<any>(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position`,
+        [t.schema, t.name],
+      );
+      t.columns = cols.map(c => c.column_name);
+    }
+    for (const v of views) {
+      const cols = await query<any>(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position`,
+        [v.schema, v.name],
+      );
+      v.columns = cols.map(c => c.column_name);
+      // Trim long definitions
+      if (v.definition && v.definition.length > 2000) v.definition = v.definition.slice(0, 2000) + '\n... (truncated)';
+    }
+
+    return { ok: true, tables, views };
+  } catch (e: any) {
+    return { ok: false, tables: [], views: [], error: e.message };
+  }
+}
+
+/**
+ * Sample query: probe 1 row từ 1 table/view để user xem structure.
+ * Read-only guarded.
+ */
+export async function sampleOtaRelation(schema: string, name: string, limit = 1): Promise<{ ok: boolean; rows?: any[]; error?: string }> {
+  try {
+    // Validate identifiers — alphanum + underscore only
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema) || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
+      return { ok: false, error: 'invalid identifier' };
+    }
+    const safeLimit = Math.min(10, Math.max(1, Math.floor(limit)));
+    const rows = await query<any>(`SELECT * FROM "${schema}"."${name}" LIMIT ${safeLimit}`);
+    return { ok: true, rows };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
 // ═══════════════════════════════════════════════
 // HOTEL DATA QUERIES
 // ═══════════════════════════════════════════════
