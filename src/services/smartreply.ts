@@ -1419,7 +1419,16 @@ async function dispatchV6(ctx: {
       if (suffix) setSystemSuffix(senderId, pid, suffix);
       const out = await smartReply(msg, hid, senderId, senderName, pid);
       reply = out.reply;
-      intentLabel = 'rag';
+      // v10 FIX: preserve real intent từ smartReply thay vì hardcode 'rag'.
+      // Trước đây: phone-capture template bị save vào qa_training_cache vì
+      // label là 'rag' → admin duyệt nhầm → bot trả template forever.
+      // Map intent thực → label save:
+      const realIntent = (out.intent || 'rag').toLowerCase();
+      if (['negative', 'phone_captured', 'greeting', 'transfer', 'bot_paused', 'learned'].includes(realIntent)) {
+        intentLabel = realIntent;   // KHÔNG nằm trong LLM_PRODUCED → skip save
+      } else {
+        intentLabel = 'rag';        // pure LLM-gen → OK save
+      }
       skipSave = true;
     }
   }
@@ -1427,8 +1436,18 @@ async function dispatchV6(ctx: {
   // ─── Smart QA cache: save LLM-produced replies for admin review (tier=pending) ───
   // Skip nếu: cache hit (đã có), booking/handoff/fast templates, empty reply
   // v8 Phase 1b: đọc provider thực tế từ llm-info-store (từ smartCascade)
+  // v10 FIX: KHÔNG save phone-capture / greeting / transfer / learned replies
+  //   (chúng là template hoặc đã được cache bởi system khác)
   const LLM_PRODUCED = ['rag', 'rag_fallback', 'price_objection', 'hotel_rec', 'price_filter'];
-  if (reply && LLM_PRODUCED.includes(intentLabel) && !qaCacheHit) {
+  const SKIP_SAVE_INTENTS = ['negative', 'phone_captured', 'phone_capture', 'greeting', 'transfer', 'bot_paused', 'learned', 'auto_handoff', 'handoff', 'booking', 'qa_cached'];
+
+  // Extra guard: nếu reply chứa phone-capture template keywords → skip
+  const isPhoneCapture = reply && /xin.*\*?số điện thoại\*?|Team CSKH sẽ gọi|CSKH sẽ gọi lại|cho mình xin.*số/i.test(reply);
+  const isGreetingLike = reply && /^Dạ em chào|^Chào anh\/chị|^Em chào|^Dạ em đây|^Em có thể giúp/i.test(reply);
+
+  if (reply && LLM_PRODUCED.includes(intentLabel) && !qaCacheHit
+      && !SKIP_SAVE_INTENTS.includes(intentLabel)
+      && !isPhoneCapture && !isGreetingLike) {
     try {
       const { saveNewQA } = require('./intent-matcher');
       const { consumeLLMInfo } = require('./llm-info-store');
