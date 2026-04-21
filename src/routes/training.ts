@@ -33,6 +33,8 @@ import {
   getRecentFeedback,
   getFeedbackStats,
 } from '../services/qa-feedback-tracker';
+import { PRICING, estimateCost } from '../services/costtrack';
+import { getSetting, setSetting } from '../db';
 
 const router = Router();
 router.use(authMiddleware);
@@ -264,6 +266,162 @@ router.get('/feedback/stats', (req: AuthRequest, res) => {
     const since = Date.now() - days * 24 * 3600_000;
     const stats = getFeedbackStats(hotelId, since);
     res.json({ days, ...stats });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Phase 4: Cost dashboard + Threshold tuning + Confidence distribution
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/training/cost-stats
+ * Aggregate token usage + cost + cache-hit savings.
+ * Query: ?days=7 (default 7)
+ */
+router.get('/cost-stats', (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const days = Math.min(90, Math.max(1, parseInt((req.query.days as string) || '7', 10)));
+    const since = Date.now() - days * 24 * 3600_000;
+
+    // 1. Tokens + cost từ qa_training_cache (replies đã save với provider info)
+    const byProvider = db.prepare(
+      `SELECT ai_provider, ai_model, COUNT(*) as calls,
+              SUM(ai_tokens_used) as tokens_out,
+              SUM(hits_count) as total_hits
+       FROM qa_training_cache
+       WHERE hotel_id = ? AND created_at > ?
+       GROUP BY ai_provider, ai_model
+       ORDER BY calls DESC`
+    ).all(hotelId, since) as any[];
+
+    // 2. Cost estimate cho từng row (dựa PRICING table)
+    let totalTokens = 0;
+    let totalCostUsd = 0;
+    for (const p of byProvider) {
+      const tokOut = p.tokens_out || 0;
+      // Estimate input tokens ~3x output (typical RAG)
+      const tokIn = tokOut * 3;
+      const cost = estimateCost(p.ai_model || p.ai_provider || '', tokIn, tokOut);
+      p.tokens_in_est = tokIn;
+      p.cost_usd_est = +cost.toFixed(6);
+      totalTokens += tokIn + tokOut;
+      totalCostUsd += cost;
+    }
+
+    // 3. Cache hit stats — hits_count = tổng lần match-hit (0 LLM cost mỗi lần)
+    const hitStats = db.prepare(
+      `SELECT SUM(hits_count) as total_hits,
+              SUM(CASE WHEN tier IN ('trusted', 'approved') THEN hits_count ELSE 0 END) as served_hits
+       FROM qa_training_cache WHERE hotel_id = ?`
+    ).get(hotelId) as any;
+    const totalHits = hitStats?.total_hits || 0;
+    const servedHits = hitStats?.served_hits || 0;  // hits từ tier có thể dùng
+
+    // 4. Ước tính savings: mỗi served_hit tương đương 1 Gemini Flash call ~200 out tokens
+    const AVG_REPLY_TOKENS = 200;
+    const avgCostPerCall = estimateCost('gemini-2.5-flash', AVG_REPLY_TOKENS * 3, AVG_REPLY_TOKENS);
+    const savingsUsd = servedHits * avgCostPerCall;
+
+    // 5. Cache hit rate: servedHits / (servedHits + new LLM calls)
+    const newLLMCalls = byProvider.reduce((a, p) => a + (p.calls || 0), 0);
+    const totalRequests = servedHits + newLLMCalls;
+    const hitRate = totalRequests > 0 ? servedHits / totalRequests : 0;
+
+    res.json({
+      period_days: days,
+      total_tokens_est: totalTokens,
+      total_cost_usd_est: +totalCostUsd.toFixed(6),
+      cache_hits_total: totalHits,
+      cache_hits_served: servedHits,
+      new_llm_calls: newLLMCalls,
+      hit_rate: +hitRate.toFixed(3),
+      savings_usd_est: +savingsUsd.toFixed(4),
+      by_provider: byProvider,
+      pricing_table: PRICING,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * GET /api/training/confidence-dist
+ * Histogram phân bố confidence từ recent matches (logs trong events table).
+ */
+router.get('/confidence-dist', (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const days = Math.min(30, Math.max(1, parseInt((req.query.days as string) || '7', 10)));
+    const since = Date.now() - days * 24 * 3600_000;
+
+    // Pull confidence values từ events.meta JSON (qa_cache_hit events)
+    const rows = db.prepare(
+      `SELECT meta FROM events
+       WHERE event_name = 'qa_cache_hit' AND hotel_id = ? AND ts > ?
+       ORDER BY ts DESC LIMIT 2000`
+    ).all(hotelId, since) as any[];
+
+    const buckets: Record<string, number> = {
+      '0.50-0.60': 0, '0.60-0.65': 0, '0.65-0.70': 0, '0.70-0.75': 0,
+      '0.75-0.80': 0, '0.80-0.85': 0, '0.85-0.90': 0, '0.90-0.95': 0,
+      '0.95-1.00': 0,
+    };
+    let total = 0;
+    for (const r of rows) {
+      try {
+        const m = typeof r.meta === 'string' ? JSON.parse(r.meta) : r.meta;
+        const conf = Number(m?.confidence);
+        if (isNaN(conf) || conf < 0.5) continue;
+        total++;
+        if (conf < 0.60) buckets['0.50-0.60']++;
+        else if (conf < 0.65) buckets['0.60-0.65']++;
+        else if (conf < 0.70) buckets['0.65-0.70']++;
+        else if (conf < 0.75) buckets['0.70-0.75']++;
+        else if (conf < 0.80) buckets['0.75-0.80']++;
+        else if (conf < 0.85) buckets['0.80-0.85']++;
+        else if (conf < 0.90) buckets['0.85-0.90']++;
+        else if (conf < 0.95) buckets['0.90-0.95']++;
+        else buckets['0.95-1.00']++;
+      } catch {}
+    }
+
+    res.json({
+      period_days: days,
+      total_samples: total,
+      buckets,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * GET /api/training/threshold — current match threshold (persisted in settings)
+ */
+router.get('/threshold', (_req: AuthRequest, res) => {
+  try {
+    const v = getSetting('qa_match_threshold');
+    const threshold = v ? parseFloat(v) : 0.7;  // default 0.7
+    res.json({ threshold, default: 0.7, min: 0.5, max: 0.95 });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * POST /api/training/threshold { value: 0.7 }
+ */
+router.post('/threshold', (req: AuthRequest, res) => {
+  try {
+    const value = Number((req.body || {}).value);
+    if (isNaN(value) || value < 0.5 || value > 0.95) {
+      return res.status(400).json({ error: 'value must be 0.5..0.95' });
+    }
+    setSetting('qa_match_threshold', String(value), getHotelId(req));
+    res.json({ ok: true, threshold: value });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

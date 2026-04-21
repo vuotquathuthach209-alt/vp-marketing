@@ -20,6 +20,14 @@ interface WeekStats {
   top_learned: Array<{ question: string; hits: number }>;
   ai_cost_usd: number;
   ai_requests: number;
+  // Phase 4: Smart training pipeline + News pipeline
+  qa_pending?: number;
+  qa_approved?: number;
+  qa_trusted?: number;
+  qa_cache_hits_total?: number;
+  qa_savings_usd?: number;
+  news_pending_review?: number;
+  news_published_7d?: number;
 }
 
 export function computeWeekStats(): WeekStats {
@@ -88,6 +96,33 @@ export function computeWeekStats(): WeekStats {
     aiCost = r?.total || 0;
   } catch {}
 
+  // Phase 4: Smart training pipeline stats
+  let qaPending = 0;
+  let qaApproved = 0;
+  let qaTrusted = 0;
+  let qaCacheHits = 0;
+  let qaSavingsUsd = 0;
+  let newsPendingReview = 0;
+  let newsPublished7d = 0;
+  try {
+    qaPending = sum(`SELECT COUNT(*) as n FROM qa_training_cache WHERE tier='pending'`);
+    qaApproved = sum(`SELECT COUNT(*) as n FROM qa_training_cache WHERE tier='approved'`);
+    qaTrusted = sum(`SELECT COUNT(*) as n FROM qa_training_cache WHERE tier='trusted'`);
+    const qaHitsRow = db.prepare(
+      `SELECT COALESCE(SUM(hits_count), 0) as n FROM qa_training_cache WHERE tier IN ('trusted','approved')`
+    ).get() as any;
+    qaCacheHits = qaHitsRow?.n || 0;
+    // Savings: mỗi served hit ≈ Gemini Flash 200 out + 600 in tokens
+    qaSavingsUsd = qaCacheHits * ((600 * 0.075 + 200 * 0.30) / 1_000_000);
+  } catch {}
+  try {
+    newsPendingReview = sum(`SELECT COUNT(*) as n FROM news_post_drafts WHERE status='pending'`);
+    newsPublished7d = sum(
+      `SELECT COUNT(*) as n FROM news_post_drafts WHERE status='published' AND published_at >= ?`,
+      weekAgo,
+    );
+  } catch {}
+
   return {
     week_start: weekStart,
     conversations,
@@ -101,7 +136,14 @@ export function computeWeekStats(): WeekStats {
     top_learned: topLearned,
     ai_cost_usd: aiCost,
     ai_requests: aiReqs,
-  };
+    qa_pending: qaPending,
+    qa_approved: qaApproved,
+    qa_trusted: qaTrusted,
+    qa_cache_hits_total: qaCacheHits,
+    qa_savings_usd: qaSavingsUsd,
+    news_pending_review: newsPendingReview,
+    news_published_7d: newsPublished7d,
+  } as WeekStats;
 }
 
 export function formatReport(s: WeekStats): string {
@@ -140,6 +182,22 @@ export function formatReport(s: WeekStats): string {
       const q = l.question.length > 50 ? l.question.slice(0, 50) + '…' : l.question;
       lines.push(`  • "${q}" × ${l.hits}`);
     }
+  }
+
+  // Phase 4: Training pipeline section
+  if ((s.qa_pending || 0) > 0 || (s.qa_approved || 0) > 0) {
+    lines.push(``, `🎓 *Training Review:*`);
+    lines.push(`  • Pending: ${s.qa_pending || 0} (chờ admin duyệt)`);
+    lines.push(`  • Approved + Trusted: ${(s.qa_approved || 0) + (s.qa_trusted || 0)}`);
+    lines.push(`  • Cache hits tổng: ${(s.qa_cache_hits_total || 0).toLocaleString()}`);
+    lines.push(`  • Tiết kiệm ước tính: $${(s.qa_savings_usd || 0).toFixed(4)}`);
+  }
+
+  // News pipeline section
+  if ((s.news_pending_review || 0) > 0 || (s.news_published_7d || 0) > 0) {
+    lines.push(``, `📰 *News → Post:*`);
+    lines.push(`  • Đã đăng tuần này: ${s.news_published_7d || 0}/3`);
+    lines.push(`  • Drafts chờ duyệt: ${s.news_pending_review || 0}`);
   }
 
   return lines.join('\n');

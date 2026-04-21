@@ -16,12 +16,25 @@
  *   - blacklisted: match sẽ refuse, dùng cho spam/troll pattern
  */
 import crypto from 'crypto';
-import { db } from '../db';
+import { db, getSetting } from '../db';
 import { embed, cosine, encodeEmbedding, decodeEmbedding } from './embedder';
 
-export const MATCH_THRESHOLD = 0.7;
+export const MATCH_THRESHOLD_DEFAULT = 0.7;
+export const MATCH_THRESHOLD = MATCH_THRESHOLD_DEFAULT;  // backward compat export
 const SCAN_LIMIT = 200;       // Số QA entries quét mỗi lần (top recent)
 const DEDUPE_SIMILARITY = 0.95; // Trên ngưỡng này coi là câu y hệt
+
+/** Dynamic threshold — admin có thể chỉnh qua /api/training/threshold (per-hotel) */
+export function getMatchThreshold(hotelId?: number): number {
+  try {
+    const v = getSetting('qa_match_threshold', hotelId);
+    if (v) {
+      const n = parseFloat(v);
+      if (!isNaN(n) && n >= 0.5 && n <= 0.95) return n;
+    }
+  } catch {}
+  return MATCH_THRESHOLD_DEFAULT;
+}
 
 export interface MatchResult {
   matched: boolean;
@@ -45,7 +58,7 @@ export async function matchIntent(opts: {
   customerMessage: string;
   minConfidence?: number;
 }): Promise<MatchResult> {
-  const minConf = opts.minConfidence ?? MATCH_THRESHOLD;
+  const minConf = opts.minConfidence ?? getMatchThreshold(opts.hotelId);
 
   if (!opts.customerMessage || opts.customerMessage.trim().length < 3) {
     return { matched: false, confidence: 0, should_use_cached: false };

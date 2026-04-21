@@ -6,13 +6,28 @@ import { db } from '../db';
  * Cập nhật: 2025-Q1.
  */
 const PRICING: Record<string, { in: number; out: number }> = {
+  // Claude
   'claude-sonnet-4-6': { in: 3.0, out: 15.0 },
   'claude-haiku-4-5-20251001': { in: 0.8, out: 4.0 },
+  // Gemini
+  'gemini-2.5-flash': { in: 0.075, out: 0.30 },   // current production
+  'gemini-2.5-pro':   { in: 1.25, out: 5.0 },
   'gemini-2.0-flash': { in: 0.1, out: 0.4 },
   'gemini-1.5-flash': { in: 0.075, out: 0.30 },
+  // OpenAI
+  'gpt-4o-mini': { in: 0.15, out: 0.60 },
+  'gpt-4o':       { in: 2.5,  out: 10.0 },
+  // Groq free tier (pricing nominal)
   'gemma2-9b-it': { in: 0.2, out: 0.2 },
-  'text-embedding-004': { in: 0.0, out: 0.0 }, // free tier
+  // Local (effectively free — electricity only)
+  'qwen2.5:7b-instruct-q4_K_M': { in: 0.0, out: 0.0 },
+  // Embeddings
+  'text-embedding-004': { in: 0.0, out: 0.0 },
+  // Admin manual edits (no LLM call)
+  'admin_edit': { in: 0.0, out: 0.0 },
 };
+
+export { PRICING };
 
 export function estimateCost(model: string, inTok: number, outTok: number): number {
   const p = PRICING[model];

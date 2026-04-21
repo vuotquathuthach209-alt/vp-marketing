@@ -504,6 +504,78 @@
           </div>
           <button id="training-refresh" class="bg-slate-800 hover:bg-slate-900 text-white text-sm px-4 py-1.5 rounded">🔄 Refresh</button>
           <button id="training-promote" class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-1.5 rounded" title="Promote approved → trusted (auto)">⬆️ Auto-promote</button>
+          <button id="training-toggle-cost" class="bg-white border px-4 py-1.5 rounded text-sm hover:bg-slate-50">📊 Cost & Tuning</button>
+        </div>
+
+        <!-- Cost & Threshold panel (Phase 4) — toggle hidden by default -->
+        <div id="training-cost-panel" class="hidden bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-bold text-slate-800">💰 Cost & Cache Savings</h3>
+            <select id="training-cost-days" class="border rounded px-2 py-1 text-xs">
+              <option value="7" selected>7 ngày</option>
+              <option value="30">30 ngày</option>
+              <option value="90">90 ngày</option>
+            </select>
+          </div>
+          <!-- Cost cards -->
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+            <div class="bg-slate-50 p-3 rounded border border-slate-200">
+              <div class="text-xs text-slate-500 uppercase">Tokens used</div>
+              <div id="cost-total-tokens" class="text-xl font-bold text-slate-800">—</div>
+            </div>
+            <div class="bg-slate-50 p-3 rounded border border-slate-200">
+              <div class="text-xs text-slate-500 uppercase">Est. cost</div>
+              <div id="cost-total-usd" class="text-xl font-bold text-slate-800">—</div>
+              <div class="text-xs text-slate-400">USD</div>
+            </div>
+            <div class="bg-emerald-50 p-3 rounded border border-emerald-200">
+              <div class="text-xs text-emerald-600 uppercase">Cache hit rate</div>
+              <div id="cost-hit-rate" class="text-xl font-bold text-emerald-700">—</div>
+            </div>
+            <div class="bg-emerald-50 p-3 rounded border border-emerald-200">
+              <div class="text-xs text-emerald-600 uppercase">Cache served</div>
+              <div id="cost-cache-served" class="text-xl font-bold text-emerald-700">—</div>
+              <div class="text-xs text-emerald-500">lần không gọi LLM</div>
+            </div>
+            <div class="bg-emerald-50 p-3 rounded border border-emerald-200">
+              <div class="text-xs text-emerald-600 uppercase">Savings est.</div>
+              <div id="cost-savings-usd" class="text-xl font-bold text-emerald-700">—</div>
+              <div class="text-xs text-emerald-500">USD tiết kiệm</div>
+            </div>
+          </div>
+
+          <!-- By provider table -->
+          <div class="mb-4">
+            <div class="text-xs font-semibold text-slate-600 mb-1">Chi tiết theo provider:</div>
+            <div id="cost-by-provider" class="text-xs"></div>
+          </div>
+
+          <!-- Threshold slider -->
+          <div class="border-t pt-3">
+            <div class="flex items-center justify-between mb-2">
+              <h4 class="font-semibold text-slate-800">🎯 Match threshold tuning</h4>
+              <span id="threshold-current" class="text-sm text-slate-500">—</span>
+            </div>
+            <input type="range" id="threshold-slider" min="0.5" max="0.95" step="0.01" value="0.7" class="w-full max-w-md">
+            <div class="flex justify-between text-xs text-slate-400 max-w-md mt-1">
+              <span>0.50 (lỏng)</span>
+              <span>0.70 (mặc định)</span>
+              <span>0.95 (chặt)</span>
+            </div>
+            <div class="flex gap-2 mt-2">
+              <button id="threshold-save" class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-1.5 rounded">Lưu threshold</button>
+              <span class="text-xs text-slate-500 self-center">Hạ xuống 0.65 = nhiều cache hit hơn nhưng có thể trả lời sai context. Tăng 0.80 = chính xác hơn nhưng ít hit.</span>
+            </div>
+          </div>
+
+          <!-- Confidence distribution histogram -->
+          <div class="border-t pt-3 mt-3">
+            <div class="flex items-center justify-between mb-2">
+              <h4 class="font-semibold text-slate-800">📈 Confidence distribution (cache hits)</h4>
+              <span id="conf-dist-samples" class="text-xs text-slate-400">—</span>
+            </div>
+            <div id="conf-dist-chart" class="flex items-end gap-1 h-24"></div>
+          </div>
         </div>
 
         <!-- List -->

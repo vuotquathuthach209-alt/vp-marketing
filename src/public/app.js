@@ -3826,6 +3826,99 @@ document.getElementById('training-seed-btn')?.addEventListener('click', async ()
   } catch (e) { alert('Lỗi: ' + e.message); }
 });
 
+// ─── Phase 4: Cost Dashboard + Threshold Tuning ──────────────────
+async function loadTrainingCost() {
+  const days = parseInt(document.getElementById('training-cost-days').value || '7', 10);
+  try {
+    const c = await api('/training/cost-stats?days=' + days);
+    document.getElementById('cost-total-tokens').textContent = (c.total_tokens_est || 0).toLocaleString();
+    document.getElementById('cost-total-usd').textContent = '$' + (c.total_cost_usd_est || 0).toFixed(4);
+    document.getElementById('cost-hit-rate').textContent = ((c.hit_rate || 0) * 100).toFixed(1) + '%';
+    document.getElementById('cost-cache-served').textContent = (c.cache_hits_served || 0).toLocaleString();
+    document.getElementById('cost-savings-usd').textContent = '$' + (c.savings_usd_est || 0).toFixed(4);
+
+    // By provider breakdown table
+    const byProv = document.getElementById('cost-by-provider');
+    if ((c.by_provider || []).length === 0) {
+      byProv.innerHTML = '<div class="text-slate-400">Chưa có data trong khoảng này.</div>';
+    } else {
+      const rows = c.by_provider.map(p => `
+        <tr class="border-b border-slate-100">
+          <td class="py-1 pr-3 font-mono">${escapeHtml(p.ai_provider || 'unknown')}</td>
+          <td class="py-1 pr-3 text-slate-500">${escapeHtml(p.ai_model || '-')}</td>
+          <td class="py-1 pr-3 text-right">${(p.calls || 0).toLocaleString()}</td>
+          <td class="py-1 pr-3 text-right">${(p.tokens_out || 0).toLocaleString()}</td>
+          <td class="py-1 pr-3 text-right text-slate-600">$${(p.cost_usd_est || 0).toFixed(4)}</td>
+          <td class="py-1 pr-3 text-right text-emerald-600 font-medium">${(p.total_hits || 0).toLocaleString()} hits</td>
+        </tr>`).join('');
+      byProv.innerHTML = `<table class="w-full">
+        <thead><tr class="text-slate-500"><th class="text-left font-normal py-1 pr-3">Provider</th><th class="text-left font-normal py-1 pr-3">Model</th><th class="text-right font-normal py-1 pr-3">Calls</th><th class="text-right font-normal py-1 pr-3">Out tok</th><th class="text-right font-normal py-1 pr-3">Cost</th><th class="text-right font-normal py-1 pr-3">Cache hits</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+    }
+  } catch (e) { console.warn('cost stats fail:', e.message); }
+}
+
+async function loadConfidenceDist() {
+  const days = parseInt(document.getElementById('training-cost-days').value || '7', 10);
+  try {
+    const d = await api('/training/confidence-dist?days=' + days);
+    document.getElementById('conf-dist-samples').textContent = d.total_samples + ' samples';
+    const buckets = d.buckets || {};
+    const max = Math.max(1, ...Object.values(buckets));
+    const chart = document.getElementById('conf-dist-chart');
+    chart.innerHTML = Object.entries(buckets).map(([label, count]) => {
+      const hPct = (count / max) * 100;
+      const inDangerZone = label < '0.70';
+      const color = inDangerZone ? 'bg-amber-400' : 'bg-emerald-500';
+      return `<div class="flex-1 flex flex-col items-center gap-1" title="${label}: ${count} hits">
+        <div class="${color} w-full rounded-t" style="height: ${hPct}%; min-height: 2px;"></div>
+        <div class="text-[10px] text-slate-500 rotate-45 origin-top-left mt-1">${label}</div>
+      </div>`;
+    }).join('');
+  } catch (e) { console.warn('conf dist fail:', e.message); }
+}
+
+async function loadThreshold() {
+  try {
+    const t = await api('/training/threshold');
+    const slider = document.getElementById('threshold-slider');
+    slider.value = t.threshold;
+    document.getElementById('threshold-current').textContent = 'Hiện tại: ' + t.threshold.toFixed(2);
+  } catch (e) { console.warn('threshold fail:', e.message); }
+}
+
+document.getElementById('threshold-slider')?.addEventListener('input', (e) => {
+  document.getElementById('threshold-current').textContent = 'Sẽ đặt: ' + parseFloat(e.target.value).toFixed(2);
+});
+
+document.getElementById('threshold-save')?.addEventListener('click', async () => {
+  const v = parseFloat(document.getElementById('threshold-slider').value);
+  try {
+    const r = await api('/training/threshold', { method: 'POST', body: JSON.stringify({ value: v }) });
+    document.getElementById('threshold-current').textContent = 'Hiện tại: ' + r.threshold.toFixed(2);
+    alert('Đã lưu threshold = ' + r.threshold + '. Có hiệu lực cho request tiếp theo.');
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
+
+document.getElementById('training-cost-days')?.addEventListener('change', () => {
+  loadTrainingCost(); loadConfidenceDist();
+});
+
+document.getElementById('training-toggle-cost')?.addEventListener('click', () => {
+  const panel = document.getElementById('training-cost-panel');
+  const btn = document.getElementById('training-toggle-cost');
+  if (panel.classList.contains('hidden')) {
+    panel.classList.remove('hidden');
+    btn.textContent = '📊 Ẩn Cost';
+    loadTrainingCost();
+    loadConfidenceDist();
+    loadThreshold();
+  } else {
+    panel.classList.add('hidden');
+    btn.textContent = '📊 Cost & Tuning';
+  }
+});
+
 // Auto-refresh badge mỗi 60s khi đang ở tab khác (nhắc có pending mới)
 setInterval(() => { if (document.visibilityState === 'visible') loadTrainingStats().catch(() => {}); }, 60_000);
 
