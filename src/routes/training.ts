@@ -105,8 +105,8 @@ router.get('/list', (req: AuthRequest, res) => {
   }
 });
 
-// ── Detail ─────────────────────────────────────────────────────────
-router.get('/:id', (req: AuthRequest, res) => {
+// ── Detail (phải khớp cụ thể id là số, tránh catch "cost-stats" etc.) ─
+router.get('/:id(\\d+)', (req: AuthRequest, res) => {
   try {
     const hotelId = getHotelId(req);
     const id = parseInt(String(req.params.id), 10);
