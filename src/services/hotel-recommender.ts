@@ -176,6 +176,21 @@ export function recommend(ctx: RecommendContext): RecommendResult | null {
     searchType = 'byArea';
   }
 
+  // Strategy 3b: Fallback broader — user hỏi "hotel" nhưng chỉ có homestay/villa (all nightly) → list them
+  if (hotels.length === 0 && propertyType === 'hotel') {
+    for (const similar of ['homestay', 'villa', 'guesthouse', 'resort']) {
+      const found = searchByArea({
+        property_type: similar,
+        limit: 5,
+        max_price: priceLimit,
+        min_guests: minGuests,
+      });
+      hotels.push(...found);
+    }
+    hotels = hotels.slice(0, 5);
+    searchType = 'byArea';
+  }
+
   // No search signal → let RAG handle
   if (!landmark && !city && !district && !propertyType) return null;
 

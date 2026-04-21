@@ -1581,8 +1581,18 @@ async function dispatchV6(ctx: {
     }
   } else if (handler === 'fast_reply') {
     if (bookingInfo && bookingInfo.status !== 'paused') pauseBooking(senderId);
-    reply = fastReply(router, msg, langInfo.lang);
-    intentLabel = router.intent;
+    // Marketplace intercept: nếu intent là greeting/small_talk → dùng marketplace greeting
+    // list 4 loại hình (hotel/homestay/villa/CHDV) nếu network có multi-type
+    const isGreetingMsg = /^(ch[àa]o|hi|hello|hey|alo|a l[ôo])\b/i.test(msg.trim()) || msg.trim().length <= 15;
+    if (isGreetingMsg && ['greeting', 'small_talk'].includes(router.intent)) {
+      const hotelRow = db.prepare(`SELECT name FROM mkt_hotels WHERE id = ?`).get(hid) as any;
+      const mpResult = handleGreeting(hotelRow?.name || 'Sonder', senderName, hid);
+      reply = mpResult.reply;
+      intentLabel = 'greeting';
+    } else {
+      reply = fastReply(router, msg, langInfo.lang);
+      intentLabel = router.intent;
+    }
   } else if (handler === 'handoff') {
     if (bookingInfo && bookingInfo.status !== 'paused') pauseBooking(senderId);
     reply = await handleHandoff({ hotelId: hid, senderId, senderName, message: msg, history: historyTail });
