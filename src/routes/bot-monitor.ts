@@ -200,6 +200,153 @@ router.get('/providers', (req: AuthRequest, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════
+// v12: INTENT CONFIDENCE HEATMAP — where classifier struggles
+// ═══════════════════════════════════════════════════════════
+
+const CONF_BUCKETS = [
+  { key: '0.00-0.30', min: 0.0, max: 0.3, label: '🔴 Rất thấp' },
+  { key: '0.30-0.50', min: 0.3, max: 0.5, label: '🟠 Thấp' },
+  { key: '0.50-0.70', min: 0.5, max: 0.7, label: '🟡 Trung bình' },
+  { key: '0.70-0.90', min: 0.7, max: 0.9, label: '🟢 Cao' },
+  { key: '0.90-1.00', min: 0.9, max: 1.01, label: '✅ Rất cao' },
+];
+
+router.get('/confidence-heatmap', (req: AuthRequest, res) => {
+  try {
+    const { since } = getTimeRange(req);
+    const rows = db.prepare(
+      `SELECT meta FROM events
+       WHERE event_name = 'intent_classified' AND ts > ?`
+    ).all(since) as any[];
+
+    // Build matrix: intent × confidence bucket → count
+    const matrix: Record<string, Record<string, number>> = {};
+    const intentCounts: Record<string, { total: number; llm: number; rule: number }> = {};
+    const sourceBreakdown: Record<string, Record<string, number>> = {};  // intent → { llm: 0, rule: 0 }
+
+    for (const row of rows) {
+      try {
+        const m = typeof row.meta === 'string' ? JSON.parse(row.meta) : row.meta;
+        const intent = String(m.intent || 'unknown');
+        const conf = Number(m.confidence);
+        const source = String(m.source || 'unknown');
+        if (isNaN(conf)) continue;
+
+        // Find bucket
+        const bucket = CONF_BUCKETS.find(b => conf >= b.min && conf < b.max);
+        if (!bucket) continue;
+
+        if (!matrix[intent]) matrix[intent] = {};
+        matrix[intent][bucket.key] = (matrix[intent][bucket.key] || 0) + 1;
+
+        if (!intentCounts[intent]) intentCounts[intent] = { total: 0, llm: 0, rule: 0 };
+        intentCounts[intent].total++;
+        if (source === 'llm') intentCounts[intent].llm++;
+        else if (source === 'rule') intentCounts[intent].rule++;
+      } catch {}
+    }
+
+    // Sort intents by total count desc
+    const sortedIntents = Object.keys(intentCounts).sort((a, b) => intentCounts[b].total - intentCounts[a].total);
+
+    const heatmap = sortedIntents.map(intent => ({
+      intent,
+      total: intentCounts[intent].total,
+      llm_count: intentCounts[intent].llm,
+      rule_count: intentCounts[intent].rule,
+      buckets: CONF_BUCKETS.map(b => ({
+        key: b.key,
+        label: b.label,
+        count: matrix[intent]?.[b.key] || 0,
+      })),
+      // Avg confidence (weighted)
+      avg_confidence: sortedIntents.length > 0 ? computeAvgConf(matrix[intent]) : 0,
+    }));
+
+    res.json({
+      buckets: CONF_BUCKETS,
+      heatmap,
+      total_classifications: rows.length,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+function computeAvgConf(bucketCounts: Record<string, number>): number {
+  let weightedSum = 0;
+  let total = 0;
+  for (const b of CONF_BUCKETS) {
+    const n = bucketCounts?.[b.key] || 0;
+    const midpoint = (b.min + Math.min(b.max, 1.0)) / 2;
+    weightedSum += n * midpoint;
+    total += n;
+  }
+  return total > 0 ? +((weightedSum / total).toFixed(3)) : 0;
+}
+
+// ═══════════════════════════════════════════════════════════
+// Low-confidence recent messages (admin training candidates)
+// ═══════════════════════════════════════════════════════════
+router.get('/low-confidence', (req: AuthRequest, res) => {
+  try {
+    const { since } = getTimeRange(req);
+    const maxConf = Math.max(0.3, Math.min(0.8, parseFloat((req.query.max_conf as string) || '0.6')));
+    const limit = Math.min(100, Math.max(5, parseInt((req.query.limit as string) || '30', 10)));
+
+    // Pull events with low confidence
+    const events = db.prepare(
+      `SELECT id, meta, ts FROM events
+       WHERE event_name = 'intent_classified' AND ts > ?
+       ORDER BY id DESC LIMIT 500`
+    ).all(since) as any[];
+
+    const lowConf: Array<{
+      intent: string;
+      confidence: number;
+      source: string;
+      handler: string;
+      ts: number;
+      user_msg?: string;
+      bot_reply?: string;
+    }> = [];
+
+    for (const e of events) {
+      try {
+        const m = typeof e.meta === 'string' ? JSON.parse(e.meta) : e.meta;
+        const conf = Number(m.confidence);
+        if (isNaN(conf) || conf > maxConf) continue;
+
+        // Find matching conversation msgs around this timestamp
+        const msgs = db.prepare(
+          `SELECT role, message FROM conversation_memory
+           WHERE created_at BETWEEN ? AND ?
+           ORDER BY id ASC LIMIT 4`
+        ).all(e.ts - 5000, e.ts + 10000) as any[];
+
+        const userMsg = msgs.find((x: any) => x.role === 'user')?.message;
+        const botReply = msgs.find((x: any) => x.role === 'bot')?.message;
+
+        lowConf.push({
+          intent: m.intent,
+          confidence: conf,
+          source: m.source,
+          handler: m.handler,
+          ts: e.ts,
+          user_msg: userMsg,
+          bot_reply: botReply,
+        });
+        if (lowConf.length >= limit) break;
+      } catch {}
+    }
+
+    res.json({ max_conf: maxConf, count: lowConf.length, items: lowConf });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
 // TIMELINE — messages per hour last 24h
 // ═══════════════════════════════════════════════════════════
 router.get('/timeline', (req: AuthRequest, res) => {

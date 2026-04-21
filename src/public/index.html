@@ -541,7 +541,7 @@
         </div>
 
         <!-- Confused users + recent problem examples -->
-        <div class="grid grid-cols-2 gap-4 max-w-6xl">
+        <div class="grid grid-cols-2 gap-4 max-w-6xl mb-4">
           <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200">
             <h3 class="font-bold text-sm mb-3">🤷 Users hỏi lặp (bot chưa giải quyết)</h3>
             <div id="bm-repeaters" class="text-xs space-y-1"></div>
@@ -550,6 +550,38 @@
             <h3 class="font-bold text-sm mb-3">📋 Ví dụ recent problem</h3>
             <div id="bm-examples" class="text-xs space-y-2 max-h-96 overflow-y-auto"></div>
           </div>
+        </div>
+
+        <!-- v12: Intent Confidence Heatmap -->
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
+          <div class="flex items-start justify-between mb-3">
+            <div>
+              <h3 class="font-bold text-sm">🧠 Intent Confidence Heatmap</h3>
+              <p class="text-xs text-slate-500 mt-1">Tần suất phân loại ý định × mức độ tự tin. Hàng có nhiều cell 🔴/🟠 = Gemini không chắc → cần training.</p>
+            </div>
+            <span id="bm-heatmap-total" class="text-xs text-slate-500"></span>
+          </div>
+          <div id="bm-heatmap" class="overflow-x-auto"></div>
+        </div>
+
+        <!-- Low confidence recent messages — candidates for training -->
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 max-w-6xl">
+          <div class="flex items-start justify-between mb-3">
+            <div>
+              <h3 class="font-bold text-sm">⚠️ Low-confidence messages (< <span id="bm-lowconf-threshold-label">0.6</span>)</h3>
+              <p class="text-xs text-slate-500 mt-1">Các tin nhắn Gemini phân loại không tự tin — candidate để admin thêm vào training cache.</p>
+            </div>
+            <div class="flex gap-1 items-center">
+              <label class="text-xs">Max conf:</label>
+              <select id="bm-lowconf-max" class="border rounded px-2 py-0.5 text-xs">
+                <option value="0.4">&lt; 0.4</option>
+                <option value="0.5">&lt; 0.5</option>
+                <option value="0.6" selected>&lt; 0.6</option>
+                <option value="0.7">&lt; 0.7</option>
+              </select>
+            </div>
+          </div>
+          <div id="bm-lowconf" class="space-y-2 max-h-96 overflow-y-auto"></div>
         </div>
       </section>
 

@@ -2206,8 +2206,117 @@ async function loadBotMonitor() {
     bmLoadIntents(days),
     bmLoadProblems(days),
     bmLoadProviders(days),
+    bmLoadHeatmap(days),
+    bmLoadLowConfidence(days),
   ]);
 }
+
+// v12: Intent confidence heatmap
+async function bmLoadHeatmap(days) {
+  try {
+    const r = await api('/bot-monitor/confidence-heatmap?days=' + days);
+    document.getElementById('bm-heatmap-total').textContent = r.total_classifications + ' classifications';
+    const box = document.getElementById('bm-heatmap');
+    if (!r.heatmap?.length) {
+      box.innerHTML = '<div class="text-slate-400 text-xs p-4">Chưa có data.</div>';
+      return;
+    }
+    // Find max count for color scaling
+    let maxCount = 1;
+    r.heatmap.forEach(row => row.buckets.forEach(b => { if (b.count > maxCount) maxCount = b.count; }));
+
+    // Render table
+    box.innerHTML = `<table class="w-full text-xs border-collapse">
+      <thead>
+        <tr class="border-b border-slate-300">
+          <th class="text-left py-2 pr-2 font-semibold">Intent</th>
+          <th class="text-right py-2 px-2 font-semibold text-slate-600">Total</th>
+          <th class="text-right py-2 px-2 font-semibold text-slate-600">LLM / Rule</th>
+          <th class="text-right py-2 px-2 font-semibold text-slate-600">Avg conf</th>
+          ${r.buckets.map(b => `<th class="text-center py-2 px-1 font-semibold text-slate-600" style="min-width: 70px;">${b.label}<br><span class="text-[9px] font-mono font-normal text-slate-400">${b.key}</span></th>`).join('')}
+        </tr>
+      </thead>
+      <tbody>${r.heatmap.map(row => {
+        const lowConf = (row.buckets[0].count + row.buckets[1].count) / row.total;
+        const warnBadge = lowConf > 0.3 ? ' <span class="text-rose-600 text-[10px]">⚠ lowconf</span>' : '';
+        return `<tr class="border-b border-slate-100">
+          <td class="py-1 pr-2 font-mono font-medium">${escapeHtml(row.intent)}${warnBadge}</td>
+          <td class="py-1 px-2 text-right">${row.total}</td>
+          <td class="py-1 px-2 text-right text-slate-500">${row.llm_count}/${row.rule_count}</td>
+          <td class="py-1 px-2 text-right font-semibold ${row.avg_confidence < 0.5 ? 'text-rose-600' : row.avg_confidence < 0.7 ? 'text-amber-600' : 'text-emerald-600'}">${row.avg_confidence.toFixed(2)}</td>
+          ${row.buckets.map(b => {
+            if (b.count === 0) return '<td class="py-1 px-1 text-center text-slate-300">·</td>';
+            const intensity = Math.min(1, b.count / maxCount);
+            // Color gradient by bucket (red→orange→yellow→green→emerald)
+            const bg = b.key === '0.00-0.30' ? `rgba(244, 63, 94, ${0.2 + intensity * 0.7})`   // rose
+              : b.key === '0.30-0.50' ? `rgba(251, 146, 60, ${0.2 + intensity * 0.7})`        // orange
+              : b.key === '0.50-0.70' ? `rgba(250, 204, 21, ${0.2 + intensity * 0.7})`        // yellow
+              : b.key === '0.70-0.90' ? `rgba(134, 239, 172, ${0.2 + intensity * 0.7})`       // green-300
+              : `rgba(16, 185, 129, ${0.2 + intensity * 0.7})`;                                // emerald
+            return `<td class="py-1 px-1 text-center font-bold" style="background-color: ${bg};">${b.count}</td>`;
+          }).join('')}
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+  } catch (e) { console.warn('bm heatmap:', e.message); }
+}
+
+async function bmLoadLowConfidence(days) {
+  const maxConf = document.getElementById('bm-lowconf-max')?.value || '0.6';
+  document.getElementById('bm-lowconf-threshold-label').textContent = maxConf;
+  try {
+    const r = await api(`/bot-monitor/low-confidence?days=${days}&max_conf=${maxConf}&limit=30`);
+    const box = document.getElementById('bm-lowconf');
+    if (!r.items?.length) {
+      box.innerHTML = '<div class="text-emerald-600 text-xs py-2">✓ Không có tin nhắn nào có confidence thấp.</div>';
+      return;
+    }
+    box.innerHTML = r.items.map(it => {
+      const confColor = it.confidence < 0.4 ? 'bg-rose-100 text-rose-700'
+        : it.confidence < 0.55 ? 'bg-amber-100 text-amber-700'
+        : 'bg-yellow-100 text-yellow-700';
+      return `<div class="border border-slate-200 rounded p-2 bg-slate-50">
+        <div class="flex items-center gap-2 flex-wrap mb-1">
+          <span class="${confColor} px-2 py-0.5 rounded font-mono text-[10px] font-bold">conf ${it.confidence.toFixed(2)}</span>
+          <span class="text-[10px] bg-slate-200 text-slate-700 px-1.5 rounded">${escapeHtml(it.intent)}</span>
+          <span class="text-[10px] bg-slate-200 text-slate-700 px-1.5 rounded">src=${escapeHtml(it.source)}</span>
+          <span class="text-[10px] bg-slate-200 text-slate-700 px-1.5 rounded">handler=${escapeHtml(it.handler)}</span>
+          <span class="text-[10px] text-slate-400">${formatRelTime(it.ts)}</span>
+        </div>
+        ${it.user_msg ? `<div class="text-xs text-slate-800 mb-1">👤 <b>${escapeHtml(it.user_msg.slice(0, 200))}</b></div>` : ''}
+        ${it.bot_reply ? `<div class="text-xs text-blue-600">🤖 ${escapeHtml(it.bot_reply.slice(0, 200))}</div>` : ''}
+        ${it.user_msg ? `<button class="lowconf-add bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] px-2 py-0.5 rounded mt-1" data-q="${escapeHtml(it.user_msg)}" data-intent="${escapeHtml(it.intent)}">➕ Thêm training</button>` : ''}
+      </div>`;
+    }).join('');
+    // Wire add buttons
+    box.querySelectorAll('.lowconf-add').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const q = btn.dataset.q;
+        const intent = btn.dataset.intent;
+        const response = prompt(`Soạn câu trả lời chuẩn cho:\n"${q}"\n\n(Admin nhập để bot học trả lời tốt hơn lần sau)`);
+        if (!response || response.trim().length < 3) return;
+        try {
+          await api('/training/discover-faqs/add', {
+            method: 'POST',
+            body: JSON.stringify({
+              question: q,
+              response: response.trim(),
+              intent_category: intent,
+              notes: 'From low-confidence classification',
+            }),
+          });
+          alert('✓ Đã thêm vào training (tier=approved).');
+          bmLoadLowConfidence(days);
+        } catch (e) { alert('Lỗi: ' + e.message); }
+      });
+    });
+  } catch (e) { console.warn('bm lowconf:', e.message); }
+}
+
+document.getElementById('bm-lowconf-max')?.addEventListener('change', () => {
+  const days = document.getElementById('bm-days')?.value || '7';
+  bmLoadLowConfidence(days);
+});
 
 async function bmLoadOverview(days) {
   try {
