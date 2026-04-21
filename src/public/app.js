@@ -133,6 +133,7 @@ function switchTab(tab) {
   if (tab === 'hotels') loadHotelsEditor();
   if (tab === 'conversations') loadConversations();
   if (tab === 'botmonitor') loadBotMonitor();
+  if (tab === 'contentintel') loadContentIntel();
   if (tab === 'otadb') loadOtaConfig();
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
@@ -4759,6 +4760,225 @@ document.getElementById('news-gen-drafts-now')?.addEventListener('click', async 
 
 // Auto-refresh stats 60s
 setInterval(() => { if (document.visibilityState === 'visible') loadNewsStats().catch(() => {}); }, 60_000);
+
+// ═══════════════════════════════════════════════════════════
+// v12 Content Intelligence — "Standing on shoulders of giants"
+// ═══════════════════════════════════════════════════════════
+const ciState = { currentSubTab: 'internal' };
+
+function loadContentIntel() {
+  switchCiSubTab('internal');
+}
+
+function switchCiSubTab(tab) {
+  ciState.currentSubTab = tab;
+  document.querySelectorAll('.ci-tab-btn').forEach(b => {
+    const active = b.dataset.ciTab === tab;
+    b.classList.toggle('bg-indigo-600', active);
+    b.classList.toggle('text-white', active);
+    b.classList.toggle('bg-white', !active);
+    b.classList.toggle('border', !active);
+    b.classList.toggle('text-slate-700', !active);
+  });
+  document.querySelectorAll('.ci-section').forEach(s => {
+    s.classList.toggle('hidden', s.dataset.ciSection !== tab);
+  });
+  if (tab === 'internal') ciLoadInternal();
+  else if (tab === 'inspiration') ciLoadInspirationList();
+  else if (tab === 'remix') ciLoadRemixList();
+}
+
+document.querySelectorAll('.ci-tab-btn').forEach(b => {
+  b.addEventListener('click', () => switchCiSubTab(b.dataset.ciTab));
+});
+
+// ─── Module 1: Internal top posts ─────────────────────────────
+async function ciLoadInternal() {
+  const days = document.getElementById('ci-internal-days').value;
+  const list = document.getElementById('ci-internal-list');
+  const patterns = document.getElementById('ci-patterns');
+  list.innerHTML = '<div class="text-slate-400 p-4">⏳ Đang load...</div>';
+  try {
+    const r = await api(`/content-intel/internal-top?days=${days}&limit=20`);
+    if (!r.posts?.length) {
+      list.innerHTML = '<div class="text-slate-500 p-4">Chưa có bài FB nào trong khoảng này.</div>';
+      patterns.innerHTML = '';
+      return;
+    }
+    patterns.innerHTML = `<h4 class="font-bold text-emerald-700 mb-1">💡 Công thức top 20%:</h4>
+      <pre class="text-xs whitespace-pre-wrap text-emerald-800">${escapeHtml(r.patterns.insights_text)}</pre>`;
+    list.innerHTML = r.posts.map(p => {
+      const engStr = `👍 ${p.likes} · 💬 ${p.comments} · 🔁 ${p.shares} · 👁 ${p.reach.toLocaleString()} · ER ${(p.engagement_rate * 100).toFixed(2)}%`;
+      const tags = [];
+      if (p.has_emoji) tags.push('✨');
+      if (p.has_question) tags.push('❓');
+      if (p.has_number) tags.push('📊');
+      if (p.has_cta_keyword) tags.push('🔗');
+      return `<div class="bg-white rounded p-3 border border-slate-200">
+        <div class="flex justify-between items-start mb-1">
+          <div class="flex gap-2 items-center flex-wrap">
+            <span class="font-mono text-xs bg-slate-100 px-2 py-0.5 rounded">#${p.post_id}</span>
+            <span class="text-xs bg-indigo-100 text-indigo-700 px-1.5 rounded">${escapeHtml(p.page_name || '-')}</span>
+            <span class="text-xs font-bold text-emerald-700">Score: ${p.engagement_score}</span>
+            <span class="text-xs">${tags.join(' ')}</span>
+          </div>
+          <span class="text-xs text-slate-400">${formatRelTime(p.published_at)}</span>
+        </div>
+        <div class="text-sm text-slate-800 whitespace-pre-wrap">${escapeHtml((p.caption || '').slice(0, 300))}${p.caption && p.caption.length > 300 ? '…' : ''}</div>
+        <div class="text-xs text-slate-500 mt-2 border-t pt-2">${engStr}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    list.innerHTML = `<div class="text-rose-600 p-4">Lỗi: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+document.getElementById('ci-internal-refresh')?.addEventListener('click', ciLoadInternal);
+document.getElementById('ci-internal-days')?.addEventListener('change', ciLoadInternal);
+
+// ─── Module 2: Inspiration analyzer ───────────────────────────
+document.getElementById('ci-insp-analyze')?.addEventListener('click', async () => {
+  const text = document.getElementById('ci-insp-text').value.trim();
+  if (text.length < 30) return alert('Cần ít nhất 30 ký tự');
+  const btn = document.getElementById('ci-insp-analyze');
+  btn.disabled = true; btn.textContent = '⏳ Đang phân tích...';
+  try {
+    const r = await api('/content-intel/inspiration/analyze', {
+      method: 'POST',
+      body: JSON.stringify({
+        text,
+        source_name: document.getElementById('ci-insp-source-name').value.trim() || null,
+        source_url: document.getElementById('ci-insp-source-url').value.trim() || null,
+      }),
+    });
+    alert(`✓ Đã phân tích! ID #${r.id}\n\nHook: ${r.analysis.hook}\nEmotion: ${r.analysis.emotion}\n\nRemix angles:\n` +
+      r.analysis.remix_angles.map((a, i) => `${i+1}. ${a}`).join('\n'));
+    document.getElementById('ci-insp-text').value = '';
+    document.getElementById('ci-insp-source-name').value = '';
+    document.getElementById('ci-insp-source-url').value = '';
+    ciLoadInspirationList();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = '🔬 Phân tích'; }
+});
+
+async function ciLoadInspirationList() {
+  const list = document.getElementById('ci-insp-list');
+  list.innerHTML = '<div class="text-slate-400 p-4">⏳</div>';
+  try {
+    const r = await api('/content-intel/inspiration/list?limit=20');
+    if (!r.items?.length) {
+      list.innerHTML = '<div class="text-slate-500 p-4 bg-white rounded border">Chưa có inspiration nào. Paste bài từ competitor ở trên để bắt đầu.</div>';
+      return;
+    }
+    list.innerHTML = r.items.map(it => `<div class="bg-white rounded p-3 border border-slate-200">
+      <div class="flex justify-between items-start mb-1 gap-2 flex-wrap">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="font-mono text-xs bg-slate-100 px-2 py-0.5 rounded">#${it.id}</span>
+          <span class="text-xs bg-purple-100 text-purple-700 px-1.5 rounded">${escapeHtml(it.source_name || it.source_type)}</span>
+          <span class="text-xs bg-amber-100 text-amber-700 px-1.5 rounded">${escapeHtml(it.pattern_hook)}</span>
+          <span class="text-xs bg-rose-100 text-rose-700 px-1.5 rounded">${escapeHtml(it.pattern_emotion)}</span>
+          ${it.likes ? `<span class="text-xs">👍 ${it.likes} · 💬 ${it.comments}</span>` : ''}
+        </div>
+        <div class="flex gap-1">
+          <button class="ci-remix-btn bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-2 py-1 rounded" data-id="${it.id}">✨ Remix</button>
+          <button class="ci-insp-del bg-rose-100 hover:bg-rose-200 text-rose-700 text-xs px-2 py-1 rounded" data-id="${it.id}">🗑</button>
+        </div>
+      </div>
+      <div class="text-xs text-slate-600 italic mb-1">${escapeHtml(it.preview)}...</div>
+      ${it.ai_insights ? `<div class="text-xs bg-emerald-50 border border-emerald-200 rounded p-2 mt-2">💡 ${escapeHtml(it.ai_insights)}</div>` : ''}
+      ${it.remix_angle_suggestions?.length ? `<div class="mt-2 text-xs">
+        <div class="font-semibold text-slate-700">Góc remix gợi ý:</div>
+        <ul class="list-disc list-inside text-slate-600 mt-1">
+          ${it.remix_angle_suggestions.slice(0, 5).map(a => `<li>${escapeHtml(a)}</li>`).join('')}
+        </ul>
+      </div>` : ''}
+    </div>`).join('');
+
+    list.querySelectorAll('.ci-remix-btn').forEach(btn => {
+      btn.addEventListener('click', () => ciRemixFromInspiration(+btn.dataset.id));
+    });
+    list.querySelectorAll('.ci-insp-del').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Xoá inspiration này?')) return;
+        await api(`/content-intel/inspiration/${btn.dataset.id}`, { method: 'DELETE' });
+        ciLoadInspirationList();
+      });
+    });
+  } catch (e) { list.innerHTML = `<div class="text-rose-600 p-4">${escapeHtml(e.message)}</div>`; }
+}
+
+async function ciRemixFromInspiration(inspirationId) {
+  const insp = await api(`/content-intel/inspiration/${inspirationId}`);
+  const angles = insp.remix_angle_suggestions ? JSON.parse(insp.remix_angle_suggestions) : [];
+  const angleList = angles.map((a, i) => `${i+1}. ${a}`).join('\n');
+  const angleNum = prompt(`Chọn angle để remix (1-${angles.length}) hoặc bấm OK để remix tự do:\n\n${angleList}`);
+  const chosenAngle = angleNum && !isNaN(+angleNum) && +angleNum >= 1 && +angleNum <= angles.length
+    ? angles[+angleNum - 1] : null;
+  const custom = prompt('Thêm ghi chú tuỳ chỉnh (tuỳ chọn):') || '';
+
+  try {
+    const r = await api('/content-intel/remix', {
+      method: 'POST',
+      body: JSON.stringify({
+        inspiration_id: inspirationId,
+        target_angle: chosenAngle,
+        custom_instruction: custom || null,
+      }),
+    });
+    alert(`✓ Đã tạo remix draft #${r.draft_id}!\n\n${r.originality_rating} (${(r.originality_score * 100).toFixed(0)}% transform)\n\nXem Tab "Remix & Drafts" để review + publish.`);
+    switchCiSubTab('remix');
+  } catch (e) { alert('Lỗi remix: ' + e.message); }
+}
+
+// ─── Module 3: Remix drafts ───────────────────────────────────
+async function ciLoadRemixList() {
+  const status = document.getElementById('ci-remix-status').value;
+  const list = document.getElementById('ci-remix-list');
+  list.innerHTML = '<div class="text-slate-400 p-4">⏳</div>';
+  try {
+    const r = await api(`/content-intel/remix/drafts?status=${status}`);
+    if (!r.drafts?.length) {
+      list.innerHTML = '<div class="text-slate-500 p-4 bg-white rounded border">Chưa có draft nào ở status này.</div>';
+      return;
+    }
+    list.innerHTML = r.drafts.map(d => {
+      const hashtags = d.hashtags || [];
+      return `<div class="bg-white rounded p-3 border border-slate-200" data-id="${d.id}">
+        <div class="flex justify-between items-start mb-2 flex-wrap">
+          <div class="flex gap-2 items-center flex-wrap">
+            <span class="font-mono text-xs bg-slate-100 px-2 py-0.5 rounded">#${d.id}</span>
+            <span class="text-xs bg-${d.status === 'draft' ? 'amber' : d.status === 'approved' ? 'emerald' : 'blue'}-100 px-1.5 rounded">${escapeHtml(d.status)}</span>
+            ${d.inspiration_id ? `<span class="text-xs text-slate-500">từ inspiration #${d.inspiration_id}${d.source_name ? ' (' + escapeHtml(d.source_name) + ')' : ''}</span>` : ''}
+            <span class="text-xs text-slate-400">${formatRelTime(d.created_at)}</span>
+          </div>
+          <div class="flex gap-1">
+            ${d.status === 'draft' ? `<button class="ci-remix-approve bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-2 py-1 rounded" data-id="${d.id}">✓ Duyệt</button>` : ''}
+            <button class="ci-remix-del bg-rose-100 hover:bg-rose-200 text-rose-700 text-xs px-2 py-1 rounded" data-id="${d.id}">🗑</button>
+          </div>
+        </div>
+        ${d.inspiration_preview ? `<div class="text-xs text-slate-400 italic mb-2">📝 Cảm hứng: "${escapeHtml(d.inspiration_preview)}..."</div>` : ''}
+        <div class="text-sm bg-indigo-50 border border-indigo-200 rounded p-3 whitespace-pre-wrap">${escapeHtml(d.remix_text)}</div>
+      </div>`;
+    }).join('');
+    list.querySelectorAll('.ci-remix-approve').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Duyệt remix này? Sau khi duyệt có thể đưa vào lịch đăng FB.')) return;
+        await api(`/content-intel/remix/${btn.dataset.id}/approve`, { method: 'POST', body: JSON.stringify({}) });
+        ciLoadRemixList();
+      });
+    });
+    list.querySelectorAll('.ci-remix-del').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Xoá draft này?')) return;
+        await api(`/content-intel/remix/${btn.dataset.id}`, { method: 'DELETE' });
+        ciLoadRemixList();
+      });
+    });
+  } catch (e) { list.innerHTML = `<div class="text-rose-600 p-4">${escapeHtml(e.message)}</div>`; }
+}
+
+document.getElementById('ci-remix-refresh')?.addEventListener('click', ciLoadRemixList);
+document.getElementById('ci-remix-status')?.addEventListener('change', ciLoadRemixList);
 
 // ═══════════════════════════════════════════════════════════
 // Đợt 3.1: Bot Playground

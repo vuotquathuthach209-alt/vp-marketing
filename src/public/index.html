@@ -95,6 +95,7 @@
         <button data-tab="otadb" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="database-zap"></i><span>OTA DB</span></button>
         <button data-tab="conversations" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="messages-square"></i><span>Hội thoại</span></button>
         <button data-tab="botmonitor" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="activity"></i><span>Bot Monitor</span></button>
+        <button data-tab="contentintel" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="sparkles"></i><span>Content Intel</span></button>
         <button data-tab="training" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="graduation-cap"></i><span>Duyệt Training</span><span id="training-badge" class="ml-auto hidden text-xs bg-amber-500 text-slate-900 px-1.5 py-0.5 rounded-full font-bold"></span></button>
         <button data-tab="news" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="newspaper"></i><span>News → Post</span><span id="news-badge" class="ml-auto hidden text-xs bg-indigo-500 text-white px-1.5 py-0.5 rounded-full font-bold"></span></button>
         <button data-tab="room-images" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="camera"></i><span>Ảnh phòng</span></button>
@@ -582,6 +583,75 @@
             </div>
           </div>
           <div id="bm-lowconf" class="space-y-2 max-h-96 overflow-y-auto"></div>
+        </div>
+      </section>
+
+      <!-- CONTENT INTELLIGENCE TAB -->
+      <section data-panel="contentintel" class="panel hidden">
+        <div class="mb-4 max-w-6xl">
+          <h2 class="text-2xl font-bold mb-2">📈 Content Intelligence</h2>
+          <p class="text-slate-500 text-sm">Mô hình <b>"đứng trên vai người khổng lồ"</b>: Phân tích bài đã đăng của Sonder + bài viral từ competitor → AI bóc công thức → remix thành bài mới của Sonder với brand voice riêng. 100% transform, không copy verbatim.</p>
+        </div>
+
+        <!-- 3 sub-tab selector -->
+        <div class="flex gap-2 mb-4 max-w-6xl">
+          <button class="ci-tab-btn active bg-indigo-600 text-white px-4 py-2 rounded text-sm font-medium" data-ci-tab="internal">🏆 Bài nhà (Sonder)</button>
+          <button class="ci-tab-btn bg-white border text-slate-700 px-4 py-2 rounded text-sm font-medium" data-ci-tab="inspiration">🌐 Bài cảm hứng</button>
+          <button class="ci-tab-btn bg-white border text-slate-700 px-4 py-2 rounded text-sm font-medium" data-ci-tab="remix">✨ Remix & Drafts</button>
+        </div>
+
+        <!-- Sub-tab 1: Internal top posts -->
+        <div class="ci-section" data-ci-section="internal">
+          <div class="flex justify-between items-center mb-3 max-w-6xl">
+            <h3 class="font-bold">🏆 Bài Sonder performance tốt nhất</h3>
+            <div class="flex gap-2">
+              <select id="ci-internal-days" class="border rounded px-2 py-1 text-xs">
+                <option value="7">7d</option>
+                <option value="30" selected>30d</option>
+                <option value="90">90d</option>
+              </select>
+              <button id="ci-internal-refresh" class="bg-slate-800 hover:bg-slate-900 text-white text-xs px-3 py-1 rounded">🔄</button>
+            </div>
+          </div>
+          <!-- Patterns summary -->
+          <div id="ci-patterns" class="bg-emerald-50 border border-emerald-200 rounded p-3 mb-3 max-w-6xl text-sm"></div>
+          <!-- Top posts list -->
+          <div id="ci-internal-list" class="space-y-2 max-w-6xl"></div>
+        </div>
+
+        <!-- Sub-tab 2: Inspiration analyzer -->
+        <div class="ci-section hidden" data-ci-section="inspiration">
+          <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
+            <h3 class="font-bold mb-2">🔬 Phân tích bài cảm hứng từ competitor</h3>
+            <p class="text-xs text-slate-500 mb-3">Paste nội dung bài viral từ FB / Instagram / TikTok / blog. AI sẽ bóc tách công thức: hook, emotion, structure, CTA + gợi ý angle để Sonder remix.</p>
+            <div class="grid grid-cols-3 gap-2 mb-2">
+              <input id="ci-insp-source-name" type="text" placeholder="Nguồn (VD: Vinpearl FB)" class="border rounded px-2 py-1 text-sm col-span-1"/>
+              <input id="ci-insp-source-url" type="text" placeholder="URL (tuỳ chọn)" class="border rounded px-2 py-1 text-sm col-span-2"/>
+            </div>
+            <textarea id="ci-insp-text" rows="5" placeholder="Paste nội dung bài viết (tối thiểu 30 chars, tối đa 5000 chars)..." class="w-full border rounded px-2 py-2 text-sm"></textarea>
+            <button id="ci-insp-analyze" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-4 py-2 rounded mt-2 font-medium">🔬 Phân tích</button>
+          </div>
+          <div class="max-w-6xl">
+            <h3 class="font-bold mb-2">📚 Inspiration library</h3>
+            <div id="ci-insp-list" class="space-y-2"></div>
+          </div>
+        </div>
+
+        <!-- Sub-tab 3: Remix drafts -->
+        <div class="ci-section hidden" data-ci-section="remix">
+          <div class="flex justify-between items-center mb-3 max-w-6xl">
+            <h3 class="font-bold">✨ Remix drafts</h3>
+            <div class="flex gap-2">
+              <select id="ci-remix-status" class="border rounded px-2 py-1 text-xs">
+                <option value="draft" selected>Drafts</option>
+                <option value="approved">Approved</option>
+                <option value="published">Published</option>
+                <option value="discarded">Discarded</option>
+              </select>
+              <button id="ci-remix-refresh" class="bg-slate-800 hover:bg-slate-900 text-white text-xs px-3 py-1 rounded">🔄</button>
+            </div>
+          </div>
+          <div id="ci-remix-list" class="space-y-3 max-w-6xl"></div>
         </div>
       </section>
 

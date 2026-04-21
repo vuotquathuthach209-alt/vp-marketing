@@ -36,6 +36,7 @@ import hotelsEditorRouter from './routes/hotels-editor';
 import conversationsRouter from './routes/conversations';
 import otaPushRouter from './routes/ota-push';
 import botMonitorRouter from './routes/bot-monitor';
+import contentIntelRouter from './routes/content-intel';
 import './services/agent-tools'; // init table + register tools
 import './services/ota-readonly-guard'; // self-test fires on boot (fail-fast if guard broken)
 // v8: Intent matcher self-test
@@ -130,6 +131,7 @@ app.use('/api/playground', playgroundRouter);
 app.use('/api/hotels-editor', hotelsEditorRouter);
 app.use('/api/conversations', conversationsRouter);
 app.use('/api/bot-monitor', botMonitorRouter);
+app.use('/api/content-intel', contentIntelRouter);
 // (OTA push router đã mount trước /api/ota phía trên)
 app.use('/api/data-deletion', dataDeletionRouter);
 app.use('/data-deletion', dataDeletionRouter); // also accept /data-deletion/status (URL returned to FB)

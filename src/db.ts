@@ -707,6 +707,57 @@ CREATE TABLE IF NOT EXISTS news_post_drafts (
 CREATE INDEX IF NOT EXISTS idx_news_drafts_status_hotel ON news_post_drafts(status, hotel_id);
 CREATE INDEX IF NOT EXISTS idx_news_drafts_scheduled ON news_post_drafts(status, scheduled_at);
 CREATE INDEX IF NOT EXISTS idx_news_drafts_article ON news_post_drafts(article_id);
+
+-- v12 Content Intelligence: phân tích bài cạnh tranh + remix thành Sonder voice
+CREATE TABLE IF NOT EXISTS inspiration_posts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL DEFAULT 1,
+  source_name TEXT,                       -- "Vinpearl Official FB", "Booking.com", ...
+  source_url TEXT,                         -- URL bài viết gốc (nếu có)
+  source_type TEXT DEFAULT 'facebook',     -- facebook | instagram | tiktok | blog | other
+  original_text TEXT NOT NULL,             -- Nội dung bài gốc (admin paste)
+  language TEXT DEFAULT 'vi',
+  -- Engagement metrics (nếu admin nhập / auto scrape)
+  likes INTEGER DEFAULT 0,
+  comments INTEGER DEFAULT 0,
+  shares INTEGER DEFAULT 0,
+  reach INTEGER DEFAULT 0,
+  engagement_rate REAL DEFAULT 0,          -- calculated
+  -- AI analysis
+  pattern_hook TEXT,                       -- curiosity_question | number_shock | story | ...
+  pattern_emotion TEXT,                    -- excitement | nostalgia | urgency | fomo | ...
+  pattern_structure TEXT,                  -- problem-solution | listicle | story-arc | ...
+  pattern_cta TEXT,                        -- soft_inquiry | direct_book | share | ...
+  topic_tags TEXT,                         -- JSON array
+  ai_insights TEXT,                        -- AI explain vì sao bài này hiệu quả
+  remix_angle_suggestions TEXT,            -- JSON array — các góc admin có thể remix
+  admin_notes TEXT,
+  status TEXT DEFAULT 'analyzed',          -- pending | analyzed | archived
+  created_at INTEGER NOT NULL,
+  analyzed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_inspiration_hotel ON inspiration_posts(hotel_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS remix_drafts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  inspiration_id INTEGER,                  -- source inspiration
+  hotel_id INTEGER NOT NULL,
+  remix_angle TEXT,                        -- admin chọn angle nào
+  remix_text TEXT NOT NULL,
+  brand_voice TEXT DEFAULT 'friendly',
+  hashtags TEXT,                           -- JSON array
+  ai_provider TEXT,
+  ai_tokens_used INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'draft',             -- draft | approved | published | discarded
+  scheduled_at INTEGER,
+  published_at INTEGER,
+  fb_post_id TEXT,
+  admin_user_id INTEGER,
+  admin_notes TEXT,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (inspiration_id) REFERENCES inspiration_posts(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_remix_status ON remix_drafts(status, hotel_id);
 `);
 
 // v7: Hotel Knowledge Layer — AI-synthesized bot-ready data
