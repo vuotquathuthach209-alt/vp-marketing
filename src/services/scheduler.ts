@@ -62,13 +62,16 @@ async function processDuePosts() {
           .prepare(`SELECT filename FROM media WHERE id = ?`)
           .get(post.media_id) as MediaRow | undefined;
         if (!media) throw new Error('Không tìm thấy media');
-        result = await publishImage(page.fb_page_id, page.access_token, post.caption, mediaFullPath(media.filename));
+        // publishImage handles both URL (http...) and local path
+        const src = /^https?:\/\//i.test(media.filename) ? media.filename : mediaFullPath(media.filename);
+        result = await publishImage(page.fb_page_id, page.access_token, post.caption, src);
       } else if (post.media_type === 'video' && post.media_id) {
         const media = db
           .prepare(`SELECT filename FROM media WHERE id = ?`)
           .get(post.media_id) as MediaRow | undefined;
         if (!media) throw new Error('Không tìm thấy media');
-        result = await publishVideo(page.fb_page_id, page.access_token, post.caption, mediaFullPath(media.filename));
+        const src = /^https?:\/\//i.test(media.filename) ? media.filename : mediaFullPath(media.filename);
+        result = await publishVideo(page.fb_page_id, page.access_token, post.caption, src);
       } else {
         result = await publishText(page.fb_page_id, page.access_token, post.caption);
       }

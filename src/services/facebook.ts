@@ -30,7 +30,10 @@ export async function publishText(
 }
 
 /**
- * Đăng ảnh + caption lên Facebook Page
+ * Đăng ảnh + caption lên Facebook Page.
+ * Auto-detect: URL (http/https) → dùng Graph API url= (FB tự fetch).
+ * Local path → upload multipart.
+ * Tránh ENOENT khi autopilot lưu URL vào media.filename.
  */
 export async function publishImage(
   pageId: string,
@@ -38,6 +41,19 @@ export async function publishImage(
   message: string,
   imagePath: string
 ): Promise<PublishResult> {
+  // URL mode — FB tự fetch (vd Google Drive direct link, CDN, ...)
+  if (/^https?:\/\//i.test(imagePath)) {
+    const resp = await axios.post(`${GRAPH}/${pageId}/photos`, null, {
+      params: { message, url: imagePath, access_token: accessToken },
+      timeout: 120000,
+    });
+    return { fbPostId: resp.data.post_id || resp.data.id };
+  }
+
+  // Local file mode
+  if (!fs.existsSync(imagePath)) {
+    throw new Error(`Image file not found: ${imagePath}`);
+  }
   const form = new FormData();
   form.append('message', message);
   form.append('access_token', accessToken);
