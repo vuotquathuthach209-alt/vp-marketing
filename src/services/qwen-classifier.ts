@@ -20,9 +20,11 @@ import { db } from '../db';
 
 const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct-q4_K_M';
-const QWEN_TIMEOUT_MS = 30_000;
-const QWEN_MAX_RETRIES = 2;
-const BATCH_SIZE = 5;
+// Qwen local có thể cần 20-60s cho payload phức tạp.
+// Tune: 60s single call, 1 retry để tránh stuck batch.
+const QWEN_TIMEOUT_MS = 60_000;
+const QWEN_MAX_RETRIES = 1;
+const BATCH_SIZE = 3;  // nhỏ cho Qwen VPS 15GB RAM
 
 /* ═══════════════════════════════════════════
    Qwen call helper
