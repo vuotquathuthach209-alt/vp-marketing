@@ -363,23 +363,108 @@ async function createBookingDraft(state: ConversationState): Promise<void> {
       now,
     );
 
-    // Notify Telegram
+    // Enhanced Telegram notify — rich format + hotel-specific routing
     try {
-      const { notifyAll } = require('./telegram');
-      const summary = [
-        `🎯 **NEW BOOKING LEAD**`,
-        `• Tên: ${s.name || '?'}`,
-        `• SĐT: ${s.phone || '?'}`,
-        `• Loại: ${s.property_type || '?'}`,
-        `• Chỗ: ${s.selected_property_id || '?'}`,
-        s.checkin_date ? `• Ngày: ${s.checkin_date}${s.checkout_date ? ' → ' + s.checkout_date : ''}${s.nights ? ' (' + s.nights + ' đêm)' : ''}` : null,
-        s.months ? `• Thuê ${s.months} tháng` : null,
-        `• Khách: ${s.guests_adults || '?'}${s.guests_children ? ' + ' + s.guests_children + ' bé' : ''}`,
-        s.budget_max ? `• Budget: ${s.budget_max.toLocaleString('vi-VN')}₫` : null,
-        `• Sender: ${state.sender_id}`,
-      ].filter(Boolean).join('\n');
-      notifyAll(summary).catch(() => {});
-    } catch {}
+      // Resolve hotel info
+      const hotel = s.selected_property_id
+        ? db.prepare(`SELECT name_canonical, phone, district, city FROM hotel_profile WHERE hotel_id = ?`).get(s.selected_property_id) as any
+        : null;
+      const room = s.selected_room_id
+        ? db.prepare(`SELECT display_name_vi, price_weekday FROM hotel_room_catalog WHERE id = ?`).get(s.selected_room_id) as any
+        : null;
+
+      // Compute total
+      const isLong = s.rental_mode === 'long_term';
+      const pricePerUnit = room?.price_weekday || s.budget_max || 0;
+      const qty = isLong ? (s.months || 1) : (s.nights || 1);
+      const totalEst = isLong ? pricePerUnit * 30 * qty : pricePerUnit * qty;
+
+      // Channel detection
+      const channel = state.sender_id.startsWith('zalo:') ? '💬 Zalo'
+        : state.sender_id.match(/^\d{10,}$/) ? '📘 Facebook'
+        : '🌐 Web';
+
+      // Rich Markdown format
+      const lines: string[] = [
+        `🎯 *NEW BOOKING LEAD* ${channel}`,
+        ``,
+        `👤 *${s.name || '(chưa có tên)'}*  📞 \`${s.phone || '?'}\``,
+        ``,
+        `🏨 *Chỗ đặt*: ${hotel?.name_canonical || '(chưa chọn)'}`,
+      ];
+      if (hotel?.district) lines.push(`📍 ${hotel.district}${hotel.city ? ', ' + hotel.city : ''}`);
+      if (room) lines.push(`🛏 *Loại*: ${room.display_name_vi}`);
+
+      if (isLong) {
+        lines.push(`📅 *Thuê*: ${s.months || '?'} tháng`);
+        if (s.checkin_date) lines.push(`📆 Dọn vào: ${s.checkin_date}`);
+      } else {
+        if (s.checkin_date) {
+          lines.push(`📅 *Check-in*: ${s.checkin_date}${s.checkout_date ? ' → ' + s.checkout_date : ''}${s.nights ? ` (${s.nights} đêm)` : ''}`);
+        }
+      }
+
+      lines.push(`👥 *Khách*: ${s.guests_adults || '?'}${s.guests_children ? ` + ${s.guests_children} trẻ em` : ''}`);
+
+      if (pricePerUnit > 0) {
+        const unit = isLong ? 'tháng' : 'đêm';
+        lines.push(`💰 *Giá*: ${pricePerUnit.toLocaleString('vi-VN')}₫/${unit}`);
+        if (totalEst > pricePerUnit) {
+          lines.push(`💵 *Tổng tạm*: *${totalEst.toLocaleString('vi-VN')}₫*`);
+        }
+      } else if (s.budget_max) {
+        lines.push(`💰 *Budget*: ≤ ${s.budget_max.toLocaleString('vi-VN')}₫`);
+      }
+
+      if (s.area_normalized) lines.push(`🔍 *Tìm ở*: ${s.area_normalized}`);
+
+      lines.push(``);
+      lines.push(`⏰ *Call trong 15 phút* để chốt!`);
+      lines.push(`_Sender_: \`${state.sender_id}\``);
+      lines.push(`_Admin_: app.sondervn.com/funnel`);
+
+      const summary = lines.join('\n');
+
+      // Route: hotel-specific Telegram group if configured, else global
+      // Find page_id cho hotel (từ pages table or use first active)
+      try {
+        if (s.selected_property_id) {
+          const page = db.prepare(
+            `SELECT p.id FROM pages p JOIN mkt_hotels mh ON mh.id = p.hotel_id WHERE mh.ota_hotel_id = ? LIMIT 1`
+          ).get(s.selected_property_id) as any;
+          if (page?.id) {
+            const { notifyHotelOrGlobal } = require('./hotel-telegram');
+            await notifyHotelOrGlobal(page.id, summary);
+          } else {
+            const { notifyAll } = require('./telegram');
+            notifyAll(summary).catch(() => {});
+          }
+        } else {
+          const { notifyAll } = require('./telegram');
+          notifyAll(summary).catch(() => {});
+        }
+      } catch (e: any) {
+        console.warn('[funnel] telegram notify fail:', e?.message);
+      }
+
+      // Email notify (if SMTP configured)
+      try {
+        const { sendBookingLeadEmail } = require('./email-notify');
+        if (sendBookingLeadEmail) {
+          sendBookingLeadEmail({
+            name: s.name, phone: s.phone, email: s.email,
+            hotel_name: hotel?.name_canonical,
+            room_name: room?.display_name_vi,
+            checkin: s.checkin_date, checkout: s.checkout_date,
+            nights: s.nights, months: s.months,
+            guests: s.guests_adults, total: totalEst,
+            sender_id: state.sender_id,
+          }).catch(() => {});
+        }
+      } catch {}
+    } catch (e: any) {
+      console.warn('[funnel] notify fail:', e?.message);
+    }
   } catch (e: any) {
     console.error('[funnel] createBookingDraft fail:', e?.message);
   }

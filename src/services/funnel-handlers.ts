@@ -343,6 +343,46 @@ export function handleChdvExtrasAsk(state: ConversationState): HandlerResult {
    S11. SHOW_RESULTS
    ═══════════════════════════════════════════ */
 
+/**
+ * Check availability của property cho dates → trigger urgency nếu phòng hiếm.
+ */
+function buildUrgencyHint(propertyId: number, checkinDate: string | undefined): string | null {
+  if (!checkinDate) return null;
+  try {
+    const avail = db.prepare(
+      `SELECT available_units FROM mkt_availability_cache
+       WHERE ota_hotel_id = ? AND date = ? AND available_units > 0 LIMIT 1`
+    ).get(propertyId, checkinDate) as any;
+    if (avail?.available_units !== undefined && avail.available_units <= 3) {
+      return `⚡ *Chỉ còn ${avail.available_units} phòng cho ngày này!*`;
+    }
+    // Check booking velocity (24h recent leads for this property)
+    const recentLeads = db.prepare(
+      `SELECT COUNT(*) as n FROM bot_booking_drafts WHERE hotel_id = ? AND created_at > ?`
+    ).get(propertyId, Date.now() - 24 * 3600_000) as any;
+    if (recentLeads?.n >= 3) {
+      return `🔥 *${recentLeads.n} khách đặt trong 24h qua!*`;
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * Detect returning customer — match phone từ past bookings.
+ */
+function getReturningCustomerHint(phone: string | undefined): string | null {
+  if (!phone) return null;
+  try {
+    const past = db.prepare(
+      `SELECT name, hotel_id, created_at FROM bot_booking_drafts WHERE phone = ? ORDER BY created_at DESC LIMIT 1`
+    ).get(phone) as any;
+    if (past) {
+      return `Chào mừng trở lại, ${past.name || 'anh/chị'}! 🙌`;
+    }
+  } catch {}
+  return null;
+}
+
 export function handleShowResults(state: ConversationState): HandlerResult {
   const slots = state.slots;
   const isLong = slots.rental_mode === 'long_term';
@@ -390,8 +430,22 @@ export function handleShowResults(state: ConversationState): HandlerResult {
       : '';
     const stars = h.star_rating ? ' ' + '⭐'.repeat(h.star_rating) : '';
     const loc = h.district ? ` (${h.district})` : '';
-    const usp = h.usp_top3?.[0] ? ` — ${h.usp_top3[0]}` : '';
-    return `${i + 1}. ${emoji} **${h.name}**${stars}${loc}${priceStr}${usp}`;
+
+    // Recommendation with reason — build why this matches user's criteria
+    const reasons: string[] = [];
+    if (slots.area_normalized && h.district && (h.district.toLowerCase().includes(slots.area_normalized.toLowerCase()) || slots.area_normalized.toLowerCase().includes(h.district.toLowerCase()))) {
+      reasons.push(`gần ${slots.area_normalized}`);
+    }
+    if (slots.budget_max && h.min_price && h.min_price <= slots.budget_max) {
+      const saving = slots.budget_max - h.min_price;
+      if (saving > 100_000) reasons.push(`giá rẻ hơn budget ${formatVND(saving)}`);
+      else reasons.push(`giá hợp budget`);
+    }
+    if (h.star_rating && h.star_rating >= 4) reasons.push(`${h.star_rating}⭐`);
+    if (h.usp_top3?.[0]) reasons.push(h.usp_top3[0]);
+
+    const reasonStr = reasons.length ? ` — ${reasons.slice(0, 2).join(', ')}` : '';
+    return `${i + 1}. ${emoji} **${h.name}**${stars}${loc}${priceStr}${reasonStr}`;
   });
 
   const cards: PropertyCard[] = results.map(h => ({
@@ -406,8 +460,18 @@ export function handleShowResults(state: ConversationState): HandlerResult {
 
   state.slots.shown_property_ids = results.map(h => h.hotel_id);
 
+  // Urgency hint for top result
+  const urgency = buildUrgencyHint(results[0].hotel_id, slots.checkin_date);
+  // Returning customer welcome
+  const returning = getReturningCustomerHint(slots.phone);
+
+  const headerLines: string[] = [];
+  if (returning) headerLines.push(returning);
+  headerLines.push(`Dạ bên em có ${results.length} lựa chọn phù hợp ạ:`);
+  if (urgency) headerLines.push(urgency);
+
   return {
-    reply: `Dạ bên em có ${results.length} lựa chọn phù hợp ạ:\n\n${rows.join('\n\n')}\n\n` +
+    reply: `${headerLines.join('\n')}\n\n${rows.join('\n\n')}\n\n` +
       `Anh/chị thấy hợp với option nào thì em tư vấn kỹ hơn nhé ạ 😊`,
     next_stage: 'SHOW_RESULTS',
     cards,
