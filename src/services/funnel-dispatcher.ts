@@ -74,6 +74,89 @@ function diffSlots(before: BookingSlots, after: BookingSlots): Partial<BookingSl
 }
 
 /**
+ * Build generic answer cho topic phổ biến — liệt kê tất cả hotels thay vì clarify ngay.
+ * Return null nếu không có generic answer cho topic đó.
+ */
+function buildGenericAnswer(subCategory: string, msg: string): string | null {
+  try {
+    const hotels = db.prepare(
+      `SELECT hp.hotel_id, hp.name_canonical, hp.property_type, hp.district, hp.star_rating,
+              hp.monthly_price_from, hp.scraped_data
+       FROM hotel_profile hp
+       WHERE EXISTS (SELECT 1 FROM mkt_hotels mh WHERE mh.ota_hotel_id = hp.hotel_id AND mh.status = 'active')`
+    ).all() as any[];
+
+    if (!hotels.length) return null;
+
+    switch (subCategory) {
+      case 'price': {
+        const lines = hotels.map(h => {
+          const room = db.prepare(`SELECT MIN(price_weekday) as min_p FROM hotel_room_catalog WHERE hotel_id = ?`).get(h.hotel_id) as any;
+          const monthly = h.monthly_price_from ? `${(h.monthly_price_from / 1_000_000).toFixed(1)}tr/tháng` : '';
+          const nightly = room?.min_p ? `${(room.min_p / 1000).toFixed(0)}k/đêm` : '';
+          const emoji = h.property_type === 'apartment' ? '🏢' : h.property_type === 'homestay' ? '🏡' : '🏨';
+          return `${emoji} **${h.name_canonical}** (${h.district || '?'}) — ${nightly || monthly || 'giá liên hệ'}`;
+        });
+        return `💰 Bảng giá các chỗ ở Sonder:\n\n${lines.join('\n')}\n\n👉 Anh/chị xem chỗ nào phù hợp để em tư vấn chi tiết?`;
+      }
+
+      case 'wifi':
+      case 'amenity': {
+        if (/wifi/i.test(msg)) {
+          return `✅ Tất cả chỗ ở Sonder đều có **Wifi tốc độ cao miễn phí** ạ.\n\nAnh/chị muốn em tư vấn chỗ cụ thể nào?`;
+        }
+        return null;
+      }
+
+      case 'checkin_time':
+      case 'checkout': {
+        return `⏰ Giờ check-in / check-out chuẩn Sonder:\n• Check-in: **14:00**\n• Check-out: **12:00**\n\nCheck-in sớm (trước 12:00): có thể miễn phí nếu phòng trống, hoặc phụ phí 30-50%.\n\nAnh/chị cần chỗ nào cụ thể để em check lịch trống?`;
+      }
+
+      case 'pet': {
+        const lines = hotels.map(h => {
+          try {
+            const sd = JSON.parse(h.scraped_data || '{}');
+            const petInfo = sd.content_sections?.pet_policy || '(liên hệ)';
+            return `• ${h.name_canonical}: ${petInfo}`;
+          } catch {
+            return `• ${h.name_canonical}: (liên hệ)`;
+          }
+        });
+        return `🐾 Chính sách thú cưng:\n\n${lines.join('\n')}\n\nAnh/chị cần thêm thông tin gì không?`;
+      }
+
+      case 'availability': {
+        return `📅 Em check được phòng trống ngay nếu anh/chị cho em biết:\n• Ngày check-in + số đêm\n• Số khách\n• Khu vực muốn ở (Tân Bình / Q1 / ...)\n\nVd: "25/5 2 đêm 2 người gần sân bay"`;
+      }
+
+      case 'location': {
+        const byDistrict: Record<string, string[]> = {};
+        hotels.forEach(h => {
+          const d = h.district || 'Khác';
+          if (!byDistrict[d]) byDistrict[d] = [];
+          byDistrict[d].push(h.name_canonical);
+        });
+        const lines = Object.entries(byDistrict).map(([d, names]) => `📍 **${d}**: ${names.join(', ')}`);
+        return `Sonder có chỗ ở các khu vực:\n\n${lines.join('\n')}\n\nAnh/chị muốn ở khu nào ạ?`;
+      }
+
+      case 'room_type': {
+        const types = [...new Set(hotels.map(h => h.property_type))];
+        const labels: Record<string, string> = { hotel: '🏨 Khách sạn', homestay: '🏡 Homestay', villa: '🏖 Villa', apartment: '🏢 Căn hộ dịch vụ' };
+        const lines = types.map(t => labels[t as string] || t).filter(Boolean);
+        return `Sonder có các loại hình:\n\n${lines.join('\n')}\n\nAnh/chị thích loại nào ạ?`;
+      }
+
+      default:
+        return null;
+    }
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
  * Detect if message is "content question" — hỏi info about facility, không phải booking intent.
  * Ví dụ: "bên mình có wifi không", "gần có bánh mì ngon không", "có cho thú cưng không"
  */
@@ -259,18 +342,23 @@ export async function processFunnelMessage(
     }
   } catch (e: any) { console.warn('[funnel] Gemini intent fail:', e?.message); }
 
-  // ROUTE 1: Clarification needed (câu quá mơ hồ)
-  if (geminiIntent?.needs_clarification && geminiIntent.clarification_question) {
-    return {
-      reply: geminiIntent.clarification_question,
-      intent: `gemini_clarify_${geminiIntent.sub_category || 'unclear'}`,
-      stage: 'INIT',
-      meta: { gemini: geminiIntent },
-    };
+  // ROUTE 1: Try answer GENERIC FIRST — nếu info_question về topic chung
+  //          (price, wifi, checkin_time, pet, ...) → trả lời overview
+  //          cho toàn bộ active hotels thay vì clarify ngay.
+  if (geminiIntent?.primary_intent === 'info_question' && geminiIntent.sub_category && geminiIntent.in_knowledge_base) {
+    const genericAnswer = buildGenericAnswer(geminiIntent.sub_category, msg);
+    if (genericAnswer) {
+      return {
+        reply: genericAnswer,
+        intent: `generic_${geminiIntent.sub_category}`,
+        stage: 'INIT',
+        meta: { gemini: geminiIntent },
+      };
+    }
   }
 
-  // ROUTE 2: Info question + có data → trả lời ngay qua RAG/Wiki
-  if (geminiIntent?.primary_intent === 'info_question' && geminiIntent.in_knowledge_base && geminiIntent.confidence >= 0.6) {
+  // ROUTE 2: RAG semantic search (Tier 2/3) — tìm đúng chunk text
+  if (geminiIntent?.primary_intent === 'info_question' && geminiIntent.in_knowledge_base && geminiIntent.confidence >= 0.5) {
     try {
       const { unifiedQuery } = require('./knowledge-sync');
       const qr = await unifiedQuery(msg);
@@ -285,6 +373,16 @@ export async function processFunnelMessage(
     } catch (e: any) { console.warn('[funnel] RAG fail:', e?.message); }
   }
 
+  // ROUTE 3: Clarification (chỉ khi thực sự mơ hồ, sub_category không xác định)
+  if (geminiIntent?.needs_clarification && geminiIntent.clarification_question && !geminiIntent.sub_category) {
+    return {
+      reply: geminiIntent.clarification_question,
+      intent: `gemini_clarify_${geminiIntent.sub_category || 'unclear'}`,
+      stage: 'INIT',
+      meta: { gemini: geminiIntent },
+    };
+  }
+
   // ROUTE 3: Info question NHƯNG KHÔNG trong knowledge base → honest reply
   if (geminiIntent?.primary_intent === 'info_question' && !geminiIntent.in_knowledge_base && geminiIntent.confidence >= 0.7) {
     return {
@@ -295,6 +393,41 @@ export async function processFunnelMessage(
       stage: 'INIT',
       meta: { gemini: geminiIntent },
     };
+  }
+
+  // ROUTE 3.5: Specific hotel name mentioned → show hotel overview + rooms
+  if (geminiIntent?.extracted_slots?.property_name) {
+    try {
+      const name = geminiIntent.extracted_slots.property_name;
+      const hotel = db.prepare(
+        `SELECT hp.hotel_id, hp.name_canonical, hp.district, hp.city, hp.phone, hp.star_rating,
+                hp.property_type, hp.ai_summary_vi
+         FROM hotel_profile hp
+         WHERE EXISTS (SELECT 1 FROM mkt_hotels mh WHERE mh.ota_hotel_id = hp.hotel_id AND mh.status = 'active')
+           AND LOWER(hp.name_canonical) LIKE LOWER(?)
+         LIMIT 1`
+      ).get(`%${name}%`) as any;
+      if (hotel) {
+        const rooms = db.prepare(`SELECT display_name_vi, max_guests, price_weekday FROM hotel_room_catalog WHERE hotel_id = ? ORDER BY price_weekday LIMIT 5`).all(hotel.hotel_id) as any[];
+        const stars = hotel.star_rating ? ' ' + '⭐'.repeat(hotel.star_rating) : '';
+        const emoji = hotel.property_type === 'apartment' ? '🏢' : hotel.property_type === 'homestay' ? '🏡' : '🏨';
+        const addr = [hotel.district, hotel.city].filter(Boolean).join(', ');
+        const roomList = rooms.length
+          ? rooms.map(r => `• ${r.display_name_vi} (${r.max_guests} khách) — ${r.price_weekday ? (r.price_weekday / 1000).toFixed(0) + 'k/đêm' : 'liên hệ'}`).join('\n')
+          : '';
+        return {
+          reply: `${emoji} **${hotel.name_canonical}**${stars}\n` +
+            (addr ? `📍 ${addr}\n` : '') +
+            (hotel.phone ? `📞 ${hotel.phone}\n` : '') +
+            (hotel.ai_summary_vi ? `\n${hotel.ai_summary_vi}\n` : '') +
+            (roomList ? `\n**Các loại phòng:**\n${roomList}\n` : '') +
+            `\nAnh/chị quan tâm phòng nào? Cho em biết ngày + số khách em check lịch trống nhé 🙌`,
+          intent: 'hotel_overview',
+          stage: 'INIT',
+          meta: { gemini: geminiIntent, hotel_id: hotel.hotel_id },
+        };
+      }
+    } catch (e: any) { console.warn('[funnel] hotel name lookup fail:', e?.message); }
   }
 
   // ROUTE 4: Image request → show room images

@@ -72,7 +72,7 @@ echo "━━━ [{desc}] USER: {msg} ━━━"
 curl -s -X POST http://127.0.0.1:3000/webhook/zalo \\
   -H 'Content-Type: application/json' \\
   -d '{{"oa_id":"328738126716568694","event_name":"user_send_text","sender":{{"id":"{sid}"}},"message":{{"text":"{escaped}"}}}}' > /dev/null
-sleep 2
+sleep 6
 ''')
 
 cmd = CMD_TMPL.replace('###SENDER_LIST###', sender_list).replace('###SCENARIOS###', '\n'.join(test_steps))
