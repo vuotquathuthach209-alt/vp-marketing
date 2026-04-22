@@ -247,18 +247,124 @@ export async function processFunnelMessage(
   msg: string,
   opts: { payload?: string; language?: string } = {},
 ): Promise<FunnelResponse> {
-  // 0. Content-question short-circuit — nếu user hỏi info about facility
-  //    (dining, amenity, safety, pet, ...) và chưa vào booking flow,
-  //    trả lời qua Tier 2 RAG mà không ép vào funnel.
-  const isContentQuestion = detectContentQuestion(msg);
+  // 0. Gemini Intent Classifier — smart analyze ý định khách TRƯỚC khi enter FSM.
+  //    Replaces regex detectContentQuestion với AI classification.
+  let geminiIntent: any = null;
+  try {
+    const { analyzeIntent, geminiSlotsToExtracted } = require('./gemini-intent-classifier');
+    const prevState = getState(senderId);
+    geminiIntent = await analyzeIntent(msg, { hasPrevContext: !!prevState });
+    if (geminiIntent) {
+      console.log(`[gemini-intent] ${geminiIntent.primary_intent}/${geminiIntent.sub_category || '-'} conf=${geminiIntent.confidence} kb=${geminiIntent.in_knowledge_base} clarify=${geminiIntent.needs_clarification}`);
+    }
+  } catch (e: any) { console.warn('[funnel] Gemini intent fail:', e?.message); }
+
+  // ROUTE 1: Clarification needed (câu quá mơ hồ)
+  if (geminiIntent?.needs_clarification && geminiIntent.clarification_question) {
+    return {
+      reply: geminiIntent.clarification_question,
+      intent: `gemini_clarify_${geminiIntent.sub_category || 'unclear'}`,
+      stage: 'INIT',
+      meta: { gemini: geminiIntent },
+    };
+  }
+
+  // ROUTE 2: Info question + có data → trả lời ngay qua RAG/Wiki
+  if (geminiIntent?.primary_intent === 'info_question' && geminiIntent.in_knowledge_base && geminiIntent.confidence >= 0.6) {
+    try {
+      const { unifiedQuery } = require('./knowledge-sync');
+      const qr = await unifiedQuery(msg);
+      if (qr.tier !== 'none' && qr.confidence >= 0.4 && qr.answer_snippets?.length) {
+        return {
+          reply: formatRagAnswer(qr),
+          intent: `rag_${qr.tier}_${geminiIntent.sub_category || 'info'}`,
+          stage: 'INIT',
+          meta: { tier: qr.tier, confidence: qr.confidence, gemini: geminiIntent },
+        };
+      }
+    } catch (e: any) { console.warn('[funnel] RAG fail:', e?.message); }
+  }
+
+  // ROUTE 3: Info question NHƯNG KHÔNG trong knowledge base → honest reply
+  if (geminiIntent?.primary_intent === 'info_question' && !geminiIntent.in_knowledge_base && geminiIntent.confidence >= 0.7) {
+    return {
+      reply: `Dạ em xin lỗi, thông tin đó em chưa có trong hệ thống ạ 🙏\n\n` +
+        `Anh/chị để lại SĐT, team em sẽ gọi tư vấn trực tiếp trong 15 phút.\n` +
+        `Hoặc gọi hotline: 0348 644 833`,
+      intent: `info_not_in_kb_${geminiIntent.sub_category || 'unknown'}`,
+      stage: 'INIT',
+      meta: { gemini: geminiIntent },
+    };
+  }
+
+  // ROUTE 4: Image request → show room images
+  if (geminiIntent?.primary_intent === 'image_request') {
+    try {
+      const images = db.prepare(
+        `SELECT ri.image_url, ri.caption, ri.room_type_name, hp.name_canonical
+         FROM room_images ri
+         LEFT JOIN hotel_profile hp ON hp.hotel_id = ri.hotel_id
+         WHERE ri.active = 1
+         ORDER BY ri.is_primary DESC, ri.display_order LIMIT 6`
+      ).all() as any[];
+      if (images.length) {
+        const imageUrls = images.map((i: any) => i.image_url).filter(Boolean);
+        const list = images.map((i: any, idx: number) => `${idx + 1}. ${i.room_type_name || '?'} @ ${i.name_canonical || '?'}`).join('\n');
+        return {
+          reply: `Dạ ảnh phòng của Sonder ạ:\n\n${list}\n\nAnh/chị thích loại nào để em tư vấn kỹ hơn?`,
+          images: imageUrls,
+          intent: 'image_response',
+          stage: 'INIT',
+          meta: { gemini: geminiIntent },
+        };
+      }
+    } catch {}
+  }
+
+  // ROUTE 5: Contact info (phone only or name+phone) → capture + inform team
+  if (geminiIntent?.primary_intent === 'contact_info' && geminiIntent.extracted_slots?.phone) {
+    try {
+      const { rebuildCustomerProfile } = require('./customer-memory');
+      const phone = geminiIntent.extracted_slots.phone;
+      const name = geminiIntent.extracted_slots.name || '';
+      // Save to pending contact
+      db.exec(`CREATE TABLE IF NOT EXISTS customer_contacts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender_id TEXT, phone TEXT, name TEXT, notes TEXT, created_at INTEGER)`);
+      db.prepare(`INSERT INTO customer_contacts (sender_id, phone, name, notes, created_at) VALUES (?, ?, ?, ?, ?)`)
+        .run(senderId, phone, name || null, 'direct_contact', Date.now());
+      // Telegram notify
+      try {
+        const { notifyAll } = require('./telegram');
+        notifyAll(`📱 *Lead mới qua OA*\n• Tên: ${name || '(chưa rõ)'}\n• SĐT: \`${phone}\`\n• Sender: \`${senderId}\`\n_Gọi trong 15 phút!_`).catch(() => {});
+      } catch {}
+      return {
+        reply: `Dạ em đã ghi nhận thông tin:\n• ${name ? 'Tên: ' + name : ''}\n• SĐT: ${phone}\n\n📞 Team em sẽ gọi trong 15 phút để tư vấn chi tiết ạ. Cảm ơn anh/chị! 🙏`,
+        intent: 'contact_captured',
+        stage: 'INIT',
+        meta: { gemini: geminiIntent },
+      };
+    } catch {}
+  }
+
+  // ROUTE 6: Farewell → thank you, end gracefully
+  if (geminiIntent?.primary_intent === 'farewell') {
+    return {
+      reply: `Dạ cảm ơn anh/chị ạ! 🙏 Có gì cứ nhắn em bất cứ lúc nào nhé! Chúc anh/chị một ngày tốt lành 🌸`,
+      intent: 'farewell',
+      stage: 'INIT',
+    };
+  }
+
+  // Fallback: detectContentQuestion (regex) nếu Gemini không trigger route
+  const isContentQuestion = !geminiIntent && detectContentQuestion(msg);
   if (isContentQuestion) {
     try {
       const { unifiedQuery } = require('./knowledge-sync');
       const qr = await unifiedQuery(msg);
       if (qr.tier !== 'none' && qr.confidence >= 0.5 && qr.answer_snippets?.length) {
-        const reply = formatRagAnswer(qr);
         return {
-          reply,
+          reply: formatRagAnswer(qr),
           intent: `rag_${qr.tier}`,
           stage: 'INIT',
           meta: { tier: qr.tier, confidence: qr.confidence },
@@ -317,6 +423,15 @@ export async function processFunnelMessage(
     extracted = parsePayload(opts.payload, state);
   } else {
     extracted = extractAllSlots(msg);
+    // Merge slots từ Gemini intent classifier (nếu có)
+    if (geminiIntent?.extracted_slots) {
+      try {
+        const { geminiSlotsToExtracted } = require('./gemini-intent-classifier');
+        const geminiSlots = geminiSlotsToExtracted(geminiIntent.extracted_slots);
+        const { mergeExtractedSlots } = require('./multi-slot-gemini');
+        extracted = mergeExtractedSlots(extracted, geminiSlots);
+      } catch {}
+    }
     // Fallback: if deterministic extracted 0-1 slots AND msg is long → try Gemini
     const detCount = countExtracted(extracted);
     if (detCount <= 1 && msg.length >= 15 && msg.length <= 500) {
