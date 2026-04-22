@@ -455,6 +455,20 @@ export async function processFunnelMessage(
   const result: HandlerResult = dispatchHandler(state);
   state.stage = result.next_stage;
 
+  // Returning customer: prepend greeting vào reply đầu tiên
+  if (isNewConversation && (state as any)._customer_profile) {
+    try {
+      const { buildReturningGreeting, buildReturningSuggestion } = require('./customer-memory');
+      const profile = (state as any)._customer_profile;
+      const greeting = buildReturningGreeting(profile);
+      const suggestion = buildReturningSuggestion(profile);
+      if (greeting && result.reply) {
+        const prefix = [greeting, suggestion].filter(Boolean).join('\n\n');
+        result.reply = prefix + '\n\n' + result.reply;
+      }
+    } catch {}
+  }
+
   // 8. Save state
   saveState(state);
 
