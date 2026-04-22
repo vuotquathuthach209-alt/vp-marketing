@@ -6295,6 +6295,29 @@ async function loadOtaPipelineFailed() {
 }
 
 document.getElementById('otap-refresh')?.addEventListener('click', loadOtaPipeline);
+document.getElementById('otap-run-classifier')?.addEventListener('click', async (ev) => {
+  const btn = ev.currentTarget;
+  btn.disabled = true;
+  btn.textContent = '⏳ Đang classify...';
+  try {
+    const r = await api('/ota-raw/run-classifier', { method: 'POST', body: JSON.stringify({}) });
+    if (r.ok) {
+      const s = r.stats;
+      alert(`✅ Xong trong ${s.total_ms}ms:\n` +
+        `• Hotels: ${s.hotels.ok} OK, ${s.hotels.fail} fail\n` +
+        `• Rooms: ${s.rooms.ok} OK, ${s.rooms.fail} fail\n` +
+        `• Availability: ${s.availability.ok} OK, ${s.availability.fail} fail\n` +
+        `• Images: ${s.images.ok} OK, ${s.images.fail} fail`);
+      loadOtaPipeline();
+    } else {
+      alert('❌ ' + r.error);
+    }
+  } catch (e) { alert('Lỗi: ' + e.message); }
+  finally {
+    btn.disabled = false;
+    btn.textContent = '⚡ Chạy Qwen ngay';
+  }
+});
 document.getElementById('otap-failed-type')?.addEventListener('change', loadOtaPipelineFailed);
 document.getElementById('otap-rotate-secret')?.addEventListener('click', async () => {
   if (!confirm('Tạo secret MỚI? Secret cũ sẽ invalid. OTA team phải update secret.')) return;

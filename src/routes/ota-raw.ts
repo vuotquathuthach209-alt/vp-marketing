@@ -117,6 +117,19 @@ CREATE TABLE IF NOT EXISTS ota_raw_batches (
   received_at INTEGER NOT NULL,
   last_status_check INTEGER
 );
+
+-- Layer 2 output: availability cache cho bot tra cứu ngày trống
+CREATE TABLE IF NOT EXISTS mkt_availability_cache (
+  ota_hotel_id INTEGER NOT NULL,
+  ota_room_id INTEGER NOT NULL,
+  date TEXT NOT NULL,
+  available_units INTEGER,
+  price REAL,
+  updated_at INTEGER,
+  PRIMARY KEY (ota_room_id, date)
+);
+CREATE INDEX IF NOT EXISTS idx_avail_cache_date ON mkt_availability_cache(date, available_units);
+CREATE INDEX IF NOT EXISTS idx_avail_cache_hotel ON mkt_availability_cache(ota_hotel_id, date);
 `);
 
 /* ═══════════════════════════════════════════
@@ -377,6 +390,20 @@ router.post('/secret-rotate', (req: AuthRequest, res) => {
     secret: newSecret,
     note: 'IMPORTANT: update OTA side with this new secret. Old secret is now invalid.',
   });
+});
+
+/** POST /run-classifier — trigger Qwen classifier manually (admin only) */
+router.post('/run-classifier', async (req: AuthRequest, res) => {
+  if (req.user?.role !== 'superadmin' && req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'admin only' });
+  }
+  try {
+    const { runQwenClassifierBatch } = require('../services/qwen-classifier');
+    const stats = await runQwenClassifierBatch();
+    res.json({ ok: true, stats });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message });
+  }
 });
 
 /** GET /stats — dashboard summary */

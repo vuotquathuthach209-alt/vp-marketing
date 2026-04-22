@@ -380,6 +380,21 @@ export function startScheduler() {
     }
   });
 
+  // OTA Raw Pipeline — Qwen AI classifier cron mỗi 5 phút (batch 5 hotels + 5 rooms + 20 avail + 20 images)
+  cron.schedule('*/5 * * * *', async () => {
+    try {
+      const { runQwenClassifierBatch } = require('./qwen-classifier');
+      const stats = await runQwenClassifierBatch();
+      const total = stats.hotels.ok + stats.rooms.ok + stats.availability.ok + stats.images.ok;
+      const failed = stats.hotels.fail + stats.rooms.fail + stats.availability.fail + stats.images.fail;
+      if (total > 0 || failed > 0) {
+        console.log(`[scheduler] qwen-classifier: ${total} OK, ${failed} failed (${stats.total_ms}ms) — hotels=${stats.hotels.ok}/${stats.hotels.fail} rooms=${stats.rooms.ok}/${stats.rooms.fail} avail=${stats.availability.ok}/${stats.availability.fail} images=${stats.images.ok}/${stats.images.fail}`);
+      }
+    } catch (e: any) {
+      console.error('[scheduler] qwen-classifier error:', e?.message);
+    }
+  });
+
   // Zalo OA Article publish — mỗi 2p check scheduled articles → publish
   cron.schedule('*/2 * * * *', async () => {
     try {
