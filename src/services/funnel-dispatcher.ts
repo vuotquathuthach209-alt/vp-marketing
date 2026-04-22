@@ -158,16 +158,36 @@ export async function processFunnelMessage(
         `SELECT id, display_name_vi FROM hotel_room_catalog WHERE hotel_id = ? ORDER BY price_weekday`
       ).all(state.slots.selected_property_id) as any[];
       const lower = msg.toLowerCase();
+      let picked: any = null;
+      // Try exact name match
       for (const r of rooms) {
         const name = String(r.display_name_vi || '').toLowerCase();
         if (name.includes(lower) || lower.includes(name.split(' ')[0])) {
-          state.slots.selected_room_id = r.id;
-          state.last_bot_stage = state.stage;
-          state.stage = 'SHOW_ROOMS' as any;
-          console.log(`[funnel] text-pick room: ${r.display_name_vi} (id=${r.id})`);
+          picked = r;
           break;
         }
       }
+      // Auto-pick nếu chỉ có 1 room AND user nói "đặt/book/ok/yes/chọn"
+      if (!picked && rooms.length === 1 && /\b(đặt|book|ok|yes|chọn|đi|đúng|luôn)\b/i.test(msg)) {
+        picked = rooms[0];
+      }
+      if (picked) {
+        state.slots.selected_room_id = picked.id;
+        state.last_bot_stage = state.stage;
+        state.stage = 'SHOW_ROOMS' as any;
+        console.log(`[funnel] text-pick room: ${picked.display_name_vi} (id=${picked.id})`);
+      }
+    }
+
+    // "đúng rồi" / "đặt luôn" trong SHOW_ROOMS → CONFIRMATION
+    if (state.stage === 'SHOW_ROOMS' && /\b(đặt|book|ok|yes|đúng|luôn|confirm)\b/i.test(msg)) {
+      state.last_bot_stage = state.stage;
+      state.stage = 'CONFIRMATION_BEFORE_CLOSE' as any;
+    }
+    // "đúng" trong CONFIRMATION → CLOSING_CONTACT
+    if (state.stage === 'CONFIRMATION_BEFORE_CLOSE' && /\b(đúng|ok|yes|confirm|đặt luôn|xác nhận)\b/i.test(msg)) {
+      state.last_bot_stage = state.stage;
+      state.stage = 'CLOSING_CONTACT' as any;
     }
     // Text-based confirmation "đúng rồi", "ok đặt luôn"
     if (state.stage === 'CONFIRMATION_BEFORE_CLOSE' && /đúng|ok|đặt luôn|yes|xác nhận/i.test(msg)) {
