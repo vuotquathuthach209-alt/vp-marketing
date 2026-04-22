@@ -1078,10 +1078,32 @@ async function ragReply(
   hotelId: number,
   senderId?: string,
 ): Promise<string | null> {
-  const [wikiCtx, otaCtx] = await Promise.all([buildContext(message, hotelId), buildOtaContext(hotelId)]);
+  // 3-tier query: Wiki (T3) + OTA facts (T1) + Semantic RAG (T2)
+  const [wikiCtx, otaCtx, semanticHits] = await Promise.all([
+    buildContext(message, hotelId),
+    buildOtaContext(hotelId),
+    // Tier 2: semantic search — only if message looks "vague" (trigger semantic)
+    (async () => {
+      try {
+        const { semanticSearch } = require('./knowledge-sync');
+        // Get hotel_profile.hotel_id từ mkt_hotels.id
+        const { resolveKnowledgeHotelId } = require('./hotel-knowledge');
+        const hpId = resolveKnowledgeHotelId(hotelId);
+        if (!hpId) return [];
+        return await semanticSearch(message, { hotelIds: [hpId], topK: 3, minScore: 0.45 });
+      } catch { return []; }
+    })(),
+  ]);
+
+  // Build semantic context block
+  const semanticCtx = semanticHits.length
+    ? '--- TRI THỨC LIÊN QUAN (semantic) ---\n' +
+      semanticHits.map((h: any) => `[${h.chunk_type}] ${h.chunk_text} (score ${(h.score * 100).toFixed(0)}%)`).join('\n') +
+      '\n--- HẾT ---'
+    : '';
 
   // STRICT RAG: nếu không có context → không gọi AI
-  if (!wikiCtx && !otaCtx) return null;
+  if (!wikiCtx && !otaCtx && !semanticCtx) return null;
 
   const convoCtx = history.length > 0
     ? `--- LỊCH SỬ HỘI THOẠI ---\n${history.map(h => `${h.role === 'user' ? 'Khách' : 'Bot'}: ${h.message}`).join('\n')}\n--- HẾT ---`
@@ -1101,6 +1123,7 @@ async function ragReply(
     convoCtx,
     wikiCtx ? `--- KIẾN THỨC ---\n${wikiCtx}\n--- HẾT ---` : '',
     otaCtx ? `--- DỮ LIỆU KHÁCH SẠN ---\n${otaCtx}\n--- HẾT ---` : '',
+    semanticCtx,
   ].filter(Boolean).join('\n\n');
 
   // Industry-specific system prompt (unlock vertical expansion)

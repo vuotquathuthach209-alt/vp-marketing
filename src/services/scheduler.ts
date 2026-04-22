@@ -380,6 +380,18 @@ export function startScheduler() {
     }
   });
 
+  // Knowledge Sync (Tier 2 RAG embeddings) — 3:00 AM daily
+  // Chạy sau retention cleanup, populate embeddings cho Tier 2
+  cron.schedule('0 3 * * *', async () => {
+    try {
+      const { rebuildAllEmbeddings } = require('./knowledge-sync');
+      const r = await rebuildAllEmbeddings();
+      console.log(`[scheduler] knowledge-sync: ${r.hotels_processed} hotels, ${r.total_chunks} chunks (${r.duration_ms}ms)`);
+    } catch (e: any) {
+      console.error('[scheduler] knowledge-sync error:', e?.message);
+    }
+  });
+
   // Retention Cleanup — 2:00 AM mỗi ngày (ít traffic)
   // Xóa data cũ theo policy (NĐ 13/2023/NĐ-CP compliance)
   cron.schedule('0 2 * * *', async () => {

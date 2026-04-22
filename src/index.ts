@@ -38,6 +38,7 @@ import otaPushRouter from './routes/ota-push';
 import otaRawRouter from './routes/ota-raw';
 import funnelAnalyticsRouter from './routes/funnel-analytics';
 import retentionRouter from './routes/retention';
+import knowledgeRouter from './routes/knowledge';
 import botMonitorRouter from './routes/bot-monitor';
 import contentIntelRouter from './routes/content-intel';
 import './services/agent-tools'; // init table + register tools
@@ -141,6 +142,7 @@ app.use('/api/ota/push', otaPushRouter);
 app.use('/api/ota-raw', otaRawRouter);
 app.use('/api/funnel', funnelAnalyticsRouter);
 app.use('/api/retention', retentionRouter);
+app.use('/api/knowledge', knowledgeRouter);
 app.use('/api/ota', otaRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/onboarding', onboardingRouter);
