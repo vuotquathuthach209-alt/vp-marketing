@@ -132,6 +132,18 @@ router.post('/resume/:sid', (req: AuthRequest, res) => {
   }
 });
 
+/** Admin reset conversation state (khách bắt đầu lại) */
+router.post('/reset/:sid', (req: AuthRequest, res) => {
+  try {
+    const sid = String(req.params.sid);
+    const { resetState } = require('../services/conversation-fsm');
+    resetState(sid);
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message });
+  }
+});
+
 /** Admin force-takeover (pause bot) */
 router.post('/takeover/:sid', (req: AuthRequest, res) => {
   try {
@@ -186,12 +198,52 @@ router.get('/daily', (_req: AuthRequest, res) => {
   }
 });
 
-/** Feature flag status */
+/** Feature flag status + runtime toggle */
 router.get('/feature-flag', (_req: AuthRequest, res) => {
+  const envEnabled = process.env.USE_NEW_FUNNEL === 'true' || process.env.USE_NEW_FUNNEL === '1';
+  // Also check settings override (runtime)
+  const { getSetting } = require('../db');
+  const runtimeOverride = getSetting('funnel_enabled_override');
+  let effective = envEnabled;
+  if (runtimeOverride === 'true') effective = true;
+  if (runtimeOverride === 'false') effective = false;
   res.json({
-    USE_NEW_FUNNEL: process.env.USE_NEW_FUNNEL === 'true' || process.env.USE_NEW_FUNNEL === '1',
+    USE_NEW_FUNNEL: effective,
     env_value: process.env.USE_NEW_FUNNEL || '(unset)',
+    runtime_override: runtimeOverride || '(none)',
   });
+});
+
+/** Runtime toggle FSM (no restart needed) */
+router.post('/feature-flag', (req: AuthRequest, res) => {
+  if (req.user?.role !== 'superadmin' && req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'admin only' });
+  }
+  const { enabled } = req.body || {};
+  const { setSetting } = require('../db');
+  if (enabled === null || enabled === undefined) {
+    // Clear override
+    setSetting('funnel_enabled_override', '');
+  } else {
+    setSetting('funnel_enabled_override', enabled ? 'true' : 'false');
+  }
+  // Override isFunnelEnabled to use setting (requires code change below)
+  res.json({ ok: true, override: enabled });
+});
+
+/** Stuck bookings needing follow-up (new > 1h no status change) */
+router.get('/stuck-bookings', (_req: AuthRequest, res) => {
+  try {
+    const cutoff = Date.now() - 60 * 60 * 1000;  // 1 hour ago
+    const rows = db.prepare(
+      `SELECT * FROM bot_booking_drafts
+       WHERE status = 'new' AND created_at < ?
+       ORDER BY created_at ASC LIMIT 50`
+    ).all(cutoff);
+    res.json({ items: rows });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message });
+  }
 });
 
 export default router;

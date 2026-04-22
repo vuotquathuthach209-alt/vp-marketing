@@ -380,6 +380,57 @@ export function startScheduler() {
     }
   });
 
+  // Funnel follow-up: mỗi 30 phút, remind Telegram nếu booking 'new' > 1h
+  cron.schedule('*/30 * * * *', async () => {
+    try {
+      const cutoff = Date.now() - 60 * 60 * 1000;  // 1h ago
+      const stuck = db.prepare(
+        `SELECT * FROM bot_booking_drafts
+         WHERE status = 'new' AND created_at < ?
+         ORDER BY created_at ASC LIMIT 10`
+      ).all(cutoff) as any[];
+      if (stuck.length === 0) return;
+
+      // Group theo hotel_id để gửi 1 message summary cho mỗi hotel
+      const byHotel: Record<number, any[]> = {};
+      for (const b of stuck) {
+        if (!byHotel[b.hotel_id]) byHotel[b.hotel_id] = [];
+        byHotel[b.hotel_id].push(b);
+      }
+
+      for (const [hotelIdStr, bookings] of Object.entries(byHotel)) {
+        const hotelId = parseInt(hotelIdStr, 10);
+        const lines = [
+          `⏰ *FOLLOW-UP NEEDED* — ${bookings.length} bookings quá 1h chưa gọi`,
+          ``,
+          ...bookings.map((b: any) => {
+            const age = Math.round((Date.now() - b.created_at) / 60000);
+            return `• ${b.name || '?'} 📞 ${b.phone || '?'} — ${age} phút trước`;
+          }),
+          ``,
+          `_Check_: app.sondervn.com/funnel`,
+        ];
+        const message = lines.join('\n');
+
+        try {
+          const page = db.prepare(
+            `SELECT p.id FROM pages p JOIN mkt_hotels mh ON mh.id = p.hotel_id WHERE mh.ota_hotel_id = ? LIMIT 1`
+          ).get(hotelId) as any;
+          if (page?.id) {
+            const { notifyHotelOrGlobal } = await import('./hotel-telegram');
+            await notifyHotelOrGlobal(page.id, message);
+          } else {
+            const { notifyAll } = await import('./telegram');
+            await notifyAll(message);
+          }
+        } catch {}
+      }
+      console.log(`[scheduler] funnel follow-up: ${stuck.length} stuck bookings, ${Object.keys(byHotel).length} hotels notified`);
+    } catch (e: any) {
+      console.error('[scheduler] funnel follow-up error:', e?.message);
+    }
+  });
+
   // OTA Raw Pipeline — Qwen AI classifier cron mỗi 5 phút (batch 5 hotels + 5 rooms + 20 avail + 20 images)
   cron.schedule('*/5 * * * *', async () => {
     try {

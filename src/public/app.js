@@ -6343,7 +6343,47 @@ async function loadFunnelAnalytics() {
     loadFunnelHandoffs(),
     loadFunnelDaily(),
     loadFunnelFlag(),
+    loadFunnelStuck(),
   ]);
+}
+
+async function loadFunnelStuck() {
+  const box = document.getElementById('funnel-stuck');
+  if (!box) return;
+  try {
+    const r = await api('/funnel/stuck-bookings');
+    if (!r.items?.length) {
+      box.innerHTML = '<div class="text-emerald-600 text-center py-3">✅ Không có booking nào stuck!</div>';
+      return;
+    }
+    box.innerHTML = r.items.map(b => {
+      const ageH = Math.round((Date.now() - b.created_at) / 3600000);
+      return `<div class="flex items-center justify-between py-2 px-2 bg-rose-50 border border-rose-200 rounded">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-rose-700 font-bold">⏰ ${ageH}h ago</span>
+            <span class="font-semibold">${escapeHtml(b.name || '?')}</span>
+            <span class="text-xs text-slate-600">📞 ${escapeHtml(b.phone || '?')}</span>
+          </div>
+          <div class="text-[10px] text-slate-500">${escapeHtml(b.property_type || '?')} · ${escapeHtml(b.area || '?')}${b.checkin_date ? ' · ' + b.checkin_date : ''}</div>
+        </div>
+        <div>
+          <select class="booking-status-sel text-xs border rounded px-1 py-0.5" data-id="${b.id}">
+            <option value="new">🆕 New</option><option value="contacted">📞 Đã gọi</option><option value="confirmed">✅</option>
+            <option value="paid">💰</option><option value="no_response">⏸</option><option value="cancelled">❌</option>
+          </select>
+        </div>
+      </div>`;
+    }).join('');
+    box.querySelectorAll('.booking-status-sel').forEach(sel => sel.addEventListener('change', async (ev) => {
+      try {
+        await api('/funnel/bookings/' + ev.target.dataset.id, { method: 'PUT', body: JSON.stringify({ status: ev.target.value }) });
+        loadFunnelStuck();
+      } catch (e) { alert('Lỗi: ' + e.message); }
+    }));
+  } catch (e) {
+    box.innerHTML = `<div class="text-rose-600">Lỗi: ${escapeHtml(e.message)}</div>`;
+  }
 }
 
 async function loadFunnelStats() {
@@ -6494,8 +6534,8 @@ async function loadFunnelHandoffs() {
     }
     box.innerHTML = r.items.map(h => {
       const hasPhone = h.slots?.phone;
-      return `<div class="flex items-center justify-between py-2 px-2 bg-amber-50 border border-amber-200 rounded mb-1">
-        <div class="flex-1 min-w-0">
+      return `<div class="flex items-center justify-between py-2 px-2 bg-amber-50 border border-amber-200 rounded mb-1 cursor-pointer hover:bg-amber-100" data-sid="${escapeHtml(h.sender_id)}">
+        <div class="flex-1 min-w-0 funnel-convo-open" data-sid="${escapeHtml(h.sender_id)}">
           <div class="flex items-center gap-2">
             <span class="text-xs bg-amber-200 text-amber-900 px-1.5 rounded">${escapeHtml(h.stage)}</span>
             <span class="font-mono text-[10px] text-slate-600">${escapeHtml(h.sender_id)}</span>
@@ -6505,12 +6545,14 @@ async function loadFunnelHandoffs() {
           </div>
           ${hasPhone ? `<div class="text-[10px] text-emerald-600">📞 ${escapeHtml(h.slots.phone)}${h.slots.name ? ' - ' + escapeHtml(h.slots.name) : ''}</div>` : ''}
         </div>
-        <div class="flex items-center gap-1">
+        <div class="flex items-center gap-1 flex-shrink-0">
           <span class="text-[10px] text-slate-400">${formatRelTime(h.updated_at)}</span>
-          <button class="funnel-resume bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] px-2 py-0.5 rounded" data-sid="${escapeHtml(h.sender_id)}">▶️ Resume bot</button>
+          <button class="funnel-resume bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] px-2 py-0.5 rounded" data-sid="${escapeHtml(h.sender_id)}">▶️ Resume</button>
         </div>
       </div>`;
     }).join('');
+
+    box.querySelectorAll('.funnel-convo-open').forEach(el => el.addEventListener('click', () => openFunnelConversation(el.dataset.sid)));
 
     box.querySelectorAll('.funnel-resume').forEach(btn => btn.addEventListener('click', async (ev) => {
       const sid = ev.target.dataset.sid;
@@ -6558,6 +6600,122 @@ async function loadFunnelDaily() {
 
 document.getElementById('funnel-refresh')?.addEventListener('click', loadFunnelAnalytics);
 document.getElementById('funnel-booking-status')?.addEventListener('change', loadFunnelBookings);
+document.getElementById('funnel-flag-on')?.addEventListener('click', async () => {
+  if (!confirm('Enable FSM funnel cho tất cả khách?')) return;
+  try {
+    await api('/funnel/feature-flag', { method: 'POST', body: JSON.stringify({ enabled: true }) });
+    loadFunnelFlag();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
+document.getElementById('funnel-flag-off')?.addEventListener('click', async () => {
+  if (!confirm('⚠️ KILL switch — bot sẽ rollback về legacy flow ngay lập tức. OK?')) return;
+  try {
+    await api('/funnel/feature-flag', { method: 'POST', body: JSON.stringify({ enabled: false }) });
+    loadFunnelFlag();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
+
+// ═══════════════════════════════════════════════════════════
+// Conversation viewer modal
+// ═══════════════════════════════════════════════════════════
+let currentSidFc = null;
+
+async function openFunnelConversation(sid) {
+  currentSidFc = sid;
+  const modal = document.getElementById('funnel-convo-modal');
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+
+  try {
+    const r = await api('/funnel/conversation/' + encodeURIComponent(sid));
+    const stateEl = document.getElementById('fc-state');
+    const slotsEl = document.getElementById('fc-slots');
+    const msgsEl = document.getElementById('fc-messages');
+    const bookingEl = document.getElementById('fc-booking');
+
+    if (r.state) {
+      const turns = r.state.turn_count || 0;
+      const extractGap = r.state.turns_since_extract || 0;
+      stateEl.innerHTML = `<div><b>${escapeHtml(r.state.stage)}</b></div>
+        <div class="text-[10px] text-slate-500 mt-1">Sender: ${escapeHtml(sid)}</div>
+        <div class="text-[10px] text-slate-500">Turns: ${turns} · No-extract: ${extractGap} · Handed off: ${r.state.handed_off ? '✅' : '❌'}</div>
+        <div class="text-[10px] text-slate-500">Updated: ${formatRelTime(r.state.updated_at)}</div>`;
+      slotsEl.textContent = JSON.stringify(r.state.slots, null, 2);
+    } else {
+      stateEl.textContent = '(no FSM state yet)';
+      slotsEl.textContent = '';
+    }
+
+    if (r.messages?.length) {
+      msgsEl.innerHTML = r.messages.map(m => {
+        const align = m.role === 'user' ? 'flex justify-end' : 'flex justify-start';
+        const bubble = m.role === 'user' ? 'bg-indigo-500 text-white' : 'bg-white border border-slate-200';
+        return `<div class="${align}"><div class="max-w-[80%] ${bubble} rounded-lg px-3 py-2">
+          <div class="whitespace-pre-wrap text-sm">${escapeHtml(m.message || '')}</div>
+          <div class="text-[10px] ${m.role === 'user' ? 'text-indigo-100' : 'text-slate-400'} mt-1">${m.intent || '-'} · ${formatRelTime(m.created_at)}</div>
+        </div></div>`;
+      }).join('');
+      msgsEl.scrollTop = msgsEl.scrollHeight;
+    } else {
+      msgsEl.innerHTML = '<div class="text-slate-400 text-center py-6">(no messages)</div>';
+    }
+
+    if (r.booking) {
+      const b = r.booking;
+      const total = b.slots_json ? (() => { try { const s = JSON.parse(b.slots_json); return ''; } catch { return ''; } })() : '';
+      bookingEl.innerHTML = `<div class="bg-emerald-50 border border-emerald-200 rounded p-3">
+        <div class="font-semibold text-emerald-800 text-sm mb-1">📋 Booking Draft #${b.id}</div>
+        <div class="text-xs text-slate-700">
+          <b>${escapeHtml(b.name || '?')}</b> · 📞 ${escapeHtml(b.phone || '?')} · status: <code>${escapeHtml(b.status)}</code><br/>
+          ${b.property_type ? `${escapeHtml(b.property_type)} ` : ''}${b.area ? `@ ${escapeHtml(b.area)} ` : ''}
+          ${b.checkin_date ? `📅 ${b.checkin_date}` : ''}${b.nights ? ' (' + b.nights + ' đêm)' : ''}${b.months ? ' (' + b.months + ' tháng)' : ''}
+          ${b.guests_adults ? ` · 👥 ${b.guests_adults}` : ''}
+          ${b.budget_max ? ` · 💰 ≤${b.budget_max.toLocaleString('vi-VN')}₫` : ''}
+        </div>
+      </div>`;
+    } else {
+      bookingEl.innerHTML = '';
+    }
+  } catch (e) {
+    document.getElementById('fc-messages').innerHTML = `<div class="text-rose-600 p-3">Lỗi: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function closeFunnelConvo() {
+  const modal = document.getElementById('funnel-convo-modal');
+  modal.classList.add('hidden');
+  modal.classList.remove('flex');
+  currentSidFc = null;
+}
+
+document.getElementById('funnel-convo-close')?.addEventListener('click', closeFunnelConvo);
+document.getElementById('fc-takeover')?.addEventListener('click', async () => {
+  if (!currentSidFc) return;
+  if (!confirm('Takeover (pause bot cho sender này)?')) return;
+  try {
+    await api('/funnel/takeover/' + encodeURIComponent(currentSidFc), { method: 'POST' });
+    alert('✅ Bot đã pause. Khách sẽ KHÔNG nhận auto-reply.');
+    openFunnelConversation(currentSidFc);  // refresh
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
+document.getElementById('fc-resume')?.addEventListener('click', async () => {
+  if (!currentSidFc) return;
+  try {
+    await api('/funnel/resume/' + encodeURIComponent(currentSidFc), { method: 'POST' });
+    alert('✅ Bot đã resume.');
+    openFunnelConversation(currentSidFc);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
+document.getElementById('fc-reset')?.addEventListener('click', async () => {
+  if (!currentSidFc) return;
+  if (!confirm('Reset conversation state? Khách sẽ bắt đầu lại từ greeting.')) return;
+  try {
+    await api('/funnel/reset/' + encodeURIComponent(currentSidFc), { method: 'POST' });
+    alert('✅ Đã reset.');
+    closeFunnelConvo();
+    loadFunnelAnalytics();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
 
 // ====== Init ======
 checkAuth();

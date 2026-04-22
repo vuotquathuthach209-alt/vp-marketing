@@ -378,6 +378,13 @@ export function recordTurn(state: ConversationState, extractedCount: number, use
    ═══════════════════════════════════════════ */
 
 export function isFunnelEnabled(): boolean {
+  // Runtime override takes precedence (admin can toggle without restart)
+  try {
+    const { getSetting } = require('../db');
+    const override = getSetting('funnel_enabled_override');
+    if (override === 'true') return true;
+    if (override === 'false') return false;
+  } catch {}
   return process.env.USE_NEW_FUNNEL === 'true' || process.env.USE_NEW_FUNNEL === '1';
 }
 
