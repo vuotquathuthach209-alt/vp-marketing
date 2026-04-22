@@ -422,28 +422,29 @@ async function classifyRoomRecord(rawRow: any): Promise<{ ok: boolean; error?: s
     const hotelId = hotelIdResolve.classified_hotel_id;
     const now = Date.now();
 
-    // Insert into hotel_room_catalog
+    // Insert into hotel_room_catalog (schema: room_key, display_name_vi, display_name_en,
+    // price_weekday, price_weekend, price_hourly, max_guests, bed_config, size_m2,
+    // amenities, photos_urls, description_vi, updated_at)
+    const roomKey = String(classified.display_name_vi).toLowerCase().replace(/\s+/g, '_').slice(0, 40);
     const r = db.prepare(
       `INSERT INTO hotel_room_catalog (
-        hotel_id, display_name_vi, display_name_en, product_group, bed_type,
-        max_guests, size_sqm, price_weekday, price_weekend, price_monthly, price_hourly,
-        amenities, has_window, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        hotel_id, room_key, display_name_vi, display_name_en,
+        max_guests, size_m2, price_weekday, price_weekend, price_hourly,
+        bed_config, amenities, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       hotelId,
+      roomKey,
       classified.display_name_vi,
       classified.display_name_en || null,
-      classified.product_group || null,
-      classified.bed_type || null,
       classified.max_guests || 2,
       classified.size_sqm || null,
       classified.price_weekday || null,
       classified.price_weekend || null,
-      classified.price_monthly || null,
       classified.price_hourly || null,
+      classified.bed_type || null,
       JSON.stringify(classified.amenities || []),
-      classified.has_window ? 1 : 0,
-      now, now,
+      now,
     );
 
     // Also UPSERT into mkt_rooms_cache (bot uses this for quick reads)
@@ -522,18 +523,18 @@ function classifyImageRecord(rawRow: any): { ok: boolean; error?: string } {
     }
 
     if (rawRow.entity_type === 'room' && roomId) {
-      // INSERT into room_images (guard duplicate URL)
-      const exists = db.prepare(`SELECT id FROM room_images WHERE image_url = ? AND room_type_id = ?`)
-        .get(rawRow.image_url, roomId) as any;
+      const roomName = (db.prepare(`SELECT display_name_vi FROM hotel_room_catalog WHERE id = ?`).get(roomId) as any)?.display_name_vi || '';
+      // INSERT into room_images (schema: hotel_id, room_type_name, image_url, caption,
+      // display_order, active, created_at). Guard duplicate URL.
+      const exists = db.prepare(`SELECT id FROM room_images WHERE image_url = ? AND hotel_id = ? AND room_type_name = ?`)
+        .get(rawRow.image_url, hotelId, roomName) as any;
       if (!exists) {
         db.prepare(
-          `INSERT INTO room_images (hotel_id, room_type_id, room_type_name, image_url, caption, is_primary, order_idx, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO room_images (hotel_id, room_type_name, image_url, caption, display_order, active, created_at)
+           VALUES (?, ?, ?, ?, ?, 1, ?)`
         ).run(
-          hotelId, roomId,
-          (db.prepare(`SELECT display_name_vi FROM hotel_room_catalog WHERE id = ?`).get(roomId) as any)?.display_name_vi || '',
-          rawRow.image_url, rawRow.caption,
-          rawRow.is_primary ? 1 : 0,
+          hotelId, roomName,
+          rawRow.image_url, rawRow.caption || '',
           rawRow.order_idx || 0,
           Date.now(),
         );

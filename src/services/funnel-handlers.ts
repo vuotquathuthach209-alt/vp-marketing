@@ -400,7 +400,7 @@ export function handlePropertyPicked(state: ConversationState): HandlerResult {
   }
 
   const rooms = db.prepare(
-    `SELECT id, display_name_vi, max_guests, price_weekday, price_monthly, price_hourly, bed_type
+    `SELECT id, display_name_vi, max_guests, price_weekday, price_hourly, bed_config
      FROM hotel_room_catalog WHERE hotel_id = ? ORDER BY price_weekday LIMIT 10`
   ).all(propId) as any[];
 
@@ -410,10 +410,11 @@ export function handlePropertyPicked(state: ConversationState): HandlerResult {
   const addr = [hotel.district, hotel.city].filter(Boolean).join(', ');
 
   const roomLines = rooms.map(r => {
+    const monthlyEst = r.price_weekday ? r.price_weekday * 30 : 0;
     const price = isLong
-      ? (r.price_monthly ? `${formatVND(r.price_monthly)}/tháng` : 'giá liên hệ')
+      ? (monthlyEst ? `~${formatVND(monthlyEst)}/tháng` : 'giá liên hệ')
       : (r.price_weekday ? `${formatVND(r.price_weekday)}/đêm` : 'giá liên hệ');
-    return `🛏 ${r.display_name_vi} (${r.max_guests} khách${r.bed_type ? `, ${r.bed_type}` : ''}) — ${price}`;
+    return `🛏 ${r.display_name_vi} (${r.max_guests} khách${r.bed_config ? `, ${r.bed_config}` : ''}) — ${price}`;
   });
 
   return {
@@ -443,14 +444,14 @@ export function handleShowRooms(state: ConversationState): HandlerResult {
   if (!room) return { reply: 'Không tìm thấy phòng ạ', next_stage: 'PROPERTY_PICKED' };
 
   const images = db.prepare(
-    `SELECT image_url FROM room_images WHERE room_type_id = ? ORDER BY is_primary DESC, order_idx LIMIT 5`
-  ).all(roomId) as any[];
+    `SELECT image_url FROM room_images WHERE hotel_id = ? AND room_type_name = ? AND active = 1 ORDER BY display_order LIMIT 5`
+  ).all(room.hotel_id, room.display_name_vi) as any[];
 
   return {
     reply: `📸 **${room.display_name_vi}**\n` +
-      (room.bed_type ? `🛏 ${room.bed_type}\n` : '') +
+      (room.bed_config ? `🛏 ${room.bed_config}\n` : '') +
       (room.max_guests ? `👥 ${room.max_guests} khách\n` : '') +
-      (room.size_sqm ? `📐 ${room.size_sqm}m²\n` : '') +
+      (room.size_m2 ? `📐 ${room.size_m2}m²\n` : '') +
       `\nAnh/chị muốn đặt phòng này luôn không ạ?`,
     next_stage: 'SHOW_ROOMS',
     images: images.map(i => i.image_url).filter(Boolean),
@@ -472,12 +473,12 @@ export function handleConfirmationBeforeClose(state: ConversationState): Handler
     ? db.prepare(`SELECT name_canonical, district, city, phone FROM hotel_profile WHERE hotel_id = ?`).get(s.selected_property_id) as any
     : null;
   const room = s.selected_room_id
-    ? db.prepare(`SELECT display_name_vi, price_weekday, price_monthly FROM hotel_room_catalog WHERE id = ?`).get(s.selected_room_id) as any
+    ? db.prepare(`SELECT display_name_vi, price_weekday FROM hotel_room_catalog WHERE id = ?`).get(s.selected_room_id) as any
     : null;
 
   const isLong = s.rental_mode === 'long_term';
   const price = isLong
-    ? room?.price_monthly || s.budget_max || 0
+    ? (room?.price_weekday ? room.price_weekday * 30 : s.budget_max || 0)
     : room?.price_weekday || s.budget_max || 0;
   const qty = isLong ? (s.months || 1) : (s.nights || 1);
   const total = price * qty;
