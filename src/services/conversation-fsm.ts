@@ -352,7 +352,8 @@ export function decideNextStage(state: ConversationState): Stage {
  */
 export function shouldFallback(state: ConversationState, extractedCount: number, userMsg: string): boolean {
   if (state.handed_off) return false;
-  if (['SHOW_RESULTS', 'PROPERTY_PICKED', 'SHOW_ROOMS', 'CONFIRMATION_BEFORE_CLOSE', 'CLOSING_CONTACT', 'BOOKING_DRAFT_CREATED', 'HANDED_OFF'].includes(state.stage)) {
+  if (['SHOW_RESULTS', 'PROPERTY_PICKED', 'SHOW_ROOMS', 'CONFIRMATION_BEFORE_CLOSE', 'CLOSING_CONTACT', 'BOOKING_DRAFT_CREATED', 'HANDED_OFF', 'UNCLEAR_FALLBACK'].includes(state.stage)) {
+    // Đã ở UNCLEAR_FALLBACK rồi → không re-trigger. Để logic stage transition handle exit.
     return false;
   }
 
@@ -362,7 +363,10 @@ export function shouldFallback(state: ConversationState, extractedCount: number,
     return true;
   }
 
-  // 2 turns no extract
+  // 2 turns no extract (but NOT on fresh greeting)
+  const isGreeting = /^(chào|hello|hi|hey|alo)/i.test(userMsg.trim());
+  if (isGreeting) return false;
+
   return state.turns_since_extract >= 2 && extractedCount === 0;
 }
 

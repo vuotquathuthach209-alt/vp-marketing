@@ -267,9 +267,22 @@ export async function processFunnelMessage(
     } catch (e: any) { console.warn('[funnel] RAG short-circuit fail:', e?.message); }
   }
 
+  // 0.5. RESET detection — user gõ greeting/restart phrase AFTER stuck state
+  //      → reset state để bắt đầu lại flow fresh.
+  const isGreetingOrReset = /^(chào|hello|hi|hey|alo|a\s*l[ôo]|bắt đầu|start|reset)/i.test(msg.trim());
+
   // 1. Load/init state
   let state = getState(senderId);
   const isNewConversation = !state;
+
+  // If stuck in UNCLEAR_FALLBACK or HANDED_OFF and user sends greeting → reset
+  if (state && isGreetingOrReset &&
+      (state.stage === 'UNCLEAR_FALLBACK' || state.same_stage_count >= 2)) {
+    console.log(`[funnel] reset detected: stage=${state.stage}, user greeting → fresh INIT`);
+    const { resetState: resetFsm } = require('./conversation-fsm');
+    resetFsm(senderId);
+    state = initState(senderId, hotelId, opts.language || 'vi');
+  }
   if (!state) {
     state = initState(senderId, hotelId, opts.language || 'vi');
 
@@ -511,9 +524,16 @@ export async function processFunnelMessage(
     // Fix #2: Record same_stage_count BEFORE transition
     const { recordStageRepeat, applyStuckEscapeHatch } = require('./conversation-fsm');
     recordStageRepeat(state, nextStage);
-    if (state.stage !== nextStage && state.stage !== 'UNCLEAR_FALLBACK') {
+    // Allow transition from UNCLEAR_FALLBACK if user provided new slots (escape!)
+    const canExitUnclear = state.stage === 'UNCLEAR_FALLBACK' && extractedCount > 0;
+    if (state.stage !== nextStage && (state.stage !== 'UNCLEAR_FALLBACK' || canExitUnclear)) {
       state.last_bot_stage = state.stage;
       state.stage = nextStage;
+      // Reset same_stage_count khi thoát UNCLEAR_FALLBACK
+      if (canExitUnclear) {
+        state.same_stage_count = 0;
+        console.log(`[funnel] exit UNCLEAR_FALLBACK → ${nextStage} (extracted ${extractedCount} slots)`);
+      }
     }
     // Fix #5 (same module): Stuck escape hatch
     if ((state.same_stage_count || 0) >= 2 && state.turns_since_extract >= 2) {
