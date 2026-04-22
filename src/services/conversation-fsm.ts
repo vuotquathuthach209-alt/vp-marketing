@@ -292,12 +292,19 @@ export function decideNextStage(state: ConversationState): Stage {
   if (stage === 'BOOKING_DRAFT_CREATED') return 'BOOKING_DRAFT_CREATED';
 
   // Priority 3: if SHOW_RESULTS onwards, follow linear pipe
-  if (stage === 'CONFIRMATION_BEFORE_CLOSE') return 'CLOSING_CONTACT';
-  if (stage === 'CLOSING_CONTACT') {
-    return slots.phone ? 'BOOKING_DRAFT_CREATED' : 'CLOSING_CONTACT';
+  // Note: dispatcher may force explicit transitions (pick, confirm_yes, etc.)
+  if (stage === 'CONFIRMATION_BEFORE_CLOSE') {
+    return slots.phone ? 'BOOKING_DRAFT_CREATED' : 'CONFIRMATION_BEFORE_CLOSE';
   }
-  if (stage === 'SHOW_ROOMS') return 'CONFIRMATION_BEFORE_CLOSE';  // when user confirms "đặt"
-  if (stage === 'PROPERTY_PICKED') return 'SHOW_ROOMS';
+  if (stage === 'CLOSING_CONTACT') {
+    return slots.phone && slots.name ? 'BOOKING_DRAFT_CREATED' : 'CLOSING_CONTACT';
+  }
+  if (stage === 'SHOW_ROOMS') {
+    return slots.selected_room_id ? 'SHOW_ROOMS' : 'PROPERTY_PICKED';
+  }
+  if (stage === 'PROPERTY_PICKED') {
+    return slots.selected_room_id ? 'SHOW_ROOMS' : 'PROPERTY_PICKED';
+  }
   if (stage === 'SHOW_RESULTS') {
     return slots.selected_property_id ? 'PROPERTY_PICKED' : 'SHOW_RESULTS';
   }

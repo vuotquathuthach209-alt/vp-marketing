@@ -136,13 +136,37 @@ export async function processFunnelMessage(
     extracted = extractAllSlots(msg);
     // Text-based pick: "lấy số 2", "chọn 1", "cái đầu"
     if (state.stage === 'SHOW_RESULTS' && state.slots.shown_property_ids?.length) {
-      const pickN = msg.match(/(?:chọn|lấy|số|số thứ|thứ)\s*(\d+)/i) || msg.match(/^(\d+)$/);
+      const pickN = msg.match(/(?:chọn|lấy|số|số thứ|thứ)\s*(\d+)/i) || msg.match(/^\s*(\d+)\s*$/);
+      let pickedIdx: number | null = null;
       if (pickN) {
-        const idx = parseInt(pickN[1], 10) - 1;
-        const pid = state.slots.shown_property_ids[idx];
-        if (pid) state.slots.selected_property_id = pid;
-      } else if (/\b(đầu|thứ nhất|first|cái 1)\b/i.test(msg)) {
-        state.slots.selected_property_id = state.slots.shown_property_ids[0];
+        pickedIdx = parseInt(pickN[1], 10) - 1;
+      } else if (/\b(đầu|thứ nhất|first|cái 1|option 1|số một)\b/i.test(msg)) {
+        pickedIdx = 0;
+      } else if (/\bthứ hai\b|\bsố hai\b/i.test(msg)) {
+        pickedIdx = 1;
+      }
+      if (pickedIdx !== null && pickedIdx >= 0 && pickedIdx < state.slots.shown_property_ids.length) {
+        state.slots.selected_property_id = state.slots.shown_property_ids[pickedIdx];
+        state.last_bot_stage = state.stage;
+        state.stage = 'PROPERTY_PICKED' as any;  // Force transition
+        console.log(`[funnel] text-pick: property_id=${state.slots.selected_property_id} (idx=${pickedIdx})`);
+      }
+    }
+    // Text-based room pick khi PROPERTY_PICKED (vd "standard", "deluxe", "family")
+    if (state.stage === 'PROPERTY_PICKED' && state.slots.selected_property_id) {
+      const rooms = db.prepare(
+        `SELECT id, display_name_vi FROM hotel_room_catalog WHERE hotel_id = ? ORDER BY price_weekday`
+      ).all(state.slots.selected_property_id) as any[];
+      const lower = msg.toLowerCase();
+      for (const r of rooms) {
+        const name = String(r.display_name_vi || '').toLowerCase();
+        if (name.includes(lower) || lower.includes(name.split(' ')[0])) {
+          state.slots.selected_room_id = r.id;
+          state.last_bot_stage = state.stage;
+          state.stage = 'SHOW_ROOMS' as any;
+          console.log(`[funnel] text-pick room: ${r.display_name_vi} (id=${r.id})`);
+          break;
+        }
       }
     }
     // Text-based confirmation "đúng rồi", "ok đặt luôn"
