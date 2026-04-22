@@ -459,9 +459,8 @@ export async function processFunnelMessage(
   //   b) Hoặc deterministic: message chứa phone VN + ít thông tin khác
   const detectPhone = msg.match(/(?:\+?84|0)(3|5|7|8|9)\d{8}/);
   const isPhoneFirstMsg = !!detectPhone && !geminiIntent?.extracted_slots?.property_type;
-  const isContactInfo = (geminiIntent?.primary_intent === 'contact_info' && geminiIntent.extracted_slots?.phone)
-    || (isPhoneFirstMsg && msg.length < 80);
-  console.log(`[funnel] route5 check: detectPhone=${detectPhone?.[0] || 'null'} isPhoneFirstMsg=${isPhoneFirstMsg} msgLen=${msg.length} geminiIntent=${geminiIntent?.primary_intent || 'null'} isContactInfo=${isContactInfo}`);
+  const isContactInfo = !!((geminiIntent?.primary_intent === 'contact_info' && geminiIntent.extracted_slots?.phone)
+    || (isPhoneFirstMsg && msg.length < 80));
 
   if (isContactInfo) {
     const phone = geminiIntent?.extracted_slots?.phone || detectPhone?.[0] || '';
@@ -469,12 +468,11 @@ export async function processFunnelMessage(
     const name = geminiIntent?.extracted_slots?.name ||
       (nameRaw.length > 1 && nameRaw.length < 50 ? nameRaw : '');
     try {
-      // Save to pending contact
-      db.exec(`CREATE TABLE IF NOT EXISTS customer_contacts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sender_id TEXT, phone TEXT, name TEXT, notes TEXT, created_at INTEGER)`);
-      db.prepare(`INSERT INTO customer_contacts (sender_id, phone, name, notes, created_at) VALUES (?, ?, ?, ?, ?)`)
-        .run(senderId, phone, name || null, 'direct_contact', Date.now());
+      // Save to pending contact — canonical schema from db.ts (sender_name, hotel_id NOT NULL)
+      db.prepare(
+        `INSERT INTO customer_contacts (sender_id, sender_name, phone, page_id, hotel_id, last_intent, last_message, created_at)
+         VALUES (?, ?, ?, 0, ?, 'direct_contact', ?, ?)`
+      ).run(senderId, name || null, phone, hotelId || 1, msg.slice(0, 200), Date.now());
       // Telegram notify
       try {
         const { notifyAll } = require('./telegram');
