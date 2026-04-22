@@ -454,12 +454,20 @@ export async function processFunnelMessage(
     } catch {}
   }
 
-  // ROUTE 5: Contact info (phone only or name+phone) → capture + inform team
-  if (geminiIntent?.primary_intent === 'contact_info' && geminiIntent.extracted_slots?.phone) {
+  // ROUTE 5: Contact info — detect qua 2 nguồn:
+  //   a) Gemini classify primary_intent = contact_info
+  //   b) Hoặc deterministic: message chứa phone VN + ít thông tin khác
+  const detectPhone = msg.match(/(?:\+?84|0)(3|5|7|8|9)\d{8}/);
+  const isPhoneFirstMsg = detectPhone && !geminiIntent?.extracted_slots?.property_type;
+  const isContactInfo = (geminiIntent?.primary_intent === 'contact_info' && geminiIntent.extracted_slots?.phone)
+    || (isPhoneFirstMsg && msg.length < 80);
+
+  if (isContactInfo) {
+    const phone = geminiIntent?.extracted_slots?.phone || detectPhone?.[0] || '';
+    const nameRaw = msg.replace(phone, '').replace(/[+\-\s,:.]/g, ' ').trim();
+    const name = geminiIntent?.extracted_slots?.name ||
+      (nameRaw.length > 1 && nameRaw.length < 50 ? nameRaw : '');
     try {
-      const { rebuildCustomerProfile } = require('./customer-memory');
-      const phone = geminiIntent.extracted_slots.phone;
-      const name = geminiIntent.extracted_slots.name || '';
       // Save to pending contact
       db.exec(`CREATE TABLE IF NOT EXISTS customer_contacts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -472,12 +480,12 @@ export async function processFunnelMessage(
         notifyAll(`📱 *Lead mới qua OA*\n• Tên: ${name || '(chưa rõ)'}\n• SĐT: \`${phone}\`\n• Sender: \`${senderId}\`\n_Gọi trong 15 phút!_`).catch(() => {});
       } catch {}
       return {
-        reply: `Dạ em đã ghi nhận thông tin:\n• ${name ? 'Tên: ' + name : ''}\n• SĐT: ${phone}\n\n📞 Team em sẽ gọi trong 15 phút để tư vấn chi tiết ạ. Cảm ơn anh/chị! 🙏`,
+        reply: `Dạ em đã ghi nhận thông tin:\n${name ? '• Tên: ' + name + '\n' : ''}• SĐT: ${phone}\n\n📞 Team em sẽ gọi trong 15 phút để tư vấn chi tiết ạ. Cảm ơn anh/chị! 🙏`,
         intent: 'contact_captured',
         stage: 'INIT',
         meta: { gemini: geminiIntent },
       };
-    } catch {}
+    } catch (e: any) { console.warn('[funnel] contact_info save fail:', e?.message); }
   }
 
   // ROUTE 6: Farewell → thank you, end gracefully
