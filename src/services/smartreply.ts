@@ -1233,6 +1233,33 @@ export async function smartReplyWithSender(
     }
   } catch {}
 
+  // ─── NEW FUNNEL FSM (feature flag USE_NEW_FUNNEL) ───
+  // Spec: docs/BOT-SALES-FUNNEL-PLAN.md (v1.1)
+  // Gate before legacy dispatchV6 — nếu enabled, FSM handle full conversation
+  try {
+    const { isFunnelEnabled } = require('./conversation-fsm');
+    if (isFunnelEnabled() && senderId) {
+      const { processFunnelMessage } = require('./funnel-dispatcher');
+      const fr = await processFunnelMessage(senderId, hid, msg);
+      if (fr.handed_off) {
+        return { reply: '', tier: 'rules', latency_ms: Date.now() - t0, intent: 'handed_off' };
+      }
+      if (fr.reply) {
+        saveMessage(senderId, pid, 'bot', fr.reply, fr.intent);
+        return {
+          reply: fr.reply,
+          tier: 'rules',
+          latency_ms: Date.now() - t0,
+          intent: fr.intent,
+          confidence: 0.95,
+        } as SmartReplyResult;
+      }
+      // If FSM returns empty reply, fall through to legacy (edge cases)
+    }
+  } catch (e: any) {
+    console.warn('[smartreply] FSM error, falling back:', e?.message);
+  }
+
   // Upsert guest profile cho cá nhân hóa
   if (senderId) {
     try {
