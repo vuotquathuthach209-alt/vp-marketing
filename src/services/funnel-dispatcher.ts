@@ -217,7 +217,10 @@ export async function processFunnelMessage(
 
   // 3. Merge extracted into state
   const extractedCount = countExtracted(extracted);
+  const stageBeforeMerge = state.stage;
   state = mergeSlots(state, extracted);
+  // Preserve explicit stage overrides from step 2b (text-based pick/confirm)
+  const stageWasForced = state.stage !== stageBeforeMerge;
 
   // 4. Record turn + check fallback
   state = recordTurn(state, extractedCount, msg);
@@ -225,11 +228,15 @@ export async function processFunnelMessage(
     state.stage = 'UNCLEAR_FALLBACK';
   }
 
-  // 5. Decide next stage (skip-ahead logic)
-  const nextStage = decideNextStage(state);
-  if (state.stage !== nextStage && state.stage !== 'UNCLEAR_FALLBACK') {
-    state.last_bot_stage = state.stage;
-    state.stage = nextStage;
+  // 5. Decide next stage (skip-ahead logic) — ONLY if we didn't force a stage
+  if (!stageWasForced) {
+    const nextStage = decideNextStage(state);
+    if (state.stage !== nextStage && state.stage !== 'UNCLEAR_FALLBACK') {
+      state.last_bot_stage = state.stage;
+      state.stage = nextStage;
+    }
+  } else {
+    console.log(`[funnel] stage forced: ${stageBeforeMerge} → ${state.stage}`);
   }
 
   // 6. Special: BOOKING_DRAFT_CREATED needs side-effect
