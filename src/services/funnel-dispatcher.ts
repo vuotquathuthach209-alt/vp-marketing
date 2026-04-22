@@ -342,6 +342,47 @@ export async function processFunnelMessage(
     }
   } catch (e: any) { console.warn('[funnel] Gemini intent fail:', e?.message); }
 
+  // ROUTE 0.5: BARE HOTEL NAME — nếu msg chỉ là tên khách sạn (hoặc gần như vậy)
+  //            → show hotel overview trực tiếp, không RAG snippet.
+  //            Trigger khi: msg < 40 chars AND match hotel_profile.name_canonical (fuzzy).
+  if (msg.trim().length < 40 && msg.trim().length >= 4) {
+    try {
+      const msgNorm = msg.trim().toLowerCase();
+      const hotels = db.prepare(
+        `SELECT hp.hotel_id, hp.name_canonical, hp.district, hp.city, hp.phone, hp.star_rating,
+                hp.property_type, hp.ai_summary_vi
+         FROM hotel_profile hp
+         WHERE EXISTS (SELECT 1 FROM mkt_hotels mh WHERE mh.ota_hotel_id = hp.hotel_id AND mh.status = 'active')`
+      ).all() as any[];
+      // Find best match: full-name substring match
+      const matched = hotels.find(h => {
+        const nameNorm = (h.name_canonical || '').toLowerCase();
+        // Msg is contained in name OR name is contained in msg (covers both "Seehome" and "Seehome Airport HCM")
+        return (nameNorm.includes(msgNorm) || msgNorm.includes(nameNorm)) && nameNorm.length >= 4;
+      });
+      if (matched) {
+        const rooms = db.prepare(`SELECT display_name_vi, max_guests, price_weekday FROM hotel_room_catalog WHERE hotel_id = ? ORDER BY price_weekday LIMIT 5`).all(matched.hotel_id) as any[];
+        const stars = matched.star_rating ? ' ' + '⭐'.repeat(matched.star_rating) : '';
+        const emoji = matched.property_type === 'apartment' ? '🏢' : matched.property_type === 'homestay' ? '🏡' : '🏨';
+        const addr = [matched.district, matched.city].filter(Boolean).join(', ');
+        const roomList = rooms.length
+          ? rooms.map(r => `• ${r.display_name_vi} (${r.max_guests} khách) — ${r.price_weekday ? (r.price_weekday / 1000).toFixed(0) + 'k/đêm' : 'liên hệ'}`).join('\n')
+          : '';
+        return {
+          reply: `${emoji} **${matched.name_canonical}**${stars}\n` +
+            (addr ? `📍 ${addr}\n` : '') +
+            (matched.phone ? `📞 ${matched.phone}\n` : '') +
+            (matched.ai_summary_vi ? `\n${matched.ai_summary_vi}\n` : '') +
+            (roomList ? `\n**Các loại phòng:**\n${roomList}\n` : '') +
+            `\nAnh/chị quan tâm phòng nào? Cho em biết ngày + số khách em check lịch trống nhé 🙌`,
+          intent: 'hotel_overview_direct',
+          stage: 'INIT',
+          meta: { gemini: geminiIntent, hotel_id: matched.hotel_id, match: 'bare_name' },
+        };
+      }
+    } catch (e: any) { console.warn('[funnel] bare hotel name check fail:', e?.message); }
+  }
+
   // ROUTE 1: Try answer GENERIC FIRST — nếu info_question về topic chung
   //          (price, wifi, checkin_time, pet, ...) → trả lời overview
   //          cho toàn bộ active hotels thay vì clarify ngay.
@@ -371,6 +412,46 @@ export async function processFunnelMessage(
         };
       }
     } catch (e: any) { console.warn('[funnel] RAG fail:', e?.message); }
+  }
+
+  // ROUTE 2.5: Image request — move BEFORE clarify (khách xin "ảnh phòng" thì cứ show, đừng hỏi lại)
+  //            Detect qua a) Gemini primary_intent, b) regex fallback.
+  const isImageReq = geminiIntent?.primary_intent === 'image_request'
+    || /\b(ảnh|hình|photo|picture|xem phòng|xem nhà|cho (mình|em|tôi) xem|hình ảnh)\b/i.test(msg);
+  if (isImageReq) {
+    try {
+      // Nếu có property_name → show images từ hotel đó
+      const propName = geminiIntent?.extracted_slots?.property_name;
+      let imagesRows: any[];
+      if (propName) {
+        imagesRows = db.prepare(
+          `SELECT ri.image_url, ri.caption, ri.room_type_name, hp.name_canonical
+           FROM room_images ri
+           JOIN hotel_profile hp ON hp.hotel_id = ri.hotel_id
+           WHERE ri.active = 1 AND LOWER(hp.name_canonical) LIKE LOWER(?)
+           ORDER BY ri.is_primary DESC, ri.display_order LIMIT 6`
+        ).all(`%${propName}%`) as any[];
+      } else {
+        imagesRows = db.prepare(
+          `SELECT ri.image_url, ri.caption, ri.room_type_name, hp.name_canonical
+           FROM room_images ri
+           LEFT JOIN hotel_profile hp ON hp.hotel_id = ri.hotel_id
+           WHERE ri.active = 1
+           ORDER BY ri.is_primary DESC, ri.display_order LIMIT 6`
+        ).all() as any[];
+      }
+      if (imagesRows.length) {
+        const imageUrls = imagesRows.map((i: any) => i.image_url).filter(Boolean);
+        const list = imagesRows.map((i: any, idx: number) => `${idx + 1}. ${i.room_type_name || 'Phòng'} @ ${i.name_canonical || '?'}`).join('\n');
+        return {
+          reply: `Dạ ảnh phòng${propName ? ` của ${propName}` : ' các chỗ Sonder'} đây ạ:\n\n${list}\n\nAnh/chị thích loại nào để em tư vấn chi tiết? 💬`,
+          images: imageUrls,
+          intent: 'image_response',
+          stage: 'INIT',
+          meta: { gemini: geminiIntent },
+        };
+      }
+    } catch (e: any) { console.warn('[funnel] image route fail:', e?.message); }
   }
 
   // ROUTE 3: Clarification (chỉ khi thực sự mơ hồ, sub_category không xác định)
@@ -428,30 +509,6 @@ export async function processFunnelMessage(
         };
       }
     } catch (e: any) { console.warn('[funnel] hotel name lookup fail:', e?.message); }
-  }
-
-  // ROUTE 4: Image request → show room images
-  if (geminiIntent?.primary_intent === 'image_request') {
-    try {
-      const images = db.prepare(
-        `SELECT ri.image_url, ri.caption, ri.room_type_name, hp.name_canonical
-         FROM room_images ri
-         LEFT JOIN hotel_profile hp ON hp.hotel_id = ri.hotel_id
-         WHERE ri.active = 1
-         ORDER BY ri.is_primary DESC, ri.display_order LIMIT 6`
-      ).all() as any[];
-      if (images.length) {
-        const imageUrls = images.map((i: any) => i.image_url).filter(Boolean);
-        const list = images.map((i: any, idx: number) => `${idx + 1}. ${i.room_type_name || '?'} @ ${i.name_canonical || '?'}`).join('\n');
-        return {
-          reply: `Dạ ảnh phòng của Sonder ạ:\n\n${list}\n\nAnh/chị thích loại nào để em tư vấn kỹ hơn?`,
-          images: imageUrls,
-          intent: 'image_response',
-          stage: 'INIT',
-          meta: { gemini: geminiIntent },
-        };
-      }
-    } catch {}
   }
 
   // ROUTE 5: Contact info — detect qua 2 nguồn:
