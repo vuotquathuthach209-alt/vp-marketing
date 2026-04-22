@@ -370,7 +370,7 @@ function chunksForHotel(hotelId: number): Chunk[] {
    Embed + store
    ═══════════════════════════════════════════ */
 
-export async function rebuildEmbeddings(hotelId: number): Promise<{ chunks_deleted: number; chunks_created: number; duration_ms: number }> {
+export async function rebuildEmbeddings(hotelId: number): Promise<{ chunks_deleted: number; chunks_created: number; wiki_generated: number; duration_ms: number }> {
   const t0 = Date.now();
   // Clear old embeddings for this hotel
   const delResult = db.prepare(`DELETE FROM hotel_knowledge_embeddings WHERE hotel_id = ?`).run(hotelId);
@@ -395,9 +395,13 @@ export async function rebuildEmbeddings(hotelId: number): Promise<{ chunks_delet
     }
   }
 
+  // Auto-generate Tier 3 Wiki (từ content_sections)
+  const wikiCount = autoGenerateWikiFromHotel(hotelId);
+
   return {
     chunks_deleted: delResult.changes,
     chunks_created: created,
+    wiki_generated: wikiCount,
     duration_ms: Date.now() - t0,
   };
 }
@@ -424,11 +428,10 @@ export async function rebuildAllEmbeddings(): Promise<{
   let wikiGen = 0;
   for (const h of hotels) {
     try {
-      const r = await rebuildEmbeddings(h.hotel_id);
+      const r = await rebuildEmbeddings(h.hotel_id);  // already includes autoGenerateWiki
       totalCreated += r.chunks_created;
       totalDeleted += r.chunks_deleted;
-      // Also auto-generate wiki entries from hotel data
-      wikiGen += autoGenerateWikiFromHotel(h.hotel_id);
+      wikiGen += r.wiki_generated;
     } catch (e: any) {
       console.warn(`[knowledge-sync] rebuild hotel ${h.hotel_id} fail:`, e?.message);
     }
