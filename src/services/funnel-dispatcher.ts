@@ -415,9 +415,9 @@ export async function processFunnelMessage(
   }
 
   // ROUTE 2.5: Image request — move BEFORE clarify (khách xin "ảnh phòng" thì cứ show, đừng hỏi lại)
-  //            Detect qua a) Gemini primary_intent, b) regex fallback.
+  //            Detect qua a) Gemini primary_intent, b) regex fallback (KHÔNG dùng \b vì Vietnamese diacritics).
   const isImageReq = geminiIntent?.primary_intent === 'image_request'
-    || /\b(ảnh|hình|photo|picture|xem phòng|xem nhà|cho (mình|em|tôi) xem|hình ảnh)\b/i.test(msg);
+    || /(ảnh|hình|photo|picture|xem phòng|xem nhà|hình ảnh)/i.test(msg);
   if (isImageReq) {
     try {
       // Nếu có property_name → show images từ hotel đó
