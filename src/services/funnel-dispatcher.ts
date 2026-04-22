@@ -17,11 +17,61 @@
 import {
   getState, initState, saveState, mergeSlots, decideNextStage,
   shouldFallback, recordTurn, markHandedOff,
-  ConversationState, Stage,
+  ConversationState, Stage, BookingSlots,
 } from './conversation-fsm';
 import { extractAllSlots, countExtracted, ExtractedSlots } from './slot-extractor';
 import { dispatchHandler, HandlerResult } from './funnel-handlers';
 import { db } from '../db';
+
+/* ═══════════════════════════════════════════
+   Helpers cho capability check + slot diff
+   ═══════════════════════════════════════════ */
+
+const PROP_LABEL_DISPATCHER: Record<string, string> = {
+  hotel: 'Khách sạn',
+  homestay: 'Homestay',
+  villa: 'Villa',
+  apartment: 'Căn hộ dịch vụ (CHDV)',
+  resort: 'Resort',
+  guesthouse: 'Guesthouse',
+  hostel: 'Hostel',
+};
+
+const PROP_EMOJI_DISPATCHER: Record<string, string> = {
+  hotel: '🏨', homestay: '🏡', villa: '🏖', apartment: '🏢',
+  resort: '🌴', guesthouse: '🛏', hostel: '🎒',
+};
+
+let availableTypesCache: { types: string[]; at: number } | null = null;
+function getAvailablePropertyTypes(): string[] {
+  // Cache 60s — avoid DB hit per request
+  if (availableTypesCache && (Date.now() - availableTypesCache.at) < 60_000) {
+    return availableTypesCache.types;
+  }
+  try {
+    const rows = db.prepare(`
+      SELECT DISTINCT property_type FROM hotel_profile hp
+      WHERE property_type IS NOT NULL
+        AND EXISTS (SELECT 1 FROM mkt_hotels mh WHERE mh.ota_hotel_id = hp.hotel_id AND mh.status = 'active')
+    `).all() as any[];
+    const types = rows.map(r => r.property_type).filter(Boolean);
+    availableTypesCache = { types, at: Date.now() };
+    return types;
+  } catch {
+    return ['hotel', 'homestay', 'villa', 'apartment'];  // fallback
+  }
+}
+
+/** Compare slot objects → return keys newly filled. */
+function diffSlots(before: BookingSlots, after: BookingSlots): Partial<BookingSlots> {
+  const out: any = {};
+  for (const key of Object.keys(after) as (keyof BookingSlots)[]) {
+    if (after[key] !== undefined && before[key] === undefined) {
+      out[key] = after[key];
+    }
+  }
+  return out;
+}
 
 export interface FunnelResponse {
   reply: string;
@@ -114,8 +164,23 @@ export async function processFunnelMessage(
 ): Promise<FunnelResponse> {
   // 1. Load/init state
   let state = getState(senderId);
+  const isNewConversation = !state;
   if (!state) {
     state = initState(senderId, hotelId, opts.language || 'vi');
+
+    // Returning customer recognition (Level 1 + 2)
+    try {
+      const { getCustomerProfile, prefillSlotsFromMemory } = require('./customer-memory');
+      const profile = getCustomerProfile(senderId);
+      if (profile && profile.customer_tier !== 'new') {
+        // Prefill slots từ past preferences
+        const prefilled = prefillSlotsFromMemory(profile);
+        Object.assign(state.slots, prefilled);
+        // Tag state với customer profile (cho handler dùng)
+        (state as any)._customer_profile = profile;
+        console.log(`[funnel] returning customer: ${senderId} tier=${profile.customer_tier} bookings=${profile.confirmed_bookings}`);
+      }
+    } catch (e: any) { console.warn('[funnel] memory lookup fail:', e?.message); }
   }
 
   // If handed off, don't auto-reply
@@ -252,12 +317,46 @@ export async function processFunnelMessage(
     state.stage = 'AREA_ASK';
   }
 
+  // ─── HONEST CAPABILITY CHECK ───
+  // Nếu user request property_type KHÔNG tồn tại trong network → KHÔNG giả vờ có.
+  // Redirect sang các type available thay vì đi tiếp flow rồi fail SHOW_RESULTS.
+  if (extracted.property_type) {
+    const available = getAvailablePropertyTypes();
+    if (!available.includes(extracted.property_type)) {
+      // Drop bad property_type, add honest redirect message
+      const requestedLabel = PROP_LABEL_DISPATCHER[extracted.property_type] || extracted.property_type;
+      const altList = available.map(t => PROP_LABEL_DISPATCHER[t] || t).join(', ');
+      extracted.property_type = undefined;
+      state.slots.property_type = undefined;
+      state.stage = 'PROPERTY_TYPE_ASK' as any;
+      // Save state + return immediately
+      state.last_user_msg = msg.slice(0, 500);
+      state.turn_count = (state.turn_count || 0) + 1;
+      saveState(state);
+      const reply = `Dạ em xin lỗi, hiện bên em chưa có ${requestedLabel} riêng biệt ạ 😔\n\n` +
+        `Bên em có: ${altList} — các chỗ này đều chất lượng tốt ở khu vực gần sân bay.\n\n` +
+        `Anh/chị muốn em tư vấn loại nào ạ?`;
+      return {
+        reply,
+        intent: 'funnel_capability_redirect',
+        stage: 'PROPERTY_TYPE_ASK',
+        quick_replies: available.map(t => ({
+          title: `${PROP_EMOJI_DISPATCHER[t] || '🏠'} ${PROP_LABEL_DISPATCHER[t] || t}`,
+          payload: `property_type_${t}`,
+        })),
+      };
+    }
+  }
+
   // 3. Merge extracted into state
   const extractedCount = countExtracted(extracted);
   const stageBeforeMerge = state.stage;
+  const slotsBeforeMerge = { ...state.slots };  // snapshot cho slot-diff ack
   state = mergeSlots(state, extracted);
   // Preserve explicit stage overrides from step 2b (text-based pick/confirm)
   const stageWasForced = state.stage !== stageBeforeMerge;
+  // Store newly-filled slots trong state (temp field, không persist) cho handler dùng làm ack
+  (state as any)._newSlots = diffSlots(slotsBeforeMerge, state.slots);
 
   // 4. Record turn + check fallback
   state = recordTurn(state, extractedCount, msg);
@@ -268,12 +367,30 @@ export async function processFunnelMessage(
   // 5. Decide next stage (skip-ahead logic) — ONLY if we didn't force a stage
   if (!stageWasForced) {
     const nextStage = decideNextStage(state);
+    // Fix #2: Record same_stage_count BEFORE transition
+    const { recordStageRepeat, applyStuckEscapeHatch } = require('./conversation-fsm');
+    recordStageRepeat(state, nextStage);
     if (state.stage !== nextStage && state.stage !== 'UNCLEAR_FALLBACK') {
       state.last_bot_stage = state.stage;
       state.stage = nextStage;
     }
+    // Fix #5 (same module): Stuck escape hatch
+    if ((state.same_stage_count || 0) >= 2 && state.turns_since_extract >= 2) {
+      const esc = applyStuckEscapeHatch(state);
+      if (esc.applied) {
+        console.log(`[funnel] stuck escape: ${state.stage} → ${esc.note}`);
+        // Re-decide next stage với slot default mới
+        const newStage = decideNextStage(state);
+        if (newStage !== state.stage) {
+          state.last_bot_stage = state.stage;
+          state.stage = newStage;
+          state.same_stage_count = 0;
+        }
+      }
+    }
   } else {
     console.log(`[funnel] stage forced: ${stageBeforeMerge} → ${state.stage}`);
+    state.same_stage_count = 0;  // explicit transition resets counter
   }
 
   // 6. Special: BOOKING_DRAFT_CREATED needs side-effect
@@ -362,6 +479,12 @@ async function createBookingDraft(state: ConversationState): Promise<void> {
       JSON.stringify(s),
       now,
     );
+
+    // Rebuild customer memory (async, don't block)
+    try {
+      const { rebuildCustomerProfile } = require('./customer-memory');
+      rebuildCustomerProfile(state.sender_id);
+    } catch {}
 
     // Enhanced Telegram notify — rich format + hotel-specific routing
     try {

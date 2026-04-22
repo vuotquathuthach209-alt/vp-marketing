@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS bot_conversation_state (
   slots TEXT NOT NULL DEFAULT '{}',
   turns_since_extract INTEGER DEFAULT 0,
   turn_count INTEGER DEFAULT 0,
+  same_stage_count INTEGER DEFAULT 0,
   language TEXT DEFAULT 'vi',
   handed_off INTEGER DEFAULT 0,
   last_bot_stage TEXT,
@@ -45,6 +46,9 @@ CREATE TABLE IF NOT EXISTS bot_conversation_state (
 CREATE INDEX IF NOT EXISTS idx_bot_state_updated ON bot_conversation_state(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bot_state_handed_off ON bot_conversation_state(handed_off) WHERE handed_off = 1;
 `);
+
+// safeAddColumn for same_stage_count (nếu table cũ đã tồn tại)
+try { db.exec(`ALTER TABLE bot_conversation_state ADD COLUMN same_stage_count INTEGER DEFAULT 0`); } catch {}
 
 /* ═══════════════════════════════════════════
    Types
@@ -124,6 +128,7 @@ export interface ConversationState {
   slots: BookingSlots;
   turns_since_extract: number;
   turn_count: number;
+  same_stage_count: number;       // Fix #2: đếm số turn liên tiếp ở cùng stage
   language: string;
   handed_off: boolean;
   last_bot_stage?: Stage;
@@ -150,6 +155,7 @@ export function getState(senderId: string): ConversationState | null {
       slots: JSON.parse(row.slots || '{}'),
       turns_since_extract: row.turns_since_extract || 0,
       turn_count: row.turn_count || 0,
+      same_stage_count: row.same_stage_count || 0,
       language: row.language || 'vi',
       handed_off: !!row.handed_off,
       last_bot_stage: row.last_bot_stage,
@@ -173,6 +179,7 @@ export function initState(senderId: string, hotelId: number, language = 'vi'): C
     slots: {},
     turns_since_extract: 0,
     turn_count: 0,
+    same_stage_count: 0,
     language,
     handed_off: false,
     created_at: now,
@@ -191,12 +198,12 @@ export function saveState(state: ConversationState): void {
   db.prepare(
     `UPDATE bot_conversation_state SET
       hotel_id = ?, stage = ?, slots = ?, turns_since_extract = ?, turn_count = ?,
-      language = ?, handed_off = ?, last_bot_stage = ?, last_user_msg = ?,
+      same_stage_count = ?, language = ?, handed_off = ?, last_bot_stage = ?, last_user_msg = ?,
       history_summary = ?, updated_at = ?
      WHERE sender_id = ?`
   ).run(
     state.hotel_id, state.stage, JSON.stringify(state.slots),
-    state.turns_since_extract, state.turn_count,
+    state.turns_since_extract, state.turn_count, state.same_stage_count || 0,
     state.language, state.handed_off ? 1 : 0,
     state.last_bot_stage || null, state.last_user_msg || null,
     state.history_summary || null, state.updated_at,
@@ -371,6 +378,66 @@ export function recordTurn(state: ConversationState, extractedCount: number, use
   }
   state.last_user_msg = userMsg.slice(0, 500);
   return state;
+}
+
+/**
+ * Update same_stage_count based on stage transition.
+ * Call AFTER decideNextStage.
+ */
+export function recordStageRepeat(state: ConversationState, newStage: Stage): void {
+  if (state.stage === newStage) {
+    state.same_stage_count = (state.same_stage_count || 0) + 1;
+  } else {
+    state.same_stage_count = 0;
+  }
+}
+
+/**
+ * Adaptive behavior: if bot stuck at same question ≥ 2 turns, apply escape hatch.
+ * Called before dispatchHandler.
+ * Returns modified state (may have stage jumped / slots defaulted).
+ */
+export function applyStuckEscapeHatch(state: ConversationState): { applied: boolean; note?: string } {
+  if ((state.same_stage_count || 0) < 2) return { applied: false };
+
+  const s = state.slots;
+  switch (state.stage) {
+    case 'DATES_ASK':
+      // Không có dates → skip với flexible flag, move to next
+      (s as any).checkin_date = 'flexible';
+      return { applied: true, note: 'skip_dates_flexible' };
+
+    case 'MONTHS_ASK':
+      s.months = 1;  // default 1 tháng
+      return { applied: true, note: 'default_months_1' };
+
+    case 'GUESTS_ASK':
+      s.guests_adults = 2;  // default 2 khách
+      return { applied: true, note: 'default_guests_2' };
+
+    case 'BUDGET_ASK':
+      s.budget_no_filter = true;
+      return { applied: true, note: 'budget_any' };
+
+    case 'AREA_ASK':
+      // Skip area, show all
+      s.area_normalized = undefined;
+      s.area = undefined;
+      return { applied: true, note: 'skip_area' };
+
+    case 'CHDV_EXTRAS_ASK':
+      s.utilities_included = undefined;
+      s.full_kitchen = undefined;
+      s.washing_machine = undefined;
+      return { applied: true, note: 'skip_chdv_extras' };
+
+    case 'PROPERTY_TYPE_ASK':
+      // Nếu user 2 turns không pick type, move to UNCLEAR_FALLBACK (xin SĐT)
+      return { applied: false };  // let shouldFallback handle
+
+    default:
+      return { applied: false };
+  }
 }
 
 /* ═══════════════════════════════════════════

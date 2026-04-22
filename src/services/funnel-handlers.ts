@@ -120,6 +120,18 @@ export function handlePropertyTypeAsk(state: ConversationState): HandlerResult {
     };
   }
 
+  // Returning customer personalized greeting
+  let personalizedGreeting = '';
+  let returningSuggestion = '';
+  try {
+    const { buildReturningGreeting, buildReturningSuggestion } = require('./customer-memory');
+    const profile = (state as any)._customer_profile;
+    if (profile) {
+      personalizedGreeting = buildReturningGreeting(profile) || '';
+      returningSuggestion = buildReturningSuggestion(profile) || '';
+    }
+  } catch {}
+
   const lines = entries.map(([type, n]) => {
     const label = PROP_LABEL[type] || type;
     const emoji = PROP_EMOJI[type] || '🏠';
@@ -136,43 +148,87 @@ export function handlePropertyTypeAsk(state: ConversationState): HandlerResult {
     payload: `property_type_${type}`,
   }));
 
+  // Build reply: personalized greeting TRƯỚC nếu là returning customer
+  const replyParts: string[] = [];
+  if (personalizedGreeting) {
+    replyParts.push(personalizedGreeting);
+    if (returningSuggestion) {
+      // Nếu có suggestion, show nó TRƯỚC list types
+      replyParts.push(returningSuggestion);
+      replyParts.push(`Hoặc nếu muốn xem option khác:`);
+      replyParts.push(lines.join('\n'));
+    } else {
+      replyParts.push(`Anh/chị cần loại hình nào hôm nay ạ?`);
+      replyParts.push(lines.join('\n'));
+    }
+  } else {
+    // New customer
+    replyParts.push(`Chào anh/chị! 👋 Em là trợ lý Sonder — nền tảng đặt phòng trực tuyến.`);
+    replyParts.push(`Anh/chị cần loại hình nào ạ?`);
+    replyParts.push(lines.join('\n'));
+    replyParts.push(`Cho em biết loại hình + ngày check-in + số khách, em tư vấn chỗ phù hợp nhất ạ! 🙌`);
+  }
+
   return {
-    reply: `Chào anh/chị! 👋 Em là trợ lý Sonder — nền tảng đặt phòng trực tuyến.\n\n` +
-      `Anh/chị cần loại hình nào ạ?\n\n` +
-      lines.join('\n') + `\n\n` +
-      `Cho em biết loại hình + ngày check-in + số khách, em tư vấn chỗ phù hợp nhất ạ! 🙌`,
+    reply: replyParts.join('\n\n'),
     next_stage: 'PROPERTY_TYPE_ASK',
     quick_replies: quickReplies,
   };
 }
 
 /**
- * Build acknowledgment phrase dựa trên slot user vừa cung cấp.
- * Vd: vừa nhập area "Tân Bình" → "Dạ Tân Bình em ghi lại rồi ạ."
+ * Build acknowledgment phrase dựa trên slot user VỪA cung cấp (slot-diff).
+ * Dispatcher set state._newSlots với slots mới fill ở turn này.
  */
 function buildSlotAck(state: ConversationState): string {
-  const s = state.slots;
-  // Chỉ acknowledge nếu last turn có slot mới
-  // Use simple heuristic: if this is not first turn, check what slot was last set
-  const lastMsg = state.last_user_msg?.toLowerCase() || '';
+  const newSlots: any = (state as any)._newSlots || {};
+  const ackParts: string[] = [];
 
-  // Area just mentioned
-  if (s.area_normalized && lastMsg && !lastMsg.includes('ngày') && !lastMsg.includes('đêm') && !lastMsg.includes('người')) {
-    if (/^\s*(q\d|quận|tân|bình|phú|gò|thủ|hoàn|ba|đống|cầu|tây|sân bay|landmark|bitexco|chợ|thảo|phú mỹ|thủ đức)/i.test(lastMsg)) {
-      return `Dạ ${s.area_normalized} nhé, em ghi rồi ạ. `;
-    }
+  if (newSlots.property_type) {
+    const label = PROP_LABEL[newSlots.property_type] || newSlots.property_type;
+    ackParts.push(label.toLowerCase());
   }
-  // Budget just mentioned
-  if (s.budget_max && /\d+\s*(k|m|tr|chai|triệu)|dưới|trên|tầm|khoảng/i.test(lastMsg)) {
-    const tier = s.budget_max >= 1_000_000 ? `${(s.budget_max / 1_000_000).toFixed(1)}tr` : `${Math.round(s.budget_max / 1000)}k`;
-    return `Dạ ngân sách dưới ${tier}, em note nhé. `;
+  if (newSlots.area_normalized) {
+    ackParts.push(newSlots.area_normalized);
   }
-  // Guests
-  if (s.guests_adults && /\d+\s*(người|ng|khách|pax)|gia đình|nhóm|vợ chồng|mình/i.test(lastMsg)) {
-    return `Dạ ${s.guests_adults} khách${s.guests_children ? ' + ' + s.guests_children + ' bé' : ''} em ghi ạ. `;
+  if (newSlots.city && !newSlots.area_normalized) {
+    ackParts.push(newSlots.city);
   }
-  // Default
-  return pick(EMPATHY.acknowledge) + '. ';
+  if (newSlots.checkin_date && newSlots.checkin_date !== 'flexible') {
+    ackParts.push(`check-in ${newSlots.checkin_date}`);
+  }
+  if (newSlots.nights) {
+    ackParts.push(`${newSlots.nights} đêm`);
+  }
+  if (newSlots.months) {
+    ackParts.push(`${newSlots.months} tháng`);
+  }
+  if (newSlots.guests_adults) {
+    const guestStr = `${newSlots.guests_adults} khách${newSlots.guests_children ? ' + ' + newSlots.guests_children + ' bé' : ''}`;
+    ackParts.push(guestStr);
+  }
+  if (newSlots.budget_max !== undefined) {
+    const tier = newSlots.budget_max >= 1_000_000
+      ? `${(newSlots.budget_max / 1_000_000).toFixed(1)}tr`
+      : `${Math.round(newSlots.budget_max / 1000)}k`;
+    ackParts.push(`budget ≤${tier}`);
+  } else if (newSlots.budget_no_filter) {
+    ackParts.push('giá linh hoạt');
+  }
+  if (newSlots.phone) {
+    ackParts.push(`SĐT ${newSlots.phone}`);
+  }
+  if (newSlots.name) {
+    ackParts.push(newSlots.name);
+  }
+
+  if (ackParts.length === 0) {
+    // No new slot → generic empathy
+    return pick(EMPATHY.acknowledge) + '. ';
+  }
+  // Random prefix
+  const prefix = pick(['Dạ em note', 'Dạ em ghi', 'Dạ em hiểu rồi', 'Oke ạ']);
+  return `${prefix} ${ackParts.join(' + ')} rồi ạ 👍. `;
 }
 
 /* ═══════════════════════════════════════════
@@ -397,27 +453,74 @@ export function handleShowResults(state: ConversationState): HandlerResult {
     limit: 5,
   });
 
-  // Fallback: nếu không có exact type, try all similar
-  if (results.length === 0 && slots.property_type === 'hotel') {
-    for (const alt of ['homestay', 'villa', 'guesthouse', 'resort']) {
-      results = searchByArea({ city: slots.city, district: slots.area_type === 'district' ? slots.area_normalized : undefined, property_type: alt, max_price: slots.budget_max, min_guests: slots.guests_adults, limit: 5 });
-      if (results.length) break;
+  // Fix #4: Progressive fallback — broaden filters lần lượt
+  let fallbackNote = '';
+  if (results.length === 0) {
+    // Level 1: drop district filter (expand area)
+    if (slots.area_normalized) {
+      results = searchByArea({
+        city: slots.city,
+        property_type: slots.property_type,
+        max_price: slots.budget_max,
+        min_guests: slots.guests_adults,
+        limit: 5,
+      });
+      if (results.length > 0) fallbackNote = `Em không tìm thấy đúng ở ${slots.area_normalized}, nhưng có các option khác gần đó:`;
     }
+  }
+  if (results.length === 0 && slots.property_type) {
+    // Level 2: try similar property types (nếu user hỏi hotel → try homestay/villa; hỏi homestay → try hotel/villa)
+    const alternatives: Record<string, string[]> = {
+      hotel: ['homestay', 'villa', 'guesthouse', 'resort'],
+      homestay: ['hotel', 'villa', 'guesthouse'],
+      villa: ['hotel', 'homestay', 'resort'],
+      apartment: ['apartment'],  // stay same
+      resort: ['hotel', 'villa'],
+      guesthouse: ['homestay', 'hotel'],
+      hostel: ['homestay', 'guesthouse'],
+    };
+    const tryList = alternatives[slots.property_type] || [];
+    for (const alt of tryList) {
+      results = searchByArea({
+        city: slots.city,
+        district: slots.area_type === 'district' ? slots.area_normalized : undefined,
+        property_type: alt,
+        max_price: slots.budget_max,
+        min_guests: slots.guests_adults,
+        limit: 5,
+      });
+      if (results.length) {
+        const altLabel = PROP_LABEL[alt] || alt;
+        fallbackNote = `Em không có ${PROP_LABEL[slots.property_type]?.toLowerCase() || slots.property_type} match, nhưng có ${altLabel.toLowerCase()} tương đương tốt:`;
+        break;
+      }
+    }
+  }
+  if (results.length === 0 && slots.budget_max) {
+    // Level 3: drop budget cap
+    results = searchByArea({
+      city: slots.city,
+      district: slots.area_type === 'district' ? slots.area_normalized : undefined,
+      property_type: slots.property_type,
+      min_guests: slots.guests_adults,
+      limit: 5,
+    });
+    if (results.length > 0) fallbackNote = `Em chưa có option dưới ${formatVND(slots.budget_max)}, các option gần nhất:`;
+  }
+  if (results.length === 0) {
+    // Level 4: show ALL active properties
+    results = searchByArea({ limit: 5 });
+    if (results.length > 0) fallbackNote = `Em show các option bên em có sẵn, anh/chị tham khảo:`;
   }
 
   if (results.length === 0) {
     return {
-      reply: `${pick(EMPATHY.soft_decline)} với các tiêu chí hiện tại 😔\n\n` +
-        `Anh/chị có thể:\n` +
-        `• Tăng ngân sách\n` +
-        `• Đổi khu vực khác\n` +
-        `• Xem tất cả options không filter\n\n` +
-        `Hoặc để em gọi lại tư vấn trực tiếp ạ?`,
-      next_stage: 'SHOW_RESULTS',
+      reply: `${pick(EMPATHY.soft_decline)}: hệ thống em đang ít option phù hợp 😔\n\n` +
+        `Anh/chị có thể để SĐT, team em gọi tư vấn trực tiếp trong 15 phút nhé?`,
+      next_stage: 'UNCLEAR_FALLBACK',
       quick_replies: [
-        { title: '💰 Tăng budget', payload: 'adjust_budget' },
-        { title: '📍 Đổi khu vực', payload: 'adjust_area' },
         { title: '📱 Để SĐT, em gọi', payload: 'ask_phone' },
+        { title: '🔄 Đổi tiêu chí', payload: 'adjust_area' },
       ],
     };
   }
@@ -467,7 +570,12 @@ export function handleShowResults(state: ConversationState): HandlerResult {
 
   const headerLines: string[] = [];
   if (returning) headerLines.push(returning);
-  headerLines.push(`Dạ bên em có ${results.length} lựa chọn phù hợp ạ:`);
+  // Prepend fallbackNote nếu có (honest — không giả vờ có exact match)
+  if (fallbackNote) {
+    headerLines.push(fallbackNote);
+  } else {
+    headerLines.push(`Dạ bên em có ${results.length} lựa chọn phù hợp ạ:`);
+  }
   if (urgency) headerLines.push(urgency);
 
   return {
