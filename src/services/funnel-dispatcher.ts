@@ -73,6 +73,74 @@ function diffSlots(before: BookingSlots, after: BookingSlots): Partial<BookingSl
   return out;
 }
 
+/**
+ * Detect if message is "content question" — hỏi info about facility, không phải booking intent.
+ * Ví dụ: "bên mình có wifi không", "gần có bánh mì ngon không", "có cho thú cưng không"
+ */
+function detectContentQuestion(msg: string): boolean {
+  const lower = msg.toLowerCase().trim();
+  if (lower.length < 8) return false;
+
+  // Strong booking intent → NOT content
+  if (/\b(đặt|book|giữ phòng|chốt|tạo đơn|lên lịch)\b/i.test(lower)) return false;
+
+  // Name + phone contact form → NOT content
+  if (/\b(0\d{9}|\+?84\d{9})\b/.test(lower)) return false;
+
+  // Content question patterns
+  const contentPatterns = [
+    // Amenities / features
+    /\b(có|sẵn|hỗ trợ)\s+\w+\s+(không|kh\b)/i,
+    // Dining / food
+    /\b(gần|có).*(bánh mì|quán|nhà hàng|ăn|cafe|cà phê|phở|cơm|đồ ăn|street food)/i,
+    // Transport
+    /\b(đưa đón|shuttle|taxi|grab|xe bus|metro)\b/i,
+    // Safety/services
+    /\b(smoke alarm|cctv|camera|bảo vệ|safety|an toàn|emergency)\b/i,
+    // Pet
+    /\b(thú cưng|chó|mèo|pet)\b/i,
+    // Accessibility
+    /\b(wheelchair|xe lăn|khuyết tật|thang máy|elevator)\b/i,
+    // Wellness
+    /\b(spa|gym|pool|hồ bơi|massage|sauna)\b/i,
+    // Family
+    /\b(trẻ em|kids|gia đình|gia dinh|cribs|giường trẻ)\b/i,
+    // Business
+    /\b(business|họp|meeting room|printer)\b/i,
+    // Review/rating question
+    /\b(review|đánh giá|rating|khách nói|feedback)\b/i,
+    // Promo
+    /\b(deal|ưu đãi|khuyến mãi|sale|promotion)\b/i,
+    // Sustainability
+    /\b(eco|môi trường|sustainability|xanh|tiết kiệm điện)\b/i,
+    // Generic "what about" patterns
+    /\b(như thế nào|ra sao|thế nào|là gì|có gì)\b/i,
+  ];
+
+  return contentPatterns.some(re => re.test(lower));
+}
+
+/**
+ * Format unified query result (from knowledge-sync) into friendly bot reply.
+ */
+function formatRagAnswer(qr: { tier: string; answer_snippets: string[]; confidence: number }): string {
+  if (!qr.answer_snippets?.length) return '';
+
+  // Take top 2 snippets, clean up
+  const snippets = qr.answer_snippets.slice(0, 2).map(s => {
+    // Remove [Hotel] prefix nếu có, keep content
+    return s.replace(/^\[[^\]]+\]\s*/, '').replace(/^\[\w+\]\s*/, '').trim();
+  });
+
+  if (snippets.length === 1) {
+    return `${snippets[0]}\n\n💬 Anh/chị muốn em tư vấn thêm gì không ạ?`;
+  }
+
+  return `Dạ em tìm được thông tin này ạ:\n\n` +
+    snippets.map((s, i) => `${i + 1}. ${s}`).join('\n\n') +
+    `\n\n💬 Anh/chị muốn em tư vấn đặt phòng luôn không ạ?`;
+}
+
 /** Build inline ack string từ newSlots (cho capability redirect use). */
 function buildAckString(newSlots: any): string {
   if (!newSlots) return '';
@@ -179,6 +247,26 @@ export async function processFunnelMessage(
   msg: string,
   opts: { payload?: string; language?: string } = {},
 ): Promise<FunnelResponse> {
+  // 0. Content-question short-circuit — nếu user hỏi info about facility
+  //    (dining, amenity, safety, pet, ...) và chưa vào booking flow,
+  //    trả lời qua Tier 2 RAG mà không ép vào funnel.
+  const isContentQuestion = detectContentQuestion(msg);
+  if (isContentQuestion) {
+    try {
+      const { unifiedQuery } = require('./knowledge-sync');
+      const qr = await unifiedQuery(msg);
+      if (qr.tier !== 'none' && qr.confidence >= 0.5 && qr.answer_snippets?.length) {
+        const reply = formatRagAnswer(qr);
+        return {
+          reply,
+          intent: `rag_${qr.tier}`,
+          stage: 'INIT',
+          meta: { tier: qr.tier, confidence: qr.confidence },
+        };
+      }
+    } catch (e: any) { console.warn('[funnel] RAG short-circuit fail:', e?.message); }
+  }
+
   // 1. Load/init state
   let state = getState(senderId);
   const isNewConversation = !state;
