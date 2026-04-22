@@ -380,6 +380,23 @@ export function startScheduler() {
     }
   });
 
+  // Retention Cleanup — 2:00 AM mỗi ngày (ít traffic)
+  // Xóa data cũ theo policy (NĐ 13/2023/NĐ-CP compliance)
+  cron.schedule('0 2 * * *', async () => {
+    try {
+      const { runRetentionCleanup } = require('./retention-cleanup');
+      const r = runRetentionCleanup();
+      if (r.total_deleted > 0) {
+        console.log(`[scheduler] retention-cleanup: ${r.total_deleted} rows deleted in ${r.duration_ms}ms`);
+        r.results.forEach((res: any) => {
+          if (res.deleted > 0) console.log(`  • ${res.table}: ${res.deleted} (policy ${res.policy_days}d)`);
+        });
+      }
+    } catch (e: any) {
+      console.error('[scheduler] retention-cleanup error:', e?.message);
+    }
+  });
+
   // Funnel follow-up: mỗi 30 phút, remind Telegram nếu booking 'new' > 1h
   cron.schedule('*/30 * * * *', async () => {
     try {

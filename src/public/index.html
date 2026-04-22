@@ -1174,6 +1174,30 @@
           </div>
         </div>
 
+        <!-- Data Retention -->
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <h3 class="font-bold text-slate-800">🗑 Data Retention (NĐ 13/2023 VN)</h3>
+              <p class="text-[10px] text-slate-500">Chính sách xóa dữ liệu cũ: tin nhắn 60d, FSM state 90d, bookings 2y, customer memory 3y</p>
+            </div>
+            <div class="flex gap-2">
+              <button id="retention-cleanup-now" class="text-xs bg-rose-600 hover:bg-rose-700 text-white px-2 py-1 rounded">🧹 Cleanup ngay</button>
+              <button id="retention-refresh" class="text-xs text-slate-500 hover:text-slate-700">🔄</button>
+            </div>
+          </div>
+          <div id="retention-stats" class="text-sm">
+            <div class="text-slate-400 text-center py-3">⏳ Đang load...</div>
+          </div>
+          <div class="mt-3 pt-3 border-t border-slate-100">
+            <div class="flex items-center gap-2">
+              <input id="retention-forget-sid" type="text" placeholder="sender_id để xóa (right-to-delete NĐ 13)" class="flex-1 border rounded px-2 py-1 text-xs font-mono"/>
+              <button id="retention-forget-btn" class="text-xs bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded">❌ Xóa toàn bộ</button>
+            </div>
+            <div class="text-[10px] text-slate-500 mt-1">Xóa vĩnh viễn mọi dữ liệu của 1 khách (messages, state, bookings, memory).</div>
+          </div>
+        </div>
+
         <!-- Conversation viewer modal -->
         <div id="funnel-convo-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50 p-4">
           <div class="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">

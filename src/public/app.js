@@ -6344,8 +6344,67 @@ async function loadFunnelAnalytics() {
     loadFunnelDaily(),
     loadFunnelFlag(),
     loadFunnelStuck(),
+    loadRetentionStats(),
   ]);
 }
+
+async function loadRetentionStats() {
+  const box = document.getElementById('retention-stats');
+  if (!box) return;
+  try {
+    const r = await api('/retention/stats');
+    const rows = r.tables || [];
+    const policy = r.policy || {};
+    box.innerHTML = `<table class="w-full text-xs">
+      <thead><tr class="border-b text-slate-500 text-left">
+        <th class="py-1">Table</th><th class="text-right">Rows</th><th class="text-right">Retention</th>
+      </tr></thead><tbody>
+      ${rows.map(t => {
+        const policyDays = t.table === 'conversation_memory' ? policy.messages_days
+          : t.table === 'bot_conversation_state' ? policy.fsm_state_days
+          : t.table === 'bot_booking_drafts' ? policy.booking_drafts_days
+          : t.table === 'customer_memory' ? policy.customer_memory_days
+          : t.table.startsWith('ota_raw') ? policy.ota_raw_days
+          : t.table === 'events' ? policy.events_days
+          : '-';
+        const rowClass = t.rows > 10000 ? 'text-rose-700 font-semibold' : t.rows > 1000 ? 'text-amber-600' : 'text-slate-700';
+        return `<tr class="border-b border-slate-100">
+          <td class="py-0.5 font-mono">${escapeHtml(t.table)}</td>
+          <td class="text-right ${rowClass}">${t.rows.toLocaleString('vi-VN')}</td>
+          <td class="text-right text-slate-500">${policyDays === '-' ? '-' : policyDays + 'd'}</td>
+        </tr>`;
+      }).join('')}
+      </tbody></table>`;
+  } catch (e) {
+    box.innerHTML = `<div class="text-rose-600">Lỗi: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+document.getElementById('retention-refresh')?.addEventListener('click', loadRetentionStats);
+document.getElementById('retention-cleanup-now')?.addEventListener('click', async () => {
+  if (!confirm('Chạy cleanup ngay? Xóa data cũ hơn policy (60d messages, 90d state, 2y bookings, 3y memory, 90d OTA raw...).')) return;
+  const btn = document.getElementById('retention-cleanup-now');
+  btn.disabled = true; btn.textContent = '⏳ Đang xóa...';
+  try {
+    const r = await api('/retention/cleanup', { method: 'POST', body: JSON.stringify({}) });
+    alert(`✅ Xong trong ${r.duration_ms}ms\nDeleted: ${r.total_deleted} rows\n\n` +
+      r.results.map(x => `${x.table}: ${x.deleted}`).join('\n'));
+    loadRetentionStats();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = '🧹 Cleanup ngay'; }
+});
+document.getElementById('retention-forget-btn')?.addEventListener('click', async () => {
+  const sid = document.getElementById('retention-forget-sid').value.trim();
+  if (!sid) return alert('Nhập sender_id');
+  if (!confirm(`XÓA VĨNH VIỄN toàn bộ data của ${sid}? Không thể hoàn tác!`)) return;
+  try {
+    const r = await api('/retention/forget/' + encodeURIComponent(sid), { method: 'POST' });
+    alert(`✅ Đã xóa ${r.deleted.total} rows:\n` +
+      Object.entries(r.deleted).filter(([k]) => k !== 'total').map(([k, v]) => `${k}: ${v}`).join('\n'));
+    document.getElementById('retention-forget-sid').value = '';
+    loadRetentionStats();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
 
 async function loadFunnelStuck() {
   const box = document.getElementById('funnel-stuck');
