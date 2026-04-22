@@ -270,4 +270,67 @@ router.delete('/remix/:id', (req: AuthRequest, res) => {
   }
 });
 
+/* ═══════════════════ MODULE 4: Auto Weekly Post ═══════════════════ */
+
+/** Manual trigger: chạy runWeeklyAutoPost NGAY (không chờ cron Monday).
+ *  Có thể pass ?force=1 để bypass 1/tuần limit. */
+router.post('/auto-weekly/run-now', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const force = req.query.force === '1' || req.body?.force === true;
+    const { runWeeklyAutoPost, ciPublishedThisWeek } = require('../services/ci-auto-weekly');
+
+    if (force) {
+      // Reset đếm: không thực sự xóa, chỉ tạm set published_at backward cho bài tuần này
+      db.prepare(
+        `UPDATE remix_drafts SET published_at = published_at - ? WHERE hotel_id = ? AND published_at > ?`
+      ).run(8 * 24 * 3600_000, hotelId, Date.now() - 7 * 24 * 3600_000);
+    }
+
+    const already = ciPublishedThisWeek(hotelId);
+    const r = await runWeeklyAutoPost(hotelId);
+    res.json({ ...r, prev_count_this_week: already });
+  } catch (e: any) {
+    console.error('[auto-weekly/run-now]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Xem status + schedule của auto weekly */
+router.get('/auto-weekly/status', (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const { ciPublishedThisWeek } = require('../services/ci-auto-weekly');
+    const cnt = ciPublishedThisWeek(hotelId);
+
+    // Last published
+    const last = db.prepare(
+      `SELECT id, fb_post_id, published_at, substr(remix_text, 1, 200) as preview
+       FROM remix_drafts
+       WHERE hotel_id = ? AND status = 'published'
+       ORDER BY published_at DESC LIMIT 1`
+    ).get(hotelId) as any;
+
+    // Next schedule estimation: next Monday 9h VN
+    const now = new Date();
+    const vnNow = new Date(now.getTime() + 7 * 3600_000);
+    const daysUntilMonday = (8 - vnNow.getUTCDay()) % 7 || 7;
+    const nextMonday9h = new Date(vnNow);
+    nextMonday9h.setUTCDate(vnNow.getUTCDate() + daysUntilMonday);
+    nextMonday9h.setUTCHours(9, 0, 0, 0);
+    const nextRunUtc = new Date(nextMonday9h.getTime() - 7 * 3600_000);
+
+    res.json({
+      hotel_id: hotelId,
+      posted_this_week: cnt,
+      weekly_limit: 1,
+      next_scheduled_run: nextRunUtc.toISOString(),
+      next_scheduled_run_vn: `${nextMonday9h.toISOString().slice(0, 10)} 09:00 VN time`,
+      last_published: last || null,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;

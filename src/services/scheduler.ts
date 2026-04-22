@@ -353,6 +353,22 @@ export function startScheduler() {
     }
   });
 
+  // ── Content Intelligence — AUTO WEEKLY POST ────────────────────────
+  // Thứ 2 lúc 9h sáng VN time (= 2h UTC): bot tự fetch inspiration + remix + publish 1 bài/tuần
+  // Cron: 0 2 * * 1 (UTC) = 9h VN time thứ 2
+  cron.schedule('0 2 * * 1', async () => {
+    try {
+      const { runWeeklyAutoPostAllHotels } = require('./ci-auto-weekly');
+      console.log('[scheduler] ci-weekly: starting...');
+      const results = await runWeeklyAutoPostAllHotels();
+      const ok = results.filter((r: any) => r.ok).length;
+      const skipped = results.filter((r: any) => r.skipped).length;
+      console.log(`[scheduler] ci-weekly: ${ok} posted, ${skipped} skipped, ${results.length} total`);
+    } catch (e: any) {
+      console.error('[scheduler] ci-weekly error:', e?.message);
+    }
+  });
+
   // Zalo OA token refresh — Zalo tokens live ~25h, refresh mỗi 20h cho safe
   cron.schedule('0 */20 * * *', async () => {
     try {

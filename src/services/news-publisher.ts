@@ -193,11 +193,14 @@ export async function publishScheduledBatch(): Promise<{ considered: number; pub
   return result;
 }
 
-/** Manual publish ngay cho admin "Publish now" button */
-export async function publishNow(draftId: number): Promise<{ ok: boolean; fb_post_id?: string; error?: string }> {
+/** Manual publish ngay cho admin "Publish now" button.
+ *  force=true → bypass weekly limit (admin explicit action). Default true vì đây là manual. */
+export async function publishNow(draftId: number, opts: { force?: boolean } = { force: true }): Promise<{ ok: boolean; fb_post_id?: string; error?: string }> {
   const draft = db.prepare(`SELECT hotel_id, article_id FROM news_post_drafts WHERE id=?`).get(draftId) as any;
   if (!draft) return { ok: false, error: 'not found' };
-  const cap = canPublishMore(draft.hotel_id);
-  if (!cap.ok) return { ok: false, error: cap.reason };
+  if (!opts.force) {
+    const cap = canPublishMore(draft.hotel_id);
+    if (!cap.ok) return { ok: false, error: cap.reason };
+  }
   return publishDraft(draftId);
 }
