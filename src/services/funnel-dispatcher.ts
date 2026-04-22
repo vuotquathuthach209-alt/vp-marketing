@@ -429,7 +429,7 @@ export async function processFunnelMessage(
            FROM room_images ri
            JOIN hotel_profile hp ON hp.hotel_id = ri.hotel_id
            WHERE ri.active = 1 AND LOWER(hp.name_canonical) LIKE LOWER(?)
-           ORDER BY ri.is_primary DESC, ri.display_order LIMIT 6`
+           ORDER BY ri.display_order, ri.id LIMIT 6`
         ).all(`%${propName}%`) as any[];
       } else {
         imagesRows = db.prepare(
@@ -437,7 +437,7 @@ export async function processFunnelMessage(
            FROM room_images ri
            LEFT JOIN hotel_profile hp ON hp.hotel_id = ri.hotel_id
            WHERE ri.active = 1
-           ORDER BY ri.is_primary DESC, ri.display_order LIMIT 6`
+           ORDER BY ri.display_order, ri.id LIMIT 6`
         ).all() as any[];
       }
       if (imagesRows.length) {
