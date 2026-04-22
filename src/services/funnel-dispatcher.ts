@@ -73,6 +73,23 @@ function diffSlots(before: BookingSlots, after: BookingSlots): Partial<BookingSl
   return out;
 }
 
+/** Build inline ack string từ newSlots (cho capability redirect use). */
+function buildAckString(newSlots: any): string {
+  if (!newSlots) return '';
+  const parts: string[] = [];
+  if (newSlots.area_normalized) parts.push(newSlots.area_normalized);
+  if (newSlots.guests_adults) parts.push(`${newSlots.guests_adults} khách`);
+  if (newSlots.budget_max !== undefined) {
+    const tier = newSlots.budget_max >= 1_000_000
+      ? `${(newSlots.budget_max / 1_000_000).toFixed(1)}tr`
+      : `${Math.round(newSlots.budget_max / 1000)}k`;
+    parts.push(`≤${tier}`);
+  }
+  if (newSlots.checkin_date && newSlots.checkin_date !== 'flexible') parts.push(newSlots.checkin_date);
+  if (parts.length === 0) return '';
+  return `Dạ em note ${parts.join(' + ')} rồi ạ 👍. `;
+}
+
 export interface FunnelResponse {
   reply: string;
   quick_replies?: Array<{ title: string; payload?: string }>;
@@ -323,18 +340,54 @@ export async function processFunnelMessage(
   if (extracted.property_type) {
     const available = getAvailablePropertyTypes();
     if (!available.includes(extracted.property_type)) {
-      // Drop bad property_type, add honest redirect message
       const requestedLabel = PROP_LABEL_DISPATCHER[extracted.property_type] || extracted.property_type;
       const altList = available.map(t => PROP_LABEL_DISPATCHER[t] || t).join(', ');
+
+      // Track repeat: nếu user hỏi cùng type 2 lần → escalate
+      state.same_stage_count = state.stage === 'PROPERTY_TYPE_ASK'
+        ? (state.same_stage_count || 0) + 1
+        : 0;
+
+      // Keep other extracted slots (area, dates, etc) — chỉ drop property_type
+      const origPropType = extracted.property_type;
       extracted.property_type = undefined;
+
+      // Merge remaining slots
+      const slotsBeforeMerge = { ...state.slots };
+      state = mergeSlots(state, extracted);
+      (state as any)._newSlots = diffSlots(slotsBeforeMerge, state.slots);
+
       state.slots.property_type = undefined;
       state.stage = 'PROPERTY_TYPE_ASK' as any;
-      // Save state + return immediately
       state.last_user_msg = msg.slice(0, 500);
       state.turn_count = (state.turn_count || 0) + 1;
+
+      // Build ack cho slots khác (area, budget, etc)
+      const ackForOtherSlots = buildAckString((state as any)._newSlots);
+
+      let reply: string;
+
+      // Escalate sau 2 lần hỏi cùng loại không có
+      if (state.same_stage_count >= 2) {
+        state.stage = 'UNCLEAR_FALLBACK' as any;
+        saveState(state);
+        reply = `Dạ em hiểu anh/chị đang tìm ${requestedLabel} cụ thể ạ 🙏\n\n` +
+          `Hiện bên em chưa có, nhưng em có thể:\n` +
+          `📱 Xin SĐT anh/chị, team sẽ liên hệ trong 15 phút tư vấn chỗ phù hợp nhất\n` +
+          `📞 Hoặc anh/chị gọi hotline: 0348 644 833`;
+        return {
+          reply, intent: 'funnel_capability_escalate', stage: 'UNCLEAR_FALLBACK',
+          quick_replies: [
+            { title: '📱 Để SĐT', payload: 'give_phone' },
+            { title: '🏢 Xem CHDV', payload: `property_type_apartment` },
+            { title: '🏡 Xem Homestay', payload: `property_type_homestay` },
+          ],
+        };
+      }
+
       saveState(state);
-      const reply = `Dạ em xin lỗi, hiện bên em chưa có ${requestedLabel} riêng biệt ạ 😔\n\n` +
-        `Bên em có: ${altList} — các chỗ này đều chất lượng tốt ở khu vực gần sân bay.\n\n` +
+      reply = `${ackForOtherSlots}Dạ em xin lỗi, hiện bên em chưa có ${requestedLabel} riêng biệt ạ 😔\n\n` +
+        `Bên em có: *${altList}* — các chỗ này đều chất lượng tốt${state.slots.area_normalized ? ' tại ' + state.slots.area_normalized : ''}.\n\n` +
         `Anh/chị muốn em tư vấn loại nào ạ?`;
       return {
         reply,
