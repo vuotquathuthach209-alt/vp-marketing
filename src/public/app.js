@@ -137,6 +137,7 @@ function switchTab(tab) {
   if (tab === 'channels') loadChannels();
   if (tab === 'otadb') loadOtaConfig();
   if (tab === 'otapipeline') loadOtaPipeline();
+  if (tab === 'funnel') loadFunnelAnalytics();
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
   b.addEventListener('click', () => switchTab(b.dataset.tab));
@@ -6329,6 +6330,234 @@ document.getElementById('otap-rotate-secret')?.addEventListener('click', async (
     }
   } catch (e) { alert('Lỗi: ' + e.message + '\n(Superadmin only)'); }
 });
+
+// ═══════════════════════════════════════════════════════════
+// Sales Funnel Analytics — FSM conversion dashboard
+// ═══════════════════════════════════════════════════════════
+
+async function loadFunnelAnalytics() {
+  await Promise.all([
+    loadFunnelStats(),
+    loadFunnelStages(),
+    loadFunnelBookings(),
+    loadFunnelHandoffs(),
+    loadFunnelDaily(),
+    loadFunnelFlag(),
+  ]);
+}
+
+async function loadFunnelStats() {
+  try {
+    const s = await api('/funnel/stats');
+    document.getElementById('funnel-total').textContent = s.total_conversations ?? 0;
+    document.getElementById('funnel-active24h').textContent = s.active_last_24h ?? 0;
+    document.getElementById('funnel-bookings').textContent = s.bookings_created ?? 0;
+    document.getElementById('funnel-convrate').textContent = (s.conversion_rate || 0) + '%';
+    document.getElementById('funnel-handoffs').textContent = s.handed_off ?? 0;
+    document.getElementById('funnel-handoffrate').textContent = (s.handoff_rate || 0) + '%';
+
+    // Badge on nav nếu có handoff cần review
+    const badge = document.getElementById('funnel-badge');
+    if (badge) {
+      if (s.handed_off > 0) {
+        badge.textContent = s.handed_off;
+        badge.classList.remove('hidden');
+      } else badge.classList.add('hidden');
+    }
+  } catch (e) { console.warn('funnel stats:', e.message); }
+}
+
+async function loadFunnelFlag() {
+  try {
+    const f = await api('/funnel/feature-flag');
+    const el = document.getElementById('funnel-flag-status');
+    const small = document.getElementById('funnel-flag');
+    if (f.USE_NEW_FUNNEL) {
+      el.innerHTML = '<span class="text-emerald-600">✅ ENABLED</span>';
+      small.innerHTML = '🟢 FSM live';
+      small.className = 'text-xs px-2 py-1 rounded bg-emerald-50 text-emerald-700';
+    } else {
+      el.innerHTML = '<span class="text-rose-600">❌ DISABLED</span>';
+      small.innerHTML = '🔴 Legacy mode';
+      small.className = 'text-xs px-2 py-1 rounded bg-rose-50 text-rose-700';
+    }
+  } catch (e) { console.warn('flag:', e.message); }
+}
+
+async function loadFunnelStages() {
+  const box = document.getElementById('funnel-stages');
+  if (!box) return;
+  try {
+    const r = await api('/funnel/funnel');
+    if (!r.funnel?.length) {
+      box.innerHTML = '<div class="text-slate-400 text-center py-3">Chưa có data.</div>';
+      return;
+    }
+    const total = r.total_conversations;
+    const stageLabels = {
+      INIT: '🚪 INIT',
+      PROPERTY_TYPE_ASK: '❓ Loại hình',
+      DATES_ASK: '📅 Ngày check-in',
+      MONTHS_ASK: '📅 Số tháng (CHDV)',
+      CHDV_STARTDATE_ASK: '📅 Ngày dọn vào',
+      GUESTS_ASK: '👥 Số khách',
+      BUDGET_ASK: '💰 Budget',
+      AREA_ASK: '📍 Khu vực',
+      CHDV_EXTRAS_ASK: '🍳 CHDV extras',
+      SHOW_RESULTS: '📋 Show results',
+      PROPERTY_PICKED: '🏨 Property picked',
+      SHOW_ROOMS: '🛏 Show rooms',
+      CONFIRMATION_BEFORE_CLOSE: '✏️ Confirm',
+      CLOSING_CONTACT: '📞 Xin SĐT',
+      BOOKING_DRAFT_CREATED: '✅ Booking tạo',
+      UNCLEAR_FALLBACK: '⚠️ Unclear',
+      HANDED_OFF: '🙋 Handed off',
+    };
+    box.innerHTML = r.funnel.map(s => {
+      const label = stageLabels[s.stage] || s.stage;
+      const pct = s.conversion_rate;
+      const barWidth = Math.max(5, pct);
+      const color = s.stage === 'BOOKING_DRAFT_CREATED' ? 'bg-emerald-500'
+        : s.stage === 'HANDED_OFF' || s.stage === 'UNCLEAR_FALLBACK' ? 'bg-amber-500'
+        : 'bg-indigo-500';
+      return `<div class="flex items-center gap-2 py-1">
+        <div class="w-48 text-xs text-slate-700 truncate">${escapeHtml(label)}</div>
+        <div class="flex-1 bg-slate-100 rounded h-6 relative">
+          <div class="${color} h-6 rounded flex items-center px-2 text-white text-[10px] font-bold" style="width: ${barWidth}%">${pct}%</div>
+        </div>
+        <div class="w-24 text-xs text-right text-slate-600">${s.reached} / ${total} (${s.current} active)</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    box.innerHTML = `<div class="text-rose-600">Lỗi: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function loadFunnelBookings() {
+  const box = document.getElementById('funnel-bookings-list');
+  if (!box) return;
+  try {
+    const status = document.getElementById('funnel-booking-status')?.value || '';
+    const url = '/funnel/bookings?limit=30' + (status ? '&status=' + status : '');
+    const r = await api(url);
+    if (!r.items?.length) {
+      box.innerHTML = '<div class="text-slate-400 text-center py-3">Chưa có booking nào.</div>';
+      return;
+    }
+    const statusIcon = { new: '🆕', contacted: '📞', confirmed: '✅', paid: '💰', cancelled: '❌', no_response: '⏸' };
+    box.innerHTML = r.items.map(b => {
+      const icon = statusIcon[b.status] || '❓';
+      const propInfo = b.rental_mode === 'long_term'
+        ? `${b.months || '?'} tháng, ${b.budget_max ? '<' + (b.budget_max/1000000).toFixed(1) + 'tr' : 'open'}`
+        : `${b.nights || 1} đêm, ${b.budget_max ? '<' + (b.budget_max/1000).toFixed(0) + 'k' : 'open'}`;
+      return `<div class="flex items-center justify-between py-2 px-2 border-b border-slate-100 hover:bg-slate-50">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span>${icon}</span>
+            <span class="font-semibold">${escapeHtml(b.name || '(chưa có tên)')}</span>
+            <span class="text-xs text-slate-500">📞 ${escapeHtml(b.phone || '?')}</span>
+          </div>
+          <div class="text-[10px] text-slate-500">
+            ${escapeHtml(b.property_type || '?')} · ${escapeHtml(b.area || '?')} · ${propInfo}
+            ${b.checkin_date ? ` · ${b.checkin_date}` : ''}
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <select class="booking-status-sel text-xs border rounded px-1 py-0.5" data-id="${b.id}">
+            ${Object.keys(statusIcon).map(s => `<option value="${s}" ${s === b.status ? 'selected' : ''}>${statusIcon[s]} ${s}</option>`).join('')}
+          </select>
+          <span class="text-[10px] text-slate-400">${formatRelTime(b.created_at)}</span>
+        </div>
+      </div>`;
+    }).join('');
+
+    box.querySelectorAll('.booking-status-sel').forEach(sel => sel.addEventListener('change', async (ev) => {
+      const id = ev.target.dataset.id;
+      const status = ev.target.value;
+      try {
+        await api('/funnel/bookings/' + id, { method: 'PUT', body: JSON.stringify({ status }) });
+      } catch (e) { alert('Lỗi: ' + e.message); }
+    }));
+  } catch (e) {
+    box.innerHTML = `<div class="text-rose-600">Lỗi: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function loadFunnelHandoffs() {
+  const box = document.getElementById('funnel-handoffs-list');
+  if (!box) return;
+  try {
+    const r = await api('/funnel/handoffs');
+    if (!r.items?.length) {
+      box.innerHTML = '<div class="text-slate-400 text-center py-3">Không có conversation nào cần can thiệp 🎉</div>';
+      return;
+    }
+    box.innerHTML = r.items.map(h => {
+      const hasPhone = h.slots?.phone;
+      return `<div class="flex items-center justify-between py-2 px-2 bg-amber-50 border border-amber-200 rounded mb-1">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-xs bg-amber-200 text-amber-900 px-1.5 rounded">${escapeHtml(h.stage)}</span>
+            <span class="font-mono text-[10px] text-slate-600">${escapeHtml(h.sender_id)}</span>
+          </div>
+          <div class="text-[10px] text-slate-600 truncate">
+            Last msg: "${escapeHtml((h.last_user_msg || '').slice(0, 80))}"
+          </div>
+          ${hasPhone ? `<div class="text-[10px] text-emerald-600">📞 ${escapeHtml(h.slots.phone)}${h.slots.name ? ' - ' + escapeHtml(h.slots.name) : ''}</div>` : ''}
+        </div>
+        <div class="flex items-center gap-1">
+          <span class="text-[10px] text-slate-400">${formatRelTime(h.updated_at)}</span>
+          <button class="funnel-resume bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] px-2 py-0.5 rounded" data-sid="${escapeHtml(h.sender_id)}">▶️ Resume bot</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    box.querySelectorAll('.funnel-resume').forEach(btn => btn.addEventListener('click', async (ev) => {
+      const sid = ev.target.dataset.sid;
+      if (!confirm('Resume bot cho sender này?')) return;
+      try {
+        await api('/funnel/resume/' + encodeURIComponent(sid), { method: 'POST' });
+        loadFunnelHandoffs();
+      } catch (e) { alert('Lỗi: ' + e.message); }
+    }));
+  } catch (e) {
+    box.innerHTML = `<div class="text-rose-600">Lỗi: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function loadFunnelDaily() {
+  const box = document.getElementById('funnel-daily');
+  if (!box) return;
+  try {
+    const r = await api('/funnel/daily');
+    if (!r.items?.length) {
+      box.innerHTML = '<div class="text-slate-400 text-center py-3">Chưa có data 30 ngày.</div>';
+      return;
+    }
+    box.innerHTML = `<table class="w-full text-xs">
+      <thead><tr class="border-b text-left text-slate-500">
+        <th class="py-1">Ngày</th><th class="text-right">Started</th><th class="text-right">Bookings</th><th class="text-right">Handoffs</th><th class="text-right">Conv rate</th>
+      </tr></thead>
+      <tbody>
+        ${r.items.map(d => {
+          const rate = d.total_started > 0 ? Math.round((d.bookings / d.total_started) * 100) : 0;
+          return `<tr class="border-b border-slate-100">
+            <td class="py-1">${d.day}</td>
+            <td class="text-right text-slate-700">${d.total_started}</td>
+            <td class="text-right text-emerald-600 font-semibold">${d.bookings}</td>
+            <td class="text-right text-amber-600">${d.handoffs}</td>
+            <td class="text-right ${rate >= 20 ? 'text-emerald-600' : rate >= 10 ? 'text-amber-600' : 'text-rose-600'}">${rate}%</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+  } catch (e) {
+    box.innerHTML = `<div class="text-rose-600">Lỗi: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+document.getElementById('funnel-refresh')?.addEventListener('click', loadFunnelAnalytics);
+document.getElementById('funnel-booking-status')?.addEventListener('change', loadFunnelBookings);
 
 // ====== Init ======
 checkAuth();

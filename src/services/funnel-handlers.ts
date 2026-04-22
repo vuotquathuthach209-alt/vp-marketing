@@ -146,14 +146,44 @@ export function handlePropertyTypeAsk(state: ConversationState): HandlerResult {
   };
 }
 
+/**
+ * Build acknowledgment phrase dựa trên slot user vừa cung cấp.
+ * Vd: vừa nhập area "Tân Bình" → "Dạ Tân Bình em ghi lại rồi ạ."
+ */
+function buildSlotAck(state: ConversationState): string {
+  const s = state.slots;
+  // Chỉ acknowledge nếu last turn có slot mới
+  // Use simple heuristic: if this is not first turn, check what slot was last set
+  const lastMsg = state.last_user_msg?.toLowerCase() || '';
+
+  // Area just mentioned
+  if (s.area_normalized && lastMsg && !lastMsg.includes('ngày') && !lastMsg.includes('đêm') && !lastMsg.includes('người')) {
+    if (/^\s*(q\d|quận|tân|bình|phú|gò|thủ|hoàn|ba|đống|cầu|tây|sân bay|landmark|bitexco|chợ|thảo|phú mỹ|thủ đức)/i.test(lastMsg)) {
+      return `Dạ ${s.area_normalized} nhé, em ghi rồi ạ. `;
+    }
+  }
+  // Budget just mentioned
+  if (s.budget_max && /\d+\s*(k|m|tr|chai|triệu)|dưới|trên|tầm|khoảng/i.test(lastMsg)) {
+    const tier = s.budget_max >= 1_000_000 ? `${(s.budget_max / 1_000_000).toFixed(1)}tr` : `${Math.round(s.budget_max / 1000)}k`;
+    return `Dạ ngân sách dưới ${tier}, em note nhé. `;
+  }
+  // Guests
+  if (s.guests_adults && /\d+\s*(người|ng|khách|pax)|gia đình|nhóm|vợ chồng|mình/i.test(lastMsg)) {
+    return `Dạ ${s.guests_adults} khách${s.guests_children ? ' + ' + s.guests_children + ' bé' : ''} em ghi ạ. `;
+  }
+  // Default
+  return pick(EMPATHY.acknowledge) + '. ';
+}
+
 /* ═══════════════════════════════════════════
    S4. DATES_ASK (short-term)
    ═══════════════════════════════════════════ */
 
 export function handleDatesAsk(state: ConversationState): HandlerResult {
   const typeLabel = PROP_LABEL[state.slots.property_type || 'hotel'] || 'chỗ ở';
+  const ack = buildSlotAck(state);
   return {
-    reply: `${pick(EMPATHY.acknowledge)}. Anh/chị dự định check-in ${typeLabel.toLowerCase()} ngày nào ạ?\n\n` +
+    reply: `${ack}Anh/chị dự định check-in ${typeLabel.toLowerCase()} ngày nào ạ?\n\n` +
       `Em gợi ý: "25/5", "tuần sau 3 đêm", "cuối tuần", "hôm nay"...`,
     next_stage: 'DATES_ASK',
     quick_replies: [
@@ -205,9 +235,10 @@ export function handleChdvStartDateAsk(state: ConversationState): HandlerResult 
 
 export function handleGuestsAsk(state: ConversationState): HandlerResult {
   const isLong = state.slots.rental_mode === 'long_term';
+  const ack = buildSlotAck(state);
   const reply = isLong
-    ? `Mấy người sẽ sinh hoạt ở CHDV ạ?`
-    : `Mấy khách anh/chị ơi? (người lớn + trẻ em)`;
+    ? `${ack}Mấy người sẽ sinh hoạt ở CHDV ạ?`
+    : `${ack}Mấy khách anh/chị ơi? (người lớn + trẻ em)`;
 
   return {
     reply,
@@ -228,10 +259,11 @@ export function handleGuestsAsk(state: ConversationState): HandlerResult {
 export function handleBudgetAsk(state: ConversationState): HandlerResult {
   const isLong = state.slots.rental_mode === 'long_term';
   const isHourly = state.slots.rental_sub_mode === 'hourly';
+  const ack = buildSlotAck(state);
 
   if (isHourly) {
     return {
-      reply: `Mức giá dự tính tầm bao nhiêu/giờ ạ?`,
+      reply: `${ack}Mức giá dự tính tầm bao nhiêu/giờ ạ?`,
       next_stage: 'BUDGET_ASK',
       quick_replies: [
         { title: '< 200k/h', payload: 'budget_h_low' },
@@ -244,7 +276,7 @@ export function handleBudgetAsk(state: ConversationState): HandlerResult {
 
   if (isLong) {
     return {
-      reply: `Mức giá dự tính tầm bao nhiêu/tháng ạ?`,
+      reply: `${ack}Mức giá dự tính tầm bao nhiêu/tháng ạ?`,
       next_stage: 'BUDGET_ASK',
       quick_replies: [
         { title: '< 5 triệu', payload: 'budget_m_low' },
@@ -256,7 +288,7 @@ export function handleBudgetAsk(state: ConversationState): HandlerResult {
   }
 
   return {
-    reply: `Mức giá dự tính tầm bao nhiêu/đêm ạ?`,
+    reply: `${ack}Mức giá dự tính tầm bao nhiêu/đêm ạ?`,
     next_stage: 'BUDGET_ASK',
     quick_replies: [
       { title: '< 500k', payload: 'budget_n_low' },
@@ -273,8 +305,9 @@ export function handleBudgetAsk(state: ConversationState): HandlerResult {
 
 export function handleAreaAsk(state: ConversationState): HandlerResult {
   const typeLabel = PROP_LABEL[state.slots.property_type || 'hotel'] || 'chỗ ở';
+  const ack = buildSlotAck(state);
   return {
-    reply: `Anh/chị muốn ở khu vực nào ạ?\nVd: Q1, Q3, sân bay TSN, Bình Thạnh, Tân Bình...`,
+    reply: `${ack}Anh/chị muốn ở khu vực nào ạ?\nVd: Q1, Q3, sân bay TSN, Bình Thạnh, Tân Bình...`,
     next_stage: 'AREA_ASK',
     quick_replies: [
       { title: 'Q1 (trung tâm)', payload: 'area_q1' },

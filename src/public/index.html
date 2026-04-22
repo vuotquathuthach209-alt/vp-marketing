@@ -96,6 +96,7 @@
         <button data-tab="hotels" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="building-2"></i><span>Khách sạn</span></button>
         <button data-tab="otadb" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="database-zap"></i><span>OTA DB</span></button>
         <button data-tab="otapipeline" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="workflow"></i><span>OTA Pipeline</span><span id="otapipeline-badge" class="ml-auto hidden text-xs bg-amber-500 text-slate-900 px-1.5 py-0.5 rounded-full font-bold"></span></button>
+        <button data-tab="funnel" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="target"></i><span>Sales Funnel</span><span id="funnel-badge" class="ml-auto hidden text-xs bg-emerald-500 text-slate-900 px-1.5 py-0.5 rounded-full font-bold"></span></button>
         <button data-tab="conversations" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="messages-square"></i><span>Hội thoại</span></button>
         <button data-tab="botmonitor" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="activity"></i><span>Bot Monitor</span></button>
         <button data-tab="contentintel" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="sparkles"></i><span>Content Intel</span></button>
@@ -1078,6 +1079,87 @@
           </div>
           <div id="otap-failed" class="text-xs space-y-1 max-h-96 overflow-y-auto">
             <div class="text-slate-400 text-center py-3">(không có record fail)</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SALES FUNNEL TAB -->
+      <section data-panel="funnel" class="panel hidden">
+        <div class="mb-4 max-w-6xl flex items-center justify-between">
+          <div>
+            <h2 class="text-2xl font-bold mb-1">🎯 Sales Funnel</h2>
+            <p class="text-slate-500 text-sm">Conversion funnel, booking leads, handoff tracking của bot FSM.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="funnel-flag" class="text-xs px-2 py-1 rounded bg-slate-100 text-slate-600">⏳</span>
+            <button id="funnel-refresh" class="text-xs text-slate-500 hover:text-slate-700">🔄 Refresh</button>
+          </div>
+        </div>
+
+        <!-- 4 KPI cards -->
+        <div class="grid grid-cols-4 gap-3 mb-4 max-w-6xl">
+          <div class="bg-white rounded-lg p-3 shadow-sm border border-slate-200">
+            <div class="text-[10px] text-slate-400 uppercase">Tổng conversations</div>
+            <div class="text-2xl font-bold text-slate-800" id="funnel-total">-</div>
+            <div class="text-[10px] text-slate-500"><span id="funnel-active24h" class="text-indigo-600">-</span> active 24h</div>
+          </div>
+          <div class="bg-white rounded-lg p-3 shadow-sm border border-slate-200">
+            <div class="text-[10px] text-slate-400 uppercase">Bookings tạo</div>
+            <div class="text-2xl font-bold text-emerald-600" id="funnel-bookings">-</div>
+            <div class="text-[10px] text-slate-500"><span id="funnel-convrate" class="text-emerald-600">-%</span> conversion rate</div>
+          </div>
+          <div class="bg-white rounded-lg p-3 shadow-sm border border-slate-200">
+            <div class="text-[10px] text-slate-400 uppercase">Handoff</div>
+            <div class="text-2xl font-bold text-amber-600" id="funnel-handoffs">-</div>
+            <div class="text-[10px] text-slate-500"><span id="funnel-handoffrate" class="text-amber-600">-%</span> handoff rate</div>
+          </div>
+          <div class="bg-white rounded-lg p-3 shadow-sm border border-slate-200">
+            <div class="text-[10px] text-slate-400 uppercase">Feature flag</div>
+            <div class="text-sm font-bold" id="funnel-flag-status">loading...</div>
+            <div class="text-[10px] text-slate-500">USE_NEW_FUNNEL</div>
+          </div>
+        </div>
+
+        <!-- Stage funnel visualization -->
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
+          <h3 class="font-bold text-slate-800 mb-3">📊 Conversion Funnel theo Stage</h3>
+          <div id="funnel-stages" class="space-y-1">
+            <div class="text-slate-400 text-center py-3">⏳ Đang load...</div>
+          </div>
+        </div>
+
+        <!-- Recent bookings -->
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-bold text-slate-800">📋 Booking leads gần đây</h3>
+            <select id="funnel-booking-status" class="text-xs border rounded px-2 py-1">
+              <option value="">Tất cả status</option>
+              <option value="new">🆕 New</option>
+              <option value="contacted">📞 Đã gọi</option>
+              <option value="confirmed">✅ Confirmed</option>
+              <option value="paid">💰 Paid</option>
+              <option value="cancelled">❌ Cancelled</option>
+              <option value="no_response">⏸ Không nghe máy</option>
+            </select>
+          </div>
+          <div id="funnel-bookings-list" class="space-y-1 text-sm">
+            <div class="text-slate-400 text-center py-3">⏳ Đang load...</div>
+          </div>
+        </div>
+
+        <!-- Handoffs needing attention -->
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
+          <h3 class="font-bold text-slate-800 mb-3">⚠️ Handoffs cần can thiệp</h3>
+          <div id="funnel-handoffs-list" class="space-y-1 text-sm">
+            <div class="text-slate-400 text-center py-3">⏳ Đang load...</div>
+          </div>
+        </div>
+
+        <!-- Daily breakdown -->
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
+          <h3 class="font-bold text-slate-800 mb-3">📅 30 ngày gần nhất</h3>
+          <div id="funnel-daily" class="text-xs">
+            <div class="text-slate-400 text-center py-3">⏳ Đang load...</div>
           </div>
         </div>
       </section>

@@ -128,12 +128,29 @@ export async function processFunnelMessage(
     };
   }
 
-  // 2. Extract slots (deterministic + payload)
+  // 2. Extract slots (deterministic + payload + Gemini multi-slot fallback)
   let extracted: ExtractedSlots = {};
   if (opts.payload) {
     extracted = parsePayload(opts.payload, state);
   } else {
     extracted = extractAllSlots(msg);
+    // Fallback: if deterministic extracted 0-1 slots AND msg is long → try Gemini
+    const detCount = countExtracted(extracted);
+    if (detCount <= 1 && msg.length >= 15 && msg.length <= 500) {
+      try {
+        const { extractSlotsGemini, mergeExtractedSlots } = require('./multi-slot-gemini');
+        const geminiSlots = await extractSlotsGemini(msg);
+        if (geminiSlots) {
+          extracted = mergeExtractedSlots(extracted, geminiSlots);
+          const newCount = countExtracted(extracted);
+          if (newCount > detCount) {
+            console.log(`[funnel] multi-slot Gemini: ${detCount} → ${newCount} slots from "${msg.slice(0, 60)}"`);
+          }
+        }
+      } catch (e: any) {
+        console.warn('[funnel] multi-slot Gemini fail:', e?.message);
+      }
+    }
     // Text-based pick: "lấy số 2", "chọn 1", "cái đầu"
     if (state.stage === 'SHOW_RESULTS' && state.slots.shown_property_ids?.length) {
       const pickN = msg.match(/(?:chọn|lấy|số|số thứ|thứ)\s*(\d+)/i) || msg.match(/^\s*(\d+)\s*$/);
