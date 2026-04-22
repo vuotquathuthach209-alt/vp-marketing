@@ -479,23 +479,34 @@ export function searchNearby(opts: {
 /**
  * Search hotels by city + district (fallback nếu không có lat/lon).
  */
+// Strip diacritics for SQL comparison (matches "Tân Bình" with "Tan Binh")
+function stripDiacritics(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+}
+
 export function searchByArea(opts: { city?: string; district?: string; limit?: number; max_price?: number; min_guests?: number; property_type?: string }): HotelSearchResult[] {
   const limit = opts.limit || 5;
   const conds: string[] = [];
   const params: any[] = [];
-  if (opts.city) { conds.push(`LOWER(hp.city) LIKE LOWER(?)`); params.push(`%${opts.city}%`); }
-  if (opts.district) { conds.push(`LOWER(hp.district) LIKE LOWER(?)`); params.push(`%${opts.district}%`); }
+  // Diacritic-insensitive: fetch more, filter in JS
+  if (opts.city) { conds.push(`LOWER(hp.city) LIKE LOWER(?)`); params.push(`%${opts.city.split(' ')[0]}%`); }
   if (opts.property_type) { conds.push(`LOWER(hp.property_type) = LOWER(?)`); params.push(opts.property_type); }
-  // CRITICAL: chỉ list hotels có mkt_hotels entry active (loại test hotels)
   conds.push(`EXISTS (SELECT 1 FROM mkt_hotels mh WHERE mh.ota_hotel_id = hp.hotel_id AND mh.status = 'active')`);
   const where = `WHERE ${conds.join(' AND ')}`;
+  // Fetch 3x candidates, filter district diacritic-insensitive in JS
   const profiles = db.prepare(
     `SELECT hp.hotel_id, hp.name_canonical, hp.city, hp.district, hp.star_rating, hp.property_type, hp.ai_summary_vi, hp.usp_top3
      FROM hotel_profile hp ${where} LIMIT ?`
-  ).all(...params, limit) as any[];
+  ).all(...params, limit * 3) as any[];
+
+  // Diacritic-insensitive district filter
+  const districtNorm = opts.district ? stripDiacritics(opts.district) : null;
+  const filtered = districtNorm
+    ? profiles.filter(p => p.district && stripDiacritics(p.district).includes(districtNorm))
+    : profiles;
 
   const results: HotelSearchResult[] = [];
-  for (const p of profiles) {
+  for (const p of filtered) {
     let roomSql = `SELECT MIN(price_weekday) AS min_price FROM hotel_room_catalog WHERE hotel_id = ?`;
     const roomParams: any[] = [p.hotel_id];
     if (opts.min_guests) {
@@ -520,6 +531,7 @@ export function searchByArea(opts: { city?: string; district?: string; limit?: n
       ai_summary_vi: p.ai_summary_vi || '',
       usp_top3: usps,
     });
+    if (results.length >= limit) break;
   }
   return results;
 }

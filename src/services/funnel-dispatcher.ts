@@ -134,6 +134,27 @@ export async function processFunnelMessage(
     extracted = parsePayload(opts.payload, state);
   } else {
     extracted = extractAllSlots(msg);
+    // Text-based pick: "lấy số 2", "chọn 1", "cái đầu"
+    if (state.stage === 'SHOW_RESULTS' && state.slots.shown_property_ids?.length) {
+      const pickN = msg.match(/(?:chọn|lấy|số|số thứ|thứ)\s*(\d+)/i) || msg.match(/^(\d+)$/);
+      if (pickN) {
+        const idx = parseInt(pickN[1], 10) - 1;
+        const pid = state.slots.shown_property_ids[idx];
+        if (pid) state.slots.selected_property_id = pid;
+      } else if (/\b(đầu|thứ nhất|first|cái 1)\b/i.test(msg)) {
+        state.slots.selected_property_id = state.slots.shown_property_ids[0];
+      }
+    }
+    // Text-based confirmation "đúng rồi", "ok đặt luôn"
+    if (state.stage === 'CONFIRMATION_BEFORE_CLOSE' && /đúng|ok|đặt luôn|yes|xác nhận/i.test(msg)) {
+      state.last_bot_stage = state.stage;
+      state.stage = 'CLOSING_CONTACT' as any;
+    }
+    // Text-based "đặt ngay/đặt phòng" in SHOW_ROOMS
+    if (state.stage === 'SHOW_ROOMS' && /đặt|book|chọn phòng này/i.test(msg)) {
+      state.last_bot_stage = state.stage;
+      state.stage = 'CONFIRMATION_BEFORE_CLOSE' as any;
+    }
   }
 
   // 2b. Handle special intents từ quick reply postback không phải slot
@@ -218,8 +239,8 @@ async function createBookingDraft(state: ConversationState): Promise<void> {
   const s = state.slots;
   try {
     const now = Date.now();
-    // Insert vào pending_bookings
-    db.exec(`CREATE TABLE IF NOT EXISTS pending_bookings (
+    // Use new table 'bot_booking_drafts' to avoid conflict với existing pending_bookings schema
+    db.exec(`CREATE TABLE IF NOT EXISTS bot_booking_drafts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       sender_id TEXT,
       hotel_id INTEGER,
@@ -241,10 +262,12 @@ async function createBookingDraft(state: ConversationState): Promise<void> {
       slots_json TEXT,
       status TEXT DEFAULT 'new',
       created_at INTEGER
-    );`);
+    );
+    CREATE INDEX IF NOT EXISTS idx_bot_booking_drafts_status ON bot_booking_drafts(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_bot_booking_drafts_sender ON bot_booking_drafts(sender_id);`);
 
     db.prepare(
-      `INSERT INTO pending_bookings (
+      `INSERT INTO bot_booking_drafts (
         sender_id, hotel_id, room_id, property_type, rental_mode,
         checkin_date, checkout_date, nights, months,
         guests_adults, guests_children, budget_min, budget_max, area,
