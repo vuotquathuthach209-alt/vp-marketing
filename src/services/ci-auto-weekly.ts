@@ -74,12 +74,21 @@ function pickInspirationSource(hotelId: number): InspirationSource | null {
   const article = db.prepare(
     `SELECT id, title, body, url, region, source, is_travel_relevant, relevance_score
      FROM news_articles
-     WHERE status IN ('angle_generated', 'pending_review', 'approved', 'published', 'ingested')
+     WHERE status IN ('angle_generated', 'pending_review', 'approved', 'published')
        AND published_at > ?
-       AND (is_travel_relevant = 1 OR status != 'ingested')
+       AND is_travel_relevant = 1
+       AND (political_risk IS NULL OR political_risk < 0.3)
+       AND title NOT LIKE '%Mỹ:%'
+       AND title NOT LIKE '%chính trị%'
+       AND title NOT LIKE '%bầu cử%'
+       AND title NOT LIKE '%chiến tranh%'
+       AND title NOT LIKE '%Trump%'
+       AND title NOT LIKE '%Biden%'
+       AND title NOT LIKE '%Tổng thống%'
+       AND title NOT LIKE '%Putin%'
+       AND title NOT LIKE '%Xi Jinping%'
        ${regionFilter}
      ORDER BY
-       CASE WHEN is_travel_relevant = 1 THEN 0 ELSE 1 END,
        relevance_score DESC,
        published_at DESC
      LIMIT 1`
