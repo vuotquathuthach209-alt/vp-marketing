@@ -426,8 +426,19 @@ export function extractCheckinTime(msg: string): string | null {
    ═══════════════════════════════════════════ */
 
 export function extractName(msg: string): string | null {
-  const m = msg.match(/(?:mình|tôi|em|anh|chị)\s*(?:tên|là|gọi là)\s*([A-ZĐÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÊỀẾỂỄỆÔỒỐỔỖỘƠỜỚỞỠỢƯỪỨỬỮỰÈÉẺẼẸÌÍỈĨỊÒÓỎÕỌÙÚỦŨỤỲÝỶỸỴa-zđàáảãạăằắẳẵặâầấẩẫậêềếểễệôồốổỗộơờớởỡợưừứửữựèéẻẽẹìíỉĩịòóỏõọùúủũụỳýỷỹỵ]{2,30}(?:\s+[A-Za-zÀ-ỹ]{2,30})*)/);
+  // "tên A", "tôi là B", "em là C"
+  const m = msg.match(/(?:mình|tôi|em|anh|chị)\s*(?:tên|là|gọi là)\s*([A-ZĐÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÊỀẾỂỄỆÔỒỐỔỖỘƠỜỚỞỠỢƯỪỨỬỮỰÈÉẺẼẸÌÍỈĨỊÒÓỎÕỌÙÚỦŨỤỲÝỶỸỴa-zđàáảãạăằắẳẵặâầấẩẫậêềếểễệôồốổỗộơờớởỡợưừứửữựèéẻẽẹìíỉĩịòóỏõọùúủũụỳýỷỹỵ]{2,30}(?:\s+[A-ZĐa-zđÀ-ỹ]{1,30}){0,3})/);
   if (m) return m[1].trim();
+
+  // Standalone capitalized name followed by phone or alone: "Hùng Nguyễn, 0909..."
+  const trim = msg.trim();
+  const namePhone = trim.match(/^([A-ZĐÀ-Ỹ][A-Za-zĐđÀ-ỹ]{1,30}(?:\s+[A-ZĐÀ-Ỹ][A-Za-zĐđÀ-ỹ]{1,30}){0,3})\s*[,;:]?\s*(?:0\d{8,10}|\+?84\d{8,10})/);
+  if (namePhone) return namePhone[1].trim();
+
+  // 2-4 capitalized words standalone (like "Hùng Nguyễn")
+  const stand = trim.match(/^([A-ZĐÀ-Ỹ][A-Za-zĐđÀ-ỹ]{1,30}(?:\s+[A-ZĐÀ-Ỹ][A-Za-zĐđÀ-ỹ]{1,30}){1,3})$/);
+  if (stand) return stand[1].trim();
+
   return null;
 }
 

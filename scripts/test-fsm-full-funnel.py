@@ -67,11 +67,11 @@ if (s) {
   console.log('Slots:', JSON.stringify(JSON.parse(s.slots), null, 2));
 }
 
-console.log('\n=== PENDING_BOOKINGS ===');
+console.log('\n=== BOT_BOOKING_DRAFTS ===');
 try {
-  const pb = db.prepare(`SELECT * FROM pending_bookings WHERE sender_id = 'zalo:test_fsm_full' ORDER BY id DESC LIMIT 1`).get();
+  const pb = db.prepare(`SELECT * FROM bot_booking_drafts WHERE sender_id = 'zalo:test_fsm_full' ORDER BY id DESC LIMIT 1`).get();
   if (pb) console.log(JSON.stringify(pb, null, 2));
-  else console.log('(none)');
+  else console.log('(none yet)');
 } catch(e) { console.log('err:', e.message); }
 
 db.close();
