@@ -95,6 +95,7 @@
         <button data-tab="playground" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="message-square-dashed"></i><span>Thử bot</span></button>
         <button data-tab="hotels" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="building-2"></i><span>Khách sạn</span></button>
         <button data-tab="otadb" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="database-zap"></i><span>OTA DB</span></button>
+        <button data-tab="otapipeline" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="workflow"></i><span>OTA Pipeline</span><span id="otapipeline-badge" class="ml-auto hidden text-xs bg-amber-500 text-slate-900 px-1.5 py-0.5 rounded-full font-bold"></span></button>
         <button data-tab="conversations" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="messages-square"></i><span>Hội thoại</span></button>
         <button data-tab="botmonitor" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="activity"></i><span>Bot Monitor</span></button>
         <button data-tab="contentintel" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="sparkles"></i><span>Content Intel</span></button>
@@ -988,6 +989,92 @@
           <div>
             <h4 class="font-semibold text-sm mb-1">📊 Push log gần đây</h4>
             <div id="ota-push-log-box" class="text-xs"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- OTA PIPELINE TAB (Raw layer + Qwen classify) -->
+      <section data-panel="otapipeline" class="panel hidden">
+        <div class="mb-4 max-w-6xl">
+          <h2 class="text-2xl font-bold mb-2">🔌 OTA Pipeline — Raw Data Ingestion</h2>
+          <p class="text-slate-500 text-sm">Luồng 2 lớp: OTA Web đẩy JSON thô → Qwen AI classify → schema bot. Decoupled, không phụ thuộc schema 2 bên.</p>
+        </div>
+
+        <!-- Stats summary cards -->
+        <div class="grid grid-cols-5 gap-3 mb-4 max-w-6xl">
+          <div class="bg-white rounded-lg p-3 shadow-sm border border-slate-200">
+            <div class="text-[10px] text-slate-400 uppercase">Hotels</div>
+            <div class="text-2xl font-bold text-slate-800" id="otap-stat-hotels-classified">-</div>
+            <div class="text-[10px] text-slate-500">classified / <span id="otap-stat-hotels-pending" class="text-amber-600">-</span> pending</div>
+          </div>
+          <div class="bg-white rounded-lg p-3 shadow-sm border border-slate-200">
+            <div class="text-[10px] text-slate-400 uppercase">Rooms</div>
+            <div class="text-2xl font-bold text-slate-800" id="otap-stat-rooms-classified">-</div>
+            <div class="text-[10px] text-slate-500">classified / <span id="otap-stat-rooms-pending" class="text-amber-600">-</span> pending</div>
+          </div>
+          <div class="bg-white rounded-lg p-3 shadow-sm border border-slate-200">
+            <div class="text-[10px] text-slate-400 uppercase">Availability</div>
+            <div class="text-2xl font-bold text-slate-800" id="otap-stat-avail-classified">-</div>
+            <div class="text-[10px] text-slate-500">days / <span id="otap-stat-avail-pending" class="text-amber-600">-</span> pending</div>
+          </div>
+          <div class="bg-white rounded-lg p-3 shadow-sm border border-slate-200">
+            <div class="text-[10px] text-slate-400 uppercase">Images</div>
+            <div class="text-2xl font-bold text-slate-800" id="otap-stat-images-classified">-</div>
+            <div class="text-[10px] text-slate-500">processed</div>
+          </div>
+          <div class="bg-white rounded-lg p-3 shadow-sm border border-slate-200">
+            <div class="text-[10px] text-slate-400 uppercase">Loại hình mới</div>
+            <div class="text-2xl font-bold text-amber-600" id="otap-stat-new-types">-</div>
+            <div class="text-[10px] text-slate-500">cần review</div>
+          </div>
+        </div>
+
+        <!-- Shared secret / endpoint info -->
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="font-bold text-slate-800">🔐 API Endpoint cho OTA team</h3>
+            <button id="otap-rotate-secret" class="bg-rose-600 hover:bg-rose-700 text-white text-xs px-3 py-1 rounded">🔄 Rotate secret</button>
+          </div>
+          <div id="otap-endpoint-info" class="text-xs font-mono bg-slate-50 rounded p-3 space-y-1 text-slate-700">
+            <div>POST <span class="font-bold">https://app.sondervn.com/api/ota-raw/push</span></div>
+            <div>Headers: <span class="text-slate-500">X-OTA-Signature, X-OTA-Timestamp, X-OTA-Source</span></div>
+            <div>Secret: <span id="otap-secret-preview" class="text-amber-700">(loading...)</span></div>
+          </div>
+          <div class="text-[11px] text-slate-400 mt-2">Xem full spec: <a href="/docs/OTA-RAW-API-SPEC.md" class="text-indigo-600" target="_blank">OTA-RAW-API-SPEC.md</a></div>
+        </div>
+
+        <!-- Recent batches -->
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-bold text-slate-800">📦 Batches gần đây</h3>
+            <button id="otap-refresh" class="text-xs text-slate-500 hover:text-slate-700">🔄 Refresh</button>
+          </div>
+          <div id="otap-batches" class="text-sm space-y-1">
+            <div class="text-slate-400 text-center py-3">⏳ Đang load...</div>
+          </div>
+        </div>
+
+        <!-- Pending property types discovered -->
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
+          <h3 class="font-bold text-slate-800 mb-3">🧩 Loại hình mới phát hiện từ OTA (chờ map)</h3>
+          <div id="otap-pending-types" class="text-sm space-y-1">
+            <div class="text-slate-400 text-center py-3">(chưa có loại mới)</div>
+          </div>
+        </div>
+
+        <!-- Failed records viewer -->
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-slate-200 mb-4 max-w-6xl">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-bold text-slate-800">❌ Records failed (Qwen classify lỗi)</h3>
+            <select id="otap-failed-type" class="text-xs border rounded px-2 py-1">
+              <option value="hotels">Hotels</option>
+              <option value="rooms">Rooms</option>
+              <option value="availability">Availability</option>
+              <option value="images">Images</option>
+            </select>
+          </div>
+          <div id="otap-failed" class="text-xs space-y-1 max-h-96 overflow-y-auto">
+            <div class="text-slate-400 text-center py-3">(không có record fail)</div>
           </div>
         </div>
       </section>

@@ -136,6 +136,7 @@ function switchTab(tab) {
   if (tab === 'contentintel') loadContentIntel();
   if (tab === 'channels') loadChannels();
   if (tab === 'otadb') loadOtaConfig();
+  if (tab === 'otapipeline') loadOtaPipeline();
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
   b.addEventListener('click', () => switchTab(b.dataset.tab));
@@ -6119,6 +6120,192 @@ async function publishZaloArticleNow(id) {
     loadZaloArticles();
   } catch (e) { alert('Lỗi: ' + e.message); }
 }
+
+// ═══════════════════════════════════════════════════════════
+// OTA Pipeline — Layer 1 (raw) + Layer 2 (Qwen classify) monitoring
+// ═══════════════════════════════════════════════════════════
+
+async function loadOtaPipeline() {
+  await Promise.all([
+    loadOtaPipelineStats(),
+    loadOtaPipelineBatches(),
+    loadOtaPipelineSecret(),
+    loadOtaPipelinePendingTypes(),
+    loadOtaPipelineFailed(),
+  ]);
+}
+
+async function loadOtaPipelineStats() {
+  try {
+    const s = await api('/ota-raw/stats');
+    document.getElementById('otap-stat-hotels-classified').textContent = s.hotels?.classified ?? 0;
+    document.getElementById('otap-stat-hotels-pending').textContent = s.hotels?.pending ?? 0;
+    document.getElementById('otap-stat-rooms-classified').textContent = s.rooms?.classified ?? 0;
+    document.getElementById('otap-stat-rooms-pending').textContent = s.rooms?.pending ?? 0;
+    document.getElementById('otap-stat-avail-classified').textContent = s.availability?.classified ?? 0;
+    document.getElementById('otap-stat-avail-pending').textContent = s.availability?.pending ?? 0;
+    document.getElementById('otap-stat-images-classified').textContent = s.images?.classified ?? 0;
+    document.getElementById('otap-stat-new-types').textContent = s.property_types_discovered ?? 0;
+
+    // Badge trên nav
+    const badge = document.getElementById('otapipeline-badge');
+    const pendingTotal = (s.hotels?.pending ?? 0) + (s.rooms?.pending ?? 0) + (s.property_types_discovered ?? 0);
+    if (badge) {
+      if (pendingTotal > 0) {
+        badge.textContent = pendingTotal;
+        badge.classList.remove('hidden');
+      } else badge.classList.add('hidden');
+    }
+  } catch (e) { console.warn('loadOtaPipelineStats:', e.message); }
+}
+
+async function loadOtaPipelineBatches() {
+  const box = document.getElementById('otap-batches');
+  if (!box) return;
+  try {
+    const r = await api('/ota-raw/batches');
+    if (!r.items?.length) {
+      box.innerHTML = '<div class="text-slate-400 text-center py-3">Chưa có batch nào. OTA team chưa push data.</div>';
+      return;
+    }
+    box.innerHTML = r.items.map(b => {
+      const statusIcon = b.failed_items > 0 ? '⚠️'
+        : b.pending_items > 0 ? '⏳'
+        : '✅';
+      const progress = b.total_items ? Math.round((b.classified_items / b.total_items) * 100) : 0;
+      return `<div class="flex items-center justify-between py-1.5 px-2 hover:bg-slate-50 rounded">
+        <div class="flex items-center gap-2 flex-1 min-w-0">
+          <span>${statusIcon}</span>
+          <span class="font-mono text-[11px] text-slate-600 truncate">${escapeHtml(b.batch_id)}</span>
+          <span class="text-[10px] bg-slate-100 px-1.5 rounded">${escapeHtml(b.type)}</span>
+          <span class="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 rounded">${escapeHtml(b.source || '-')}</span>
+        </div>
+        <div class="flex items-center gap-3 text-[11px] text-slate-500">
+          <span>${b.classified_items}/${b.total_items} (${progress}%)</span>
+          ${b.failed_items > 0 ? `<span class="text-rose-600">❌${b.failed_items}</span>` : ''}
+          <span>${formatRelTime(b.received_at)}</span>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    box.innerHTML = `<div class="text-rose-600">Lỗi: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function loadOtaPipelineSecret() {
+  try {
+    const info = await api('/ota-raw/secret-info');
+    const el = document.getElementById('otap-secret-preview');
+    if (el) {
+      if (info.configured) {
+        el.textContent = info.preview + ' (' + info.from + ')';
+        el.className = 'text-emerald-700';
+      } else {
+        el.textContent = '⚠️ CHƯA CÓ SECRET — click "Rotate" để tạo';
+        el.className = 'text-rose-600';
+      }
+    }
+  } catch (e) { console.warn('loadOtaPipelineSecret:', e.message); }
+}
+
+async function loadOtaPipelinePendingTypes() {
+  const box = document.getElementById('otap-pending-types');
+  if (!box) return;
+  try {
+    const r = await api('/ota-raw/pending-types');
+    if (!r.items?.length) {
+      box.innerHTML = '<div class="text-slate-400 text-center py-3">(chưa có loại mới cần review)</div>';
+      return;
+    }
+    box.innerHTML = r.items.map(t => `
+      <div class="flex items-center justify-between py-2 px-2 border-b border-slate-100">
+        <div class="flex-1 min-w-0">
+          <span class="font-mono text-xs bg-slate-100 px-1.5 rounded mr-2">${escapeHtml(t.raw_type_name)}</span>
+          <span class="text-[11px] text-slate-500">${t.occurrences} lần · ${formatRelTime(t.created_at)}</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <select class="otap-type-select text-xs border rounded px-2 py-1" data-id="${t.id}">
+            <option value="">Map to...</option>
+            <option value="hotel">Hotel</option>
+            <option value="homestay">Homestay</option>
+            <option value="villa">Villa</option>
+            <option value="apartment">Apartment (CHDV)</option>
+            <option value="resort">Resort</option>
+            <option value="guesthouse">Guesthouse</option>
+            <option value="hostel">Hostel</option>
+          </select>
+          <label class="text-[10px] flex items-center gap-1">
+            <input type="checkbox" class="otap-type-greeting" data-id="${t.id}"/> greeting
+          </label>
+          <button class="otap-type-save bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-2 py-1 rounded" data-id="${t.id}">💾</button>
+        </div>
+      </div>
+    `).join('');
+
+    box.querySelectorAll('.otap-type-save').forEach(b => b.addEventListener('click', async () => {
+      const id = b.dataset.id;
+      const sel = box.querySelector(`.otap-type-select[data-id="${id}"]`);
+      const chk = box.querySelector(`.otap-type-greeting[data-id="${id}"]`);
+      const mapped_to = sel.value;
+      if (!mapped_to) return alert('Chọn loại map trước');
+      try {
+        await api('/ota-raw/map-type', { method: 'POST', body: JSON.stringify({ id: parseInt(id), mapped_to, add_to_greeting: chk.checked }) });
+        loadOtaPipelinePendingTypes();
+        loadOtaPipelineStats();
+      } catch (e) { alert('Lỗi: ' + e.message); }
+    }));
+  } catch (e) {
+    box.innerHTML = `<div class="text-rose-600">Lỗi: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function loadOtaPipelineFailed() {
+  const box = document.getElementById('otap-failed');
+  const typeSel = document.getElementById('otap-failed-type');
+  if (!box || !typeSel) return;
+  try {
+    const type = typeSel.value;
+    const r = await api('/ota-raw/failed?type=' + type + '&limit=50');
+    if (!r.items?.length) {
+      box.innerHTML = '<div class="text-slate-400 text-center py-3">(không có record fail)</div>';
+      return;
+    }
+    box.innerHTML = r.items.map(rec => `
+      <div class="bg-rose-50 border border-rose-200 rounded p-2">
+        <div class="flex items-center justify-between mb-1">
+          <span class="font-mono text-[10px] bg-white px-1.5 rounded">#${rec.id}</span>
+          <span class="text-[10px] text-rose-700">${escapeHtml((rec.error_message || '').slice(0, 120))}</span>
+          <button class="otap-reclassify text-[10px] bg-slate-700 hover:bg-slate-800 text-white px-2 py-0.5 rounded" data-table="${type}" data-id="${rec.id}">🔄 Re-classify</button>
+        </div>
+        <div class="text-[10px] text-slate-500">ota_id=${escapeHtml(rec.ota_id || rec.ota_room_id || '?')} · ${formatRelTime(rec.received_at)}</div>
+        ${rec.payload ? `<details class="mt-1"><summary class="text-[10px] cursor-pointer text-slate-500">Show payload</summary><pre class="text-[10px] bg-white p-1 mt-1 rounded overflow-x-auto">${escapeHtml(JSON.stringify(rec.payload, null, 2).slice(0, 1500))}</pre></details>` : ''}
+      </div>
+    `).join('');
+
+    box.querySelectorAll('.otap-reclassify').forEach(b => b.addEventListener('click', async () => {
+      try {
+        await api('/ota-raw/reclassify/' + b.dataset.table + '/' + b.dataset.id, { method: 'POST' });
+        loadOtaPipelineFailed();
+        loadOtaPipelineStats();
+      } catch (e) { alert('Lỗi: ' + e.message); }
+    }));
+  } catch (e) {
+    box.innerHTML = `<div class="text-rose-600">Lỗi: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+document.getElementById('otap-refresh')?.addEventListener('click', loadOtaPipeline);
+document.getElementById('otap-failed-type')?.addEventListener('change', loadOtaPipelineFailed);
+document.getElementById('otap-rotate-secret')?.addEventListener('click', async () => {
+  if (!confirm('Tạo secret MỚI? Secret cũ sẽ invalid. OTA team phải update secret.')) return;
+  try {
+    const r = await api('/ota-raw/secret-rotate', { method: 'POST', body: JSON.stringify({}) });
+    if (r.ok) {
+      prompt('✅ Secret mới (copy + gửi OTA team):', r.secret);
+      loadOtaPipelineSecret();
+    }
+  } catch (e) { alert('Lỗi: ' + e.message + '\n(Superadmin only)'); }
+});
 
 // ====== Init ======
 checkAuth();

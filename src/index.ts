@@ -35,6 +35,7 @@ import playgroundRouter from './routes/playground';
 import hotelsEditorRouter from './routes/hotels-editor';
 import conversationsRouter from './routes/conversations';
 import otaPushRouter from './routes/ota-push';
+import otaRawRouter from './routes/ota-raw';
 import botMonitorRouter from './routes/bot-monitor';
 import contentIntelRouter from './routes/content-intel';
 import './services/agent-tools'; // init table + register tools
@@ -134,6 +135,8 @@ app.use('/api/hotel-telegram', hotelTelegramRouter);
 // IMPORTANT: /api/ota/push phải đặt TRƯỚC /api/ota vì otaRouter dùng
 // authMiddleware — Express match prefix theo thứ tự.
 app.use('/api/ota/push', otaPushRouter);
+// OTA Raw Pipeline — layer 1 ingestion (HMAC auth for POST /push, admin auth for status endpoints)
+app.use('/api/ota-raw', otaRawRouter);
 app.use('/api/ota', otaRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/onboarding', onboardingRouter);
