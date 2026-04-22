@@ -72,9 +72,104 @@ https://app.sondervn.com/api/ota-raw/push
 ```json
 {
   "ota_id": "string required, unique hotel ID trong OTA system",
-  "data": { /* free-form JSON, bot sẽ classify */ }
+  "data": {
+    /* Core fields (bot sẽ map tự động) */
+    "name": "...",
+    "address": "...",
+    "city": "Ho Chi Minh",
+    "district": "Tân Bình",
+    "property_type": "hotel|homestay|villa|apartment|resort|guesthouse|hostel",
+    "rental_mode": "nightly|monthly|hourly|mixed",
+    "star_rating": 3,
+    "phone": "+84909123456",
+
+    /* 🆕 Rich content cho Tier 2 RAG + Tier 3 Wiki */
+    "content_sections": {
+      /* Brand & stories */
+      "brand_story": "Sonder được thành lập năm 2020...",
+      "host_story": "Anh Nam là người làm du lịch 10 năm...",
+
+      /* Policies & rules */
+      "house_rules": ["No smoking", "No pets", "Check-in 14:00-22:00"],
+      "pet_policy": "Chấp nhận chó mèo nhỏ, phụ phí 100k/ngày",
+
+      /* Location info */
+      "neighborhood": "Khu Tân Bình yên tĩnh, gần sân bay...",
+      "transport": "Taxi từ sân bay: 5 phút, 50k VND. Grab dễ đặt 24/7.",
+      "attractions": ["Chợ Phạm Văn Hai (500m)", "Lotte Cộng Hoà (1km)", "Công viên Hoàng Văn Thụ (2km)"],
+      "nearby_dining": ["Bánh mì Huỳnh Hoa (200m)", "Phở Lệ (500m)", "Cơm tấm Ba Ghiền (300m)"],
+
+      /* Offers */
+      "promotions": [
+        {
+          "title": "Summer Deal 2026",
+          "discount": "20% OFF",
+          "description": "Giảm 20% cho booking ≥ 3 đêm",
+          "valid_until": "2026-08-31"
+        }
+      ],
+      "seasonal_offers": [
+        { "title": "Tết 2027", "description": "Free breakfast + late check-out" }
+      ],
+
+      /* Reviews */
+      "reviews_summary": "9.2/10 based on 145 reviews. Highlights: clean rooms, great location, friendly staff.",
+      "testimonials": [
+        { "name": "Anh Khoa", "quote": "Phục vụ tuyệt vời, phòng sạch.", "stars": 5 },
+        { "name": "Chị Lan", "quote": "Vị trí thuận tiện.", "stars": 4 }
+      ],
+
+      /* Features */
+      "safety_features": ["Smoke alarm", "Fire extinguisher", "24/7 security"],
+      "wellness_services": ["Spa", "Gym", "Sauna", "Massage"],
+      "business_features": ["Meeting room 20 người", "Printer/scanner", "Fast wifi 300Mbps"],
+      "family_features": ["Giường trẻ em miễn phí", "Kids menu", "Sân chơi trẻ em"],
+      "accessibility_features": ["Ramp wheelchair", "Elevator", "Phòng dành cho người khuyết tật"],
+
+      /* Long-term (CHDV) */
+      "longstay_benefits": [
+        "Miễn phí dọn phòng 2 lần/tuần",
+        "Giặt ủi giảm 30%",
+        "Chuyển khoản định kỳ auto"
+      ],
+
+      /* Loyalty */
+      "loyalty_program": {
+        "name": "Sonder Rewards",
+        "benefits": "Đặt 3 lần được free 1 đêm",
+        "description": "Tích luỹ điểm sau mỗi booking"
+      },
+
+      /* Eco */
+      "sustainability_practices": [
+        "Tái sử dụng khăn tắm",
+        "Không dùng chai nhựa 1 lần",
+        "Energy-efficient lights"
+      ],
+
+      /* FAQs per hotel */
+      "faqs": [
+        { "question": "Có đưa đón sân bay không?", "answer": "Có, phí 150k/lượt xe 4 chỗ." },
+        { "question": "Gửi đồ được không?", "answer": "Được, lễ tân giữ miễn phí tối đa 24h." }
+      ]
+    },
+
+    /* Images — nếu có */
+    "images": [
+      { "url": "https://...", "caption": "Mặt tiền", "is_primary": true, "order": 1 }
+    ]
+  }
 }
 ```
+
+**⚠️ Quan trọng**: `content_sections` là optional nhưng **càng phong phú → bot tư vấn càng thông minh**.
+
+Bot sẽ:
+1. Extract facts → `hotel_profile` (Tier 1)
+2. Generate embeddings cho mỗi section → `hotel_knowledge_embeddings` (Tier 2, 25+ chunk types)
+3. Auto-populate Wiki entries → `knowledge_wiki` (Tier 3, 5 namespaces)
+
+**Không cần admin edit thủ công** — AI phễu lọc tự động làm hết.
 
 **Gợi ý fields trong `data`** (bot + Qwen sẽ map nếu có):
 ```json

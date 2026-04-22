@@ -17,13 +17,32 @@ import { db } from '../db';
 import { embed, encodeEmbedding } from './embedder';
 
 export type ChunkType =
-  | 'description'      // mô tả chung
-  | 'usp'              // điểm mạnh
-  | 'amenity'          // mỗi amenity 1 chunk
-  | 'nearby'           // landmark xung quanh
-  | 'policy'           // chính sách
-  | 'room_feature'     // đặc điểm phòng
-  | 'faq';             // FAQ
+  | 'description'      // mô tả chung về hotel
+  | 'usp'              // điểm mạnh (unique selling points)
+  | 'amenity'          // mỗi amenity 1 chunk (wifi, pool, gym, ...)
+  | 'nearby'           // landmark xung quanh (generic)
+  | 'policy'           // chính sách (cancel, pet, smoking)
+  | 'room_feature'     // đặc điểm phòng (size, bed, max guests, price)
+  | 'faq'              // FAQ per hotel
+  | 'review'           // review snippets từ khách cũ
+  | 'testimonial'      // testimonial (quote + tác giả)
+  | 'promotion'        // deals/ưu đãi hiện tại
+  | 'seasonal'         // ưu đãi theo mùa (Tet, Summer, ...)
+  | 'transport'        // cách di chuyển đến hotel (airport, metro, taxi)
+  | 'dining'           // nhà hàng/quán ăn gần
+  | 'attraction'       // điểm du lịch nổi tiếng gần
+  | 'house_rule'       // quy định nhà (check-in time, noise, visitor)
+  | 'neighborhood'     // giới thiệu khu vực xung quanh
+  | 'host_story'       // câu chuyện host (nếu homestay)
+  | 'safety'           // an toàn (smoke alarm, emergency contacts)
+  | 'wellness'         // spa, gym, massage services
+  | 'business'         // business center, meeting rooms
+  | 'family'           // family-friendly features (cradle, kids menu)
+  | 'accessibility'    // wheelchair, elevator, disability support
+  | 'pet'              // pet-friendly details
+  | 'longstay_benefit' // benefits cho long-stay guest (CHDV)
+  | 'loyalty'          // loyalty program, repeat guest perks
+  | 'sustainability';  // eco-friendly practices
 
 interface Chunk {
   chunk_type: ChunkType;
@@ -184,6 +203,166 @@ function chunksForHotel(hotelId: number): Chunk[] {
     }
   } catch {}
 
+  // 7. Rich content sections (từ scraped_data.content_sections nếu OTA đẩy)
+  try {
+    const pf = db.prepare(`SELECT scraped_data FROM hotel_profile WHERE hotel_id = ?`).get(hotelId) as any;
+    if (pf?.scraped_data) {
+      const scraped = JSON.parse(pf.scraped_data);
+      const cs = scraped.content_sections || scraped.contentSections || {};
+
+      // Brand story
+      if (cs.brand_story) {
+        chunks.push({ chunk_type: 'description', chunk_text: `${profile.name_canonical} — ${cs.brand_story}`, source: 'brand_story' });
+      }
+      // Host story (homestay)
+      if (cs.host_story) {
+        chunks.push({ chunk_type: 'host_story', chunk_text: `Chủ nhà ${profile.name_canonical}: ${cs.host_story}`, source: 'host_story' });
+      }
+      // House rules
+      if (Array.isArray(cs.house_rules)) {
+        chunks.push({
+          chunk_type: 'house_rule',
+          chunk_text: `Quy định tại ${profile.name_canonical}: ${cs.house_rules.join('. ')}.`,
+          source: 'house_rules',
+        });
+      }
+      // Transport
+      if (cs.transport) {
+        const transportStr = typeof cs.transport === 'string' ? cs.transport : JSON.stringify(cs.transport);
+        chunks.push({ chunk_type: 'transport', chunk_text: `Di chuyển đến ${profile.name_canonical}: ${transportStr}`, source: 'transport' });
+      }
+      // Nearby dining
+      if (Array.isArray(cs.nearby_dining)) {
+        chunks.push({
+          chunk_type: 'dining',
+          chunk_text: `Các quán ăn gần ${profile.name_canonical}: ${cs.nearby_dining.join(', ')}.`,
+          source: 'nearby_dining',
+        });
+      }
+      // Attractions
+      if (Array.isArray(cs.attractions)) {
+        chunks.push({
+          chunk_type: 'attraction',
+          chunk_text: `Địa điểm du lịch gần ${profile.name_canonical}: ${cs.attractions.join(', ')}.`,
+          source: 'attractions',
+        });
+      }
+      // Neighborhood
+      if (cs.neighborhood) {
+        chunks.push({ chunk_type: 'neighborhood', chunk_text: `Khu vực ${profile.name_canonical}: ${cs.neighborhood}`, source: 'neighborhood' });
+      }
+      // Promotions
+      if (Array.isArray(cs.promotions)) {
+        for (const p of cs.promotions) {
+          const text = typeof p === 'string' ? p : `${p.title || 'Ưu đãi'}: ${p.discount || ''} ${p.description || ''}${p.valid_until ? ` (đến ${p.valid_until})` : ''}`;
+          chunks.push({ chunk_type: 'promotion', chunk_text: `Ưu đãi ${profile.name_canonical}: ${text}`, source: 'promotions' });
+        }
+      }
+      // Seasonal offers
+      if (Array.isArray(cs.seasonal_offers)) {
+        for (const s of cs.seasonal_offers) {
+          const text = typeof s === 'string' ? s : `${s.title || s.name || 'Ưu đãi mùa'}: ${s.description || ''}`;
+          chunks.push({ chunk_type: 'seasonal', chunk_text: `Mùa ưu đãi ${profile.name_canonical}: ${text}`, source: 'seasonal' });
+        }
+      }
+      // Reviews summary
+      if (cs.reviews_summary) {
+        chunks.push({ chunk_type: 'review', chunk_text: `Đánh giá ${profile.name_canonical}: ${cs.reviews_summary}`, source: 'reviews_summary' });
+      }
+      // Testimonials
+      if (Array.isArray(cs.testimonials)) {
+        for (const t of cs.testimonials) {
+          const text = typeof t === 'string' ? t : `"${t.quote || ''}" — ${t.name || 'Khách'}${t.stars ? ` ${t.stars}⭐` : ''}`;
+          chunks.push({ chunk_type: 'testimonial', chunk_text: `Khách nói về ${profile.name_canonical}: ${text}`, source: 'testimonials' });
+        }
+      }
+      // Safety
+      if (Array.isArray(cs.safety_features)) {
+        chunks.push({
+          chunk_type: 'safety',
+          chunk_text: `An toàn tại ${profile.name_canonical}: ${cs.safety_features.join(', ')}.`,
+          source: 'safety',
+        });
+      }
+      // Wellness
+      if (Array.isArray(cs.wellness_services)) {
+        chunks.push({
+          chunk_type: 'wellness',
+          chunk_text: `Dịch vụ wellness ${profile.name_canonical}: ${cs.wellness_services.join(', ')}.`,
+          source: 'wellness',
+        });
+      }
+      // Business
+      if (Array.isArray(cs.business_features) || cs.business_center) {
+        const features = cs.business_features || [cs.business_center];
+        chunks.push({
+          chunk_type: 'business',
+          chunk_text: `Dịch vụ business ${profile.name_canonical}: ${features.join(', ')}.`,
+          source: 'business',
+        });
+      }
+      // Family features
+      if (Array.isArray(cs.family_features)) {
+        chunks.push({
+          chunk_type: 'family',
+          chunk_text: `Dành cho gia đình tại ${profile.name_canonical}: ${cs.family_features.join(', ')}.`,
+          source: 'family',
+        });
+      }
+      // Accessibility
+      if (Array.isArray(cs.accessibility_features)) {
+        chunks.push({
+          chunk_type: 'accessibility',
+          chunk_text: `Hỗ trợ người khuyết tật tại ${profile.name_canonical}: ${cs.accessibility_features.join(', ')}.`,
+          source: 'accessibility',
+        });
+      }
+      // Pet
+      if (cs.pet_policy || cs.pet_friendly) {
+        const text = cs.pet_policy || `Chấp nhận thú cưng${cs.pet_friendly ? '' : ' (liên hệ)'}`;
+        chunks.push({ chunk_type: 'pet', chunk_text: `${profile.name_canonical} về thú cưng: ${text}`, source: 'pet' });
+      }
+      // Long-stay benefits (CHDV)
+      if (Array.isArray(cs.longstay_benefits) && profile.property_type === 'apartment') {
+        chunks.push({
+          chunk_type: 'longstay_benefit',
+          chunk_text: `Ưu đãi ở dài hạn ${profile.name_canonical}: ${cs.longstay_benefits.join(', ')}.`,
+          source: 'longstay',
+        });
+      }
+      // Loyalty
+      if (cs.loyalty_program) {
+        const text = typeof cs.loyalty_program === 'string' ? cs.loyalty_program
+          : `${cs.loyalty_program.name || 'Loyalty'}: ${cs.loyalty_program.benefits || cs.loyalty_program.description || ''}`;
+        chunks.push({ chunk_type: 'loyalty', chunk_text: `Chương trình khách thân thiết ${profile.name_canonical}: ${text}`, source: 'loyalty' });
+      }
+      // Sustainability
+      if (Array.isArray(cs.sustainability_practices)) {
+        chunks.push({
+          chunk_type: 'sustainability',
+          chunk_text: `Thực hành bền vững tại ${profile.name_canonical}: ${cs.sustainability_practices.join(', ')}.`,
+          source: 'sustainability',
+        });
+      }
+      // FAQs (per-hotel)
+      if (Array.isArray(cs.faqs)) {
+        for (const f of cs.faqs) {
+          const q = typeof f === 'string' ? f : (f.question || f.q || '');
+          const a = typeof f === 'string' ? '' : (f.answer || f.a || '');
+          if (q) {
+            chunks.push({
+              chunk_type: 'faq',
+              chunk_text: `[FAQ ${profile.name_canonical}] ${q}${a ? ' → ' + a : ''}`,
+              source: 'faqs',
+            });
+          }
+        }
+      }
+    }
+  } catch (e: any) {
+    console.warn(`[chunksForHotel] parse content_sections fail for hotel ${hotelId}:`, e?.message);
+  }
+
   return chunks;
 }
 
@@ -225,11 +404,13 @@ export async function rebuildEmbeddings(hotelId: number): Promise<{ chunks_delet
 
 /**
  * Rebuild embeddings cho TẤT CẢ hotels active.
+ * + Auto-generate Wiki entries từ content_sections (KHÔNG admin UI — AI-populated).
  */
 export async function rebuildAllEmbeddings(): Promise<{
   hotels_processed: number;
   total_chunks: number;
   total_deleted: number;
+  wiki_auto_generated: number;
   duration_ms: number;
 }> {
   const t0 = Date.now();
@@ -240,11 +421,14 @@ export async function rebuildAllEmbeddings(): Promise<{
 
   let totalCreated = 0;
   let totalDeleted = 0;
+  let wikiGen = 0;
   for (const h of hotels) {
     try {
       const r = await rebuildEmbeddings(h.hotel_id);
       totalCreated += r.chunks_created;
       totalDeleted += r.chunks_deleted;
+      // Also auto-generate wiki entries from hotel data
+      wikiGen += autoGenerateWikiFromHotel(h.hotel_id);
     } catch (e: any) {
       console.warn(`[knowledge-sync] rebuild hotel ${h.hotel_id} fail:`, e?.message);
     }
@@ -253,8 +437,137 @@ export async function rebuildAllEmbeddings(): Promise<{
     hotels_processed: hotels.length,
     total_chunks: totalCreated,
     total_deleted: totalDeleted,
+    wiki_auto_generated: wikiGen,
     duration_ms: Date.now() - t0,
   };
+}
+
+/**
+ * Auto-populate Tier 3 Wiki entries từ hotel content_sections.
+ * Cross-hotel content (brand, policies, location guides) được aggregate.
+ * Called trong rebuild cron — KHÔNG cần admin edit thủ công.
+ *
+ * Returns: số wiki entries đã upsert.
+ */
+function autoGenerateWikiFromHotel(hotelId: number): number {
+  const now = Date.now();
+  let count = 0;
+
+  try {
+    const profile = db.prepare(
+      `SELECT name_canonical, city, district, scraped_data, ai_summary_vi FROM hotel_profile WHERE hotel_id = ?`
+    ).get(hotelId) as any;
+    if (!profile) return 0;
+
+    const scraped = profile.scraped_data ? JSON.parse(profile.scraped_data) : {};
+    const cs = scraped.content_sections || {};
+
+    // Auto-wiki: hotel_info (individual hotel profile)
+    if (profile.ai_summary_vi) {
+      const content = [
+        `# ${profile.name_canonical}`,
+        '',
+        profile.ai_summary_vi,
+        '',
+        profile.district ? `**Khu vực**: ${profile.district}${profile.city ? ', ' + profile.city : ''}` : '',
+        cs.brand_story ? `## Về chúng tôi\n${cs.brand_story}` : '',
+        cs.host_story ? `## Chủ nhà\n${cs.host_story}` : '',
+        Array.isArray(cs.house_rules) && cs.house_rules.length ? `## Quy định\n- ${cs.house_rules.join('\n- ')}` : '',
+        cs.transport ? `## Di chuyển\n${typeof cs.transport === 'string' ? cs.transport : JSON.stringify(cs.transport)}` : '',
+      ].filter(Boolean).join('\n');
+
+      upsertWiki('hotel_info', `hotel-${hotelId}`, profile.name_canonical, content, `hotel,${profile.district || ''},${profile.city || ''}`);
+      count++;
+    }
+
+    // Auto-wiki: location_guide per district (aggregate từ các hotels cùng district)
+    if (profile.district) {
+      const sameDistrictHotels = db.prepare(
+        `SELECT name_canonical, property_type FROM hotel_profile WHERE district = ?
+         AND EXISTS (SELECT 1 FROM mkt_hotels WHERE ota_hotel_id = hotel_profile.hotel_id AND status = 'active')`
+      ).all(profile.district) as any[];
+      if (sameDistrictHotels.length) {
+        const districtSlug = (profile.district || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/\s+/g, '-');
+        const content = [
+          `# Khu vực ${profile.district}, ${profile.city || ''}`,
+          '',
+          `Sonder có ${sameDistrictHotels.length} chỗ ở tại khu ${profile.district}:`,
+          ...sameDistrictHotels.map((h: any) => `- ${h.name_canonical} (${h.property_type})`),
+          '',
+          cs.neighborhood ? `## Giới thiệu khu vực\n${cs.neighborhood}` : '',
+          Array.isArray(cs.attractions) ? `## Địa điểm du lịch gần\n- ${cs.attractions.join('\n- ')}` : '',
+          Array.isArray(cs.nearby_dining) ? `## Ăn uống\n- ${cs.nearby_dining.join('\n- ')}` : '',
+          cs.transport ? `## Di chuyển\n${typeof cs.transport === 'string' ? cs.transport : JSON.stringify(cs.transport)}` : '',
+        ].filter(Boolean).join('\n');
+
+        upsertWiki('location', `area-${districtSlug}`, `Khu vực ${profile.district}`, content, `location,${profile.district},${profile.city || ''}`);
+        count++;
+      }
+    }
+
+    // Auto-wiki: promotions (global aggregate)
+    if (Array.isArray(cs.promotions) && cs.promotions.length) {
+      const content = [
+        `# Ưu đãi hiện tại — ${profile.name_canonical}`,
+        '',
+        ...cs.promotions.map((p: any) => {
+          if (typeof p === 'string') return `- ${p}`;
+          return `- **${p.title || 'Ưu đãi'}**: ${p.discount || ''} ${p.description || ''}${p.valid_until ? ` _(đến ${p.valid_until})_` : ''}`;
+        }),
+      ].join('\n');
+      upsertWiki('promotions', `promo-hotel-${hotelId}`, `Ưu đãi ${profile.name_canonical}`, content, `promotion,deal,sale,${profile.district || ''}`);
+      count++;
+    }
+
+    // Auto-wiki: policies per hotel (overrides global)
+    if (Array.isArray(cs.house_rules) && cs.house_rules.length) {
+      const content = [
+        `# Quy định ${profile.name_canonical}`,
+        '',
+        ...cs.house_rules.map((r: string) => `- ${r}`),
+      ].join('\n');
+      upsertWiki('policies', `rules-hotel-${hotelId}`, `Quy định ${profile.name_canonical}`, content, `policy,rule,${profile.district || ''}`);
+      count++;
+    }
+
+    // Auto-wiki: reviews summary
+    if (cs.reviews_summary) {
+      const content = [
+        `# Đánh giá khách ${profile.name_canonical}`,
+        '',
+        cs.reviews_summary,
+        Array.isArray(cs.testimonials) && cs.testimonials.length ? '\n## Testimonials\n' + cs.testimonials.map((t: any) => {
+          if (typeof t === 'string') return `> ${t}`;
+          return `> "${t.quote}" — ${t.name || 'Khách'}${t.stars ? ` ${'⭐'.repeat(t.stars)}` : ''}`;
+        }).join('\n\n') : '',
+      ].filter(Boolean).join('\n');
+      upsertWiki('reviews', `reviews-hotel-${hotelId}`, `Đánh giá ${profile.name_canonical}`, content, `review,testimonial,${profile.district || ''}`);
+      count++;
+    }
+  } catch (e: any) {
+    console.warn(`[knowledge-sync] auto-wiki hotel ${hotelId} fail:`, e?.message);
+  }
+
+  return count;
+}
+
+function upsertWiki(namespace: string, slug: string, title: string, content: string, tags?: string): void {
+  const now = Date.now();
+  try {
+    const existing = db.prepare(`SELECT id FROM knowledge_wiki WHERE namespace = ? AND slug = ?`).get(namespace, slug) as any;
+    if (existing) {
+      db.prepare(
+        `UPDATE knowledge_wiki SET title = ?, content = ?, tags = ?, active = 1, updated_at = ? WHERE id = ?`
+      ).run(title, content, tags || null, now, existing.id);
+    } else {
+      db.prepare(
+        `INSERT INTO knowledge_wiki (namespace, slug, title, content, tags, active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 1, ?, ?)`
+      ).run(namespace, slug, title, content, tags || null, now, now);
+    }
+  } catch (e: any) {
+    console.warn(`[knowledge-sync] upsertWiki fail:`, e?.message);
+  }
 }
 
 /* ═══════════════════════════════════════════
