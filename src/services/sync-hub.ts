@@ -273,6 +273,45 @@ export function confirmBooking(bookingId: number, opts: { deposit_proof_url?: st
     recordBookingAttribution(bookingId);
   } catch {}
 
+  // v24: Auto-enqueue to OTA push outbox (bi-directional sync).
+  //       Chỉ enqueue nếu booking source là 'bot' (không push lại booking from OTA).
+  if (booking.source === 'bot') {
+    try {
+      const { enqueueOutbox } = require('./sync-outbox');
+      const { mapCanonicalBookingToOtaPayload } = require('./sync-canonical-mapper');
+      const canonical = {
+        mkt_booking_id: bookingId,
+        hotel_id: booking.hotel_id,
+        source: 'bot',
+        room_type_code: booking.room_type_code,
+        checkin_date: booking.checkin_date,
+        checkout_date: booking.checkout_date,
+        nights: booking.nights,
+        guests_adults: booking.guests || 2,
+        total_price: booking.total_price,
+        deposit_amount: booking.deposit_amount,
+        deposit_paid: true,
+        guest_name: booking.customer_name,
+        guest_phone: booking.customer_phone,
+        sender_id: booking.sender_id,
+        status: 'confirmed',
+        notes: booking.notes,
+        created_at: booking.created_at,
+        updated_at: Date.now(),
+      };
+      enqueueOutbox({
+        op_type: 'push_booking',
+        hotel_id: booking.hotel_id,
+        aggregate_id: String(bookingId),
+        payload: mapCanonicalBookingToOtaPayload(canonical),
+        // idempotency_key deterministic by booking → retry tạo cùng key
+        idempotency_key: `mkt_booking_${bookingId}_v1`,
+      });
+    } catch (e: any) {
+      console.warn('[sync-hub] auto-enqueue push_booking fail:', e?.message);
+    }
+  }
+
   return true;
 }
 

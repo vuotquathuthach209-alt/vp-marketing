@@ -1594,6 +1594,69 @@ LEFT JOIN mkt_hotels mh ON mh.ota_hotel_id = ha.hotel_id;
 console.log('[db] Created unified bot views: v_hotel_bot_context + v_hotel_rooms + v_hotel_amenities');
 
 // ═══════════════════════════════════════════════════════════
+// v24 — Sync Coordinator v2: outbox + conflicts + webhook logs
+// Mục đích: bi-directional sync MKT ↔ OTA với retry, DLQ, idempotency
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+-- Outbox: queue các op CẦN PUSH từ MKT → OTA (create booking, update customer, etc.)
+CREATE TABLE IF NOT EXISTS sync_outbox (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  idempotency_key TEXT NOT NULL UNIQUE,     -- UUID v4, tránh duplicate khi retry
+  op_type TEXT NOT NULL,                    -- 'push_booking' | 'update_customer' | 'push_review' | 'cancel_booking'
+  hotel_id INTEGER,
+  aggregate_id TEXT,                        -- id object (e.g. booking_id)
+  payload_json TEXT NOT NULL,               -- JSON body gửi cho OTA
+  status TEXT NOT NULL DEFAULT 'pending',   -- pending | in_flight | pushed | failed | dlq
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_retry_at INTEGER,                    -- epoch ms cho exponential backoff
+  last_error TEXT,
+  ota_response_json TEXT,                   -- response OTA trả về khi thành công
+  ota_ref TEXT,                             -- ref/id bên OTA trả về (e.g. pms_booking_id)
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  pushed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_outbox_status_retry ON sync_outbox(status, next_retry_at);
+CREATE INDEX IF NOT EXISTS idx_outbox_hotel ON sync_outbox(hotel_id, status);
+CREATE INDEX IF NOT EXISTS idx_outbox_created ON sync_outbox(created_at DESC);
+
+-- Webhook inbound log: dedup + audit raw payload từ OTA
+CREATE TABLE IF NOT EXISTS sync_webhook_inbound (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL UNIQUE,            -- dedup key
+  event_type TEXT NOT NULL,                 -- 'booking_created' | 'booking_cancelled' | 'payment_confirmed' | ...
+  source TEXT NOT NULL,                     -- 'ota' | 'booking.com' | 'agoda' | ...
+  hotel_id INTEGER,
+  payload_json TEXT NOT NULL,
+  hmac_verified INTEGER DEFAULT 0,
+  processed INTEGER DEFAULT 0,
+  processed_at INTEGER,
+  error TEXT,
+  received_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_processed ON sync_webhook_inbound(processed, received_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_event_type ON sync_webhook_inbound(event_type, received_at DESC);
+
+-- Conflicts: khi 2 bên cùng update → record để manual review
+CREATE TABLE IF NOT EXISTS sync_conflicts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type TEXT NOT NULL,                -- 'booking' | 'availability' | 'customer'
+  entity_id TEXT NOT NULL,
+  field_name TEXT NOT NULL,
+  mkt_value TEXT,
+  ota_value TEXT,
+  resolution TEXT,                          -- 'mkt_wins' | 'ota_wins' | 'merged' | 'manual_pending'
+  resolved_by TEXT,                         -- rule name hoặc user_id
+  auto_resolved INTEGER DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  resolved_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_conflicts_entity ON sync_conflicts(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_conflicts_manual ON sync_conflicts(resolution) WHERE resolution = 'manual_pending';
+`);
+console.log('[db] Sync Coordinator v2 tables ready (sync_outbox + sync_webhook_inbound + sync_conflicts)');
+
+// ═══════════════════════════════════════════════════════════
 // v23 — intent_logs: log mọi message qua Gemini Intent Classifier
 // Mục đích: analytics + training data cho tuning classifier + debug
 // ═══════════════════════════════════════════════════════════

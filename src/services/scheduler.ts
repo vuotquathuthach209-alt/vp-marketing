@@ -192,6 +192,33 @@ export function startScheduler() {
   // cron.schedule('30 * * * *', () => { runBookingSync()... });
   // setTimeout(() => runFullSync(), 10000);
 
+  // ── v24 Sync Outbox worker: mỗi 30 giây push MKT→OTA pending ops ──
+  cron.schedule('*/30 * * * * *', async () => {
+    try {
+      const { processOutbox } = require('./sync-outbox');
+      const r = await processOutbox(20);
+      if (r.processed > 0) {
+        console.log(`[scheduler] outbox: processed=${r.processed} ok=${r.succeeded} fail=${r.failed} dlq=${r.moved_to_dlq}`);
+      }
+    } catch (e: any) {
+      console.error('[scheduler] outbox-worker error:', e?.message);
+    }
+  });
+
+  // ── v24: Cleanup orphan in_flight (worker crashed giữa chừng) mỗi 5 phút ──
+  cron.schedule('*/5 * * * *', () => {
+    try {
+      const { db } = require('../db');
+      // Reset stuck "in_flight" items → pending (will retry)
+      const r = db.prepare(
+        `UPDATE sync_outbox
+         SET status = 'pending', updated_at = ?
+         WHERE status = 'in_flight' AND updated_at < ?`
+      ).run(Date.now(), Date.now() - 5 * 60_000);
+      if (r.changes > 0) console.log(`[scheduler] outbox: reset ${r.changes} stuck in_flight items`);
+    } catch (e: any) { console.warn('[scheduler] outbox cleanup fail:', e?.message); }
+  });
+
   // ── FB Token auto-refresh: 2h sáng mỗi ngày ──
   cron.schedule('0 2 * * *', () => {
     autoRefreshPageTokens()

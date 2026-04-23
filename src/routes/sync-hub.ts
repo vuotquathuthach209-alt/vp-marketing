@@ -566,4 +566,161 @@ requests.post('https://mkt.sondervn.com/api/sync/availability',
 </body></html>`;
 }
 
+/* ═══════════════════════════════════════════
+   v24 — WEBHOOK INBOUND (real-time from OTA)
+   ═══════════════════════════════════════════ */
+
+/**
+ * POST /api/sync/webhook/:event
+ *   event ∈ booking | availability | payment | stop-sell
+ *
+ * Không dùng authSyncHub middleware (HMAC verify bên trong receiveWebhook
+ * để lấy raw body). Thay vào đó verify HMAC với shared secret từ settings.
+ */
+router.post('/webhook/:event', rawBodyMiddleware, async (req: any, res) => {
+  const sig = req.header('x-signature') || '';
+  const eventName = req.params.event;
+  // Shared secret — khác với các API key per-team
+  const { getSetting } = require('../db');
+  const secret = getSetting('ota_webhook_secret');
+  if (!secret) {
+    return res.status(500).json({ error: 'webhook_secret not configured yet' });
+  }
+
+  try {
+    const { receiveWebhook } = require('../services/sync-webhook');
+    const rawBody = req.rawBody || JSON.stringify(req.body);
+    const result = await receiveWebhook(rawBody, sig, secret);
+
+    if (!result.ok && result.error === 'invalid_signature') return res.status(401).json(result);
+    if (!result.ok) return res.status(400).json(result);
+    return res.json(result);
+  } catch (e: any) {
+    console.error('[webhook] route error:', e?.message);
+    return res.status(500).json({ error: 'webhook_processing_failed' });
+  }
+});
+
+/* ═══════════════════════════════════════════
+   v24 — SYNC STATUS (internal dashboard)
+   ═══════════════════════════════════════════ */
+
+/** GET /api/sync/status — unified health dashboard */
+router.get('/status', authMiddleware, (_req: AuthRequest, res) => {
+  try {
+    const { getOutboxStats } = require('../services/sync-outbox');
+    const outboxStats = getOutboxStats();
+
+    // Last pull times (from sync_events_log)
+    const lastPull = db.prepare(
+      `SELECT event_type, MAX(created_at) as last_at
+       FROM sync_events_log
+       WHERE event_type LIKE 'pull_%' OR event_type LIKE 'ota_sync_%'
+       GROUP BY event_type`
+    ).all() as any[];
+
+    // Webhook stats (last 24h)
+    const day = Date.now() - 24 * 3600_000;
+    const webhookStats = db.prepare(
+      `SELECT event_type,
+              COUNT(*) as total,
+              SUM(CASE WHEN processed = 1 THEN 1 ELSE 0 END) as processed,
+              SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as errors
+       FROM sync_webhook_inbound
+       WHERE received_at > ?
+       GROUP BY event_type`
+    ).all(day) as any[];
+
+    // Conflicts pending
+    const pendingConflicts = (db.prepare(
+      `SELECT COUNT(*) as n FROM sync_conflicts WHERE resolution = 'manual_pending'`
+    ).get() as any)?.n || 0;
+
+    // Bot bookings not yet pushed
+    const unpushed = (db.prepare(
+      `SELECT COUNT(*) as n FROM sync_bookings
+       WHERE source = 'bot' AND status = 'confirmed' AND synced_to_pms_at IS NULL`
+    ).get() as any)?.n || 0;
+
+    res.json({
+      outbox: outboxStats,
+      last_pulls: lastPull,
+      webhooks_24h: webhookStats,
+      pending_conflicts: pendingConflicts,
+      bot_bookings_awaiting_push: unpushed,
+      now: Date.now(),
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** GET /api/sync/outbox — list items (admin) */
+router.get('/outbox', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const status = String(req.query.status || 'all');
+    const limit = Math.min(200, parseInt(String(req.query.limit || '50'), 10));
+    const where = status === 'all' ? '' : `WHERE status = ?`;
+    const sql = `SELECT id, idempotency_key, op_type, hotel_id, aggregate_id,
+                        status, attempts, last_error, next_retry_at, ota_ref,
+                        created_at, pushed_at
+                 FROM sync_outbox ${where}
+                 ORDER BY created_at DESC LIMIT ?`;
+    const rows = status === 'all'
+      ? db.prepare(sql).all(limit) as any[]
+      : db.prepare(sql).all(status, limit) as any[];
+    res.json({ items: rows });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/** GET /api/sync/dlq — Dead letter queue items */
+router.get('/dlq', authMiddleware, (_req: AuthRequest, res) => {
+  try {
+    const { listDlq } = require('../services/sync-outbox');
+    res.json({ items: listDlq(100) });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/** POST /api/sync/dlq/:id/retry — Admin manual retry */
+router.post('/dlq/:id/retry', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const { retryDlq } = require('../services/sync-outbox');
+    const id = parseInt(String(req.params.id), 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'invalid id' });
+    const ok = retryDlq(id);
+    res.json({ ok });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/** POST /api/sync/outbox/process — Force worker tick */
+router.post('/outbox/process', authMiddleware, async (_req: AuthRequest, res) => {
+  try {
+    const { processOutbox } = require('../services/sync-outbox');
+    const result = await processOutbox(50);
+    res.json(result);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/** GET /api/sync/conflicts — List pending manual conflicts */
+router.get('/conflicts', authMiddleware, (_req: AuthRequest, res) => {
+  try {
+    const { listManualConflicts } = require('../services/sync-conflict-resolver');
+    res.json({ items: listManualConflicts(50) });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/** POST /api/sync/conflicts/:id/resolve — Admin resolve a conflict */
+router.post('/conflicts/:id/resolve', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const { resolveManually } = require('../services/sync-conflict-resolver');
+    const id = parseInt(String(req.params.id), 10);
+    const { winner } = req.body || {};
+    if (!['mkt', 'ota'].includes(winner)) {
+      return res.status(400).json({ error: 'winner must be mkt or ota' });
+    }
+    const ok = resolveManually(id, winner, String(req.user?.email || 'admin'));
+    res.json({ ok });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 export { router as syncHubRouter, adminRouter as syncHubAdminRouter, docsRouter as syncHubDocsRouter };
