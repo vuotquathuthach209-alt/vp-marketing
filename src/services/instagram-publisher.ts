@@ -314,18 +314,46 @@ export function addIgAccount(input: {
   return Number(r.lastInsertRowid);
 }
 
-/** Verify IG account — test fetch profile. */
-export async function verifyIgAccount(igBusinessId: string, accessToken: string): Promise<{ valid: boolean; username?: string; error?: string }> {
+/** Verify IG account — check Business account type + permissions. */
+export async function verifyIgAccount(igBusinessId: string, accessToken: string): Promise<{
+  valid: boolean;
+  username?: string;
+  account_type?: string;
+  followers?: number;
+  media_count?: number;
+  error?: string;
+}> {
   try {
     const r = await axios.get(`${GRAPH}/${igBusinessId}`, {
       params: {
-        fields: 'username,biography,followers_count,media_count',
+        // v22: Add account_type để verify BUSINESS (bắt buộc cho publish API)
+        fields: 'username,biography,followers_count,media_count,ig_user_account_type,account_type',
         access_token: accessToken,
       },
       timeout: 10_000,
     });
-    return { valid: true, username: r.data?.username };
+
+    const data = r.data || {};
+    const accType = data.account_type || data.ig_user_account_type;
+    // v22: Only BUSINESS / MEDIA_CREATOR có thể publish via API
+    if (accType && !['BUSINESS', 'MEDIA_CREATOR'].includes(accType)) {
+      return {
+        valid: false,
+        username: data.username,
+        account_type: accType,
+        error: `account_type=${accType} không hỗ trợ publish. Cần BUSINESS hoặc MEDIA_CREATOR.`,
+      };
+    }
+
+    return {
+      valid: true,
+      username: data.username,
+      account_type: accType,
+      followers: data.followers_count,
+      media_count: data.media_count,
+    };
   } catch (e: any) {
-    return { valid: false, error: e?.response?.data?.error?.message || e?.message };
+    const errMsg = e?.response?.data?.error?.message || e?.message || 'unknown';
+    return { valid: false, error: redactSecrets(errMsg) };
   }
 }

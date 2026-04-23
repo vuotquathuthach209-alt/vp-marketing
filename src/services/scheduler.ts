@@ -400,6 +400,61 @@ export function startScheduler() {
     }
   });
 
+  // ── v22: FB Post Metrics puller — hourly insights ──
+  cron.schedule('5 * * * *', async () => {
+    try {
+      const { pullFbMetricsBatch } = require('./fb-metrics-puller');
+      const r = await pullFbMetricsBatch();
+      if (r.processed > 0) {
+        console.log(`[scheduler] fb-metrics: processed=${r.processed} updated=${r.updated}`);
+      }
+    } catch (e: any) {
+      console.error('[scheduler] fb-metrics error:', e?.message);
+    }
+  });
+
+  // ── v22: DLQ scan — hourly detect failed posts, move to DLQ + notify admin ──
+  cron.schedule('20 * * * *', () => {
+    try {
+      const { scanAndMoveFailures } = require('./posts-dlq');
+      const r = scanAndMoveFailures();
+      if (r.moved > 0) {
+        console.log(`[scheduler] dlq-scan: moved ${r.moved} failures to DLQ`);
+      }
+    } catch (e: any) {
+      console.error('[scheduler] dlq-scan error:', e?.message);
+    }
+  });
+
+  // ── v22: Weekly cleanup — old drafts, AI images, OCR receipts ──
+  // Chủ Nhật 3h sáng VN = 20h UTC Saturday
+  cron.schedule('0 20 * * 6', () => {
+    try {
+      const sixMonthsAgo = Date.now() - 180 * 24 * 3600_000;
+      const thirtyDaysAgo = Date.now() - 30 * 24 * 3600_000;
+
+      const oldDrafts = db.prepare(
+        `DELETE FROM news_post_drafts WHERE created_at < ? AND status IN ('rejected', 'draft', 'failed')`
+      ).run(sixMonthsAgo);
+
+      const oldRemix = db.prepare(
+        `DELETE FROM remix_drafts WHERE created_at < ? AND status IN ('draft', 'discarded', 'cancelled')`
+      ).run(sixMonthsAgo);
+
+      const oldAiImages = db.prepare(
+        `DELETE FROM media WHERE source LIKE 'ai-image%' AND created_at < ?`
+      ).run(thirtyDaysAgo);
+
+      const oldOcr = db.prepare(
+        `DELETE FROM ocr_receipts WHERE created_at < ? AND verification_status IN ('manual_rejected', 'low_ocr_confidence')`
+      ).run(sixMonthsAgo);
+
+      console.log(`[scheduler] weekly-cleanup: drafts=${oldDrafts.changes} remix=${oldRemix.changes} ai_images=${oldAiImages.changes} ocr=${oldOcr.changes}`);
+    } catch (e: any) {
+      console.error('[scheduler] cleanup error:', e?.message);
+    }
+  });
+
   // ── v18 Proactive Outreach: daily scan 9h VN + send every 30min ──
   // Scan daily at 2h UTC (9h VN) for opportunities
   cron.schedule('0 2 * * *', () => {

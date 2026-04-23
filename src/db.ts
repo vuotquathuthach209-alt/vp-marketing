@@ -988,7 +988,7 @@ CREATE TABLE IF NOT EXISTS page_crosspost_links (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source_page_id INTEGER NOT NULL,            -- Primary page (source of truth)
   target_page_id INTEGER NOT NULL,            -- Also publish here
-  delay_minutes INTEGER DEFAULT 10,           -- Không crosspost ngay tránh spam-detect
+  delay_minutes INTEGER DEFAULT 20,           -- v22: 20 min default (safer ToS)
   modify_caption TEXT,                        -- Optional: prefix/suffix modification
   active INTEGER DEFAULT 1,
   created_at INTEGER NOT NULL,
@@ -1030,6 +1030,29 @@ CREATE TABLE IF NOT EXISTS suggested_fb_groups (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sug_groups_cat ON suggested_fb_groups(active, category);
+
+-- v22: Dead Letter Queue cho posts fail quá 3 lần
+CREATE TABLE IF NOT EXISTS failed_posts_dlq (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_type TEXT NOT NULL,                    -- 'post' | 'news_draft' | 'remix_draft' | 'ig_publish' | 'crosspost'
+  source_id INTEGER NOT NULL,                   -- Reference row id
+  hotel_id INTEGER,
+  page_id INTEGER,
+  caption TEXT,
+  image_url TEXT,
+  last_error TEXT,
+  retry_count INTEGER DEFAULT 3,
+  first_failed_at INTEGER NOT NULL,
+  last_failed_at INTEGER NOT NULL,
+  moved_to_dlq_at INTEGER NOT NULL,
+  admin_notified INTEGER DEFAULT 0,
+  admin_notified_at INTEGER,
+  resolved INTEGER DEFAULT 0,
+  resolved_at INTEGER,
+  resolution_note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_dlq_source ON failed_posts_dlq(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_dlq_resolved ON failed_posts_dlq(resolved, moved_to_dlq_at DESC);
 `);
 
 // ═══════════════════════════════════════════════════════════

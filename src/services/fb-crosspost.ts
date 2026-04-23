@@ -12,6 +12,7 @@
 
 import { db } from '../db';
 import { publishText, publishImage } from './facebook';
+import { redactSecrets } from './text-utils';
 
 export interface CrossPostLink {
   id: number;
@@ -41,7 +42,7 @@ export function addCrossPostLink(input: {
      VALUES (?, ?, ?, ?, 1, ?)`
   ).run(
     input.source_page_id, input.target_page_id,
-    input.delay_minutes ?? 10,
+    input.delay_minutes ?? 20,  // v22: 20 min default (tránh FB spam-detect)
     input.modify_caption || null,
     now,
   );
@@ -59,7 +60,7 @@ export function scheduleCrossPost(sourcePageId: number, opts: {
   const scheduled: any[] = [];
 
   for (const link of links) {
-    const delayMs = (link.delay_minutes || 10) * 60_000;
+    const delayMs = (link.delay_minutes || 20) * 60_000;  // v22: default 20 min
     const scheduledAt = now + delayMs;
 
     // Apply caption modification if defined
@@ -138,6 +139,6 @@ export async function publishToTargetPage(targetPageId: number, opts: {
     return { ok: true, fb_post_id: fbPostId };
   } catch (e: any) {
     const msg = e?.response?.data?.error?.message || e?.message || 'unknown';
-    return { ok: false, error: msg };
+    return { ok: false, error: redactSecrets(msg) };   // v22 redact tokens
   }
 }
