@@ -124,6 +124,7 @@ function switchTab(tab) {
   if (tab === 'agent-audit') { loadAgentAudit(); loadAgentToggle(); }
   if (tab === 'bot-control') loadBotStatus();
   if (tab === 'funnel') loadFunnel();
+  if (tab === 'funnel-admin') loadFunnelAnalytics();    // v24: split from 'funnel'
   if (tab === 'intents') loadIntents();
   if (tab === 'revenue') loadRevenue();
   if (tab === 'knowledge-sync') loadKnowledgeSync();
@@ -137,11 +138,71 @@ function switchTab(tab) {
   if (tab === 'channels') loadChannels();
   if (tab === 'otadb') loadOtaConfig();
   if (tab === 'otapipeline') loadOtaPipeline();
-  if (tab === 'funnel') loadFunnelAnalytics();
+
+  // v24: Auto-expand the group containing active tab (for collapsed groups)
+  const activeBtn = document.querySelector(`.nav-btn[data-tab="${tab}"]`);
+  if (activeBtn) {
+    const group = activeBtn.closest('.nav-group');
+    if (group && group.classList.contains('collapsed')) {
+      toggleNavGroup(group, false);
+    }
+  }
 }
 document.querySelectorAll('.nav-btn').forEach((b) => {
   b.addEventListener('click', () => switchTab(b.dataset.tab));
 });
+
+// ══════════════════════════════════════════════════
+// v24 Sidebar IA — collapsible groups + localStorage persist
+// ══════════════════════════════════════════════════
+const NAV_STATE_KEY = 'vp-nav-collapsed-groups';
+
+function getCollapsedGroups() {
+  try { return JSON.parse(localStorage.getItem(NAV_STATE_KEY) || '[]'); }
+  catch { return []; }
+}
+function setCollapsedGroups(arr) {
+  try { localStorage.setItem(NAV_STATE_KEY, JSON.stringify(arr)); } catch {}
+}
+function toggleNavGroup(group, forceCollapse) {
+  const id = group.dataset.group;
+  const collapsed = typeof forceCollapse === 'boolean'
+    ? forceCollapse
+    : !group.classList.contains('collapsed');
+  group.classList.toggle('collapsed', collapsed);
+  const arr = getCollapsedGroups().filter(x => x !== id);
+  if (collapsed) arr.push(id);
+  setCollapsedGroups(arr);
+}
+function initNavGroups() {
+  const collapsed = new Set(getCollapsedGroups());
+  document.querySelectorAll('.nav-group').forEach(group => {
+    const id = group.dataset.group;
+    if (collapsed.has(id)) group.classList.add('collapsed');
+    const header = group.querySelector('.nav-group-header');
+    if (header) {
+      header.addEventListener('click', () => toggleNavGroup(group));
+    }
+  });
+
+  // v24: propagate badge state to group header — show dot if any child has active badge
+  const updateGroupBadges = () => {
+    document.querySelectorAll('.nav-group').forEach(group => {
+      const anyBadge = Array.from(group.querySelectorAll('.nav-btn [class*="badge"]'))
+        .some(b => !b.classList.contains('hidden'));
+      group.classList.toggle('has-badge', anyBadge);
+    });
+  };
+  updateGroupBadges();
+  // Re-check every 30s (badges update from pollBadges)
+  setInterval(updateGroupBadges, 30_000);
+}
+// Initialize after DOM ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initNavGroups);
+} else {
+  initNavGroups();
+}
 
 // ====== Pages (select dropdown) ======
 async function loadPages() {

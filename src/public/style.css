@@ -102,6 +102,53 @@ aside nav > div {
   font-weight: 700 !important;
 }
 
+/* ═══════════════════════════════════════════════
+   v24 Sidebar IA — collapsible groups
+   ═══════════════════════════════════════════════ */
+.nav-group { margin-top: 2px; }
+
+.nav-group-header {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: color .15s ease, background-color .15s ease;
+  border-radius: 6px;
+}
+.nav-group-header:hover {
+  color: #cbd5e1 !important;
+  background: rgba(255,255,255,0.02);
+}
+.nav-group-header .nav-caret {
+  transition: transform .2s ease;
+  opacity: .5;
+}
+/* When group is collapsed, rotate caret */
+.nav-group.collapsed .nav-caret { transform: rotate(-90deg); }
+.nav-group.collapsed .nav-group-body {
+  max-height: 0;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+  margin-top: 0;
+}
+.nav-group-body {
+  max-height: 2000px;
+  opacity: 1;
+  transition: max-height .25s ease, opacity .15s ease;
+  overflow: hidden;
+}
+
+/* Badges next to group header when collapsed — show dot if any child has badge */
+.nav-group.has-badge .nav-group-header::after {
+  content: '';
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #f59e0b;
+  margin-left: auto;
+  box-shadow: 0 0 6px rgba(245,158,11,0.6);
+}
+.nav-group.collapsed.has-badge .nav-group-header::after { display: block; }
+.nav-group:not(.collapsed).has-badge .nav-group-header::after { display: none; }
+
 /* Logout button */
 #logout-btn {
   border-top: 1px solid rgba(255,255,255,0.06);
