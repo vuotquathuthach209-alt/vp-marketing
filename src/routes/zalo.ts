@@ -188,6 +188,120 @@ router.post('/disable', (req: AuthRequest, res) => {
   res.json({ ok: true });
 });
 
+/** v22: Set Zalo App credentials (saved in settings table) + immediate token refresh.
+ *  Call endpoint này sau khi có App ID + App Secret từ Zalo Developer Console.
+ *  Body: { app_id: "1234...", app_secret: "abc..." }
+ *  Response: { set: true, refresh_results: [...] }
+ */
+router.post('/set-credentials', async (req: AuthRequest, res) => {
+  try {
+    const { app_id, app_secret } = req.body || {};
+    if (!app_id || !app_secret) {
+      return res.status(400).json({ error: 'app_id + app_secret required (lấy từ Zalo Developer Console)' });
+    }
+
+    // Save vào settings table
+    const { setSetting } = require('../db');
+    setSetting('zalo_app_id', String(app_id));
+    setSetting('zalo_app_secret', String(app_secret));
+
+    // Trigger refresh cho tất cả OAs của hotel
+    const hotelId = getHotelId(req);
+    const oas = listZaloForHotel(hotelId);
+    const refreshResults: any[] = [];
+
+    for (const oa of oas) {
+      try {
+        const refreshed = await refreshZaloToken(oa);
+        refreshResults.push({
+          oa_id: oa.oa_id,
+          oa_name: oa.oa_name,
+          refreshed,
+        });
+      } catch (e: any) {
+        refreshResults.push({
+          oa_id: oa.oa_id,
+          oa_name: oa.oa_name,
+          refreshed: false,
+          error: e?.message || 'unknown',
+        });
+      }
+    }
+
+    res.json({
+      ok: true,
+      credentials_saved: true,
+      oas_processed: oas.length,
+      refresh_results: refreshResults,
+      hint: refreshResults.every((r: any) => r.refreshed)
+        ? '✅ All tokens refreshed! Bot should respond now.'
+        : '⚠️ Some refresh failed — check credentials or re-authorize via OAuth.',
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** v22: Force refresh tất cả Zalo OA tokens (manual trigger). */
+router.post('/force-refresh', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const oas = listZaloForHotel(hotelId);
+    const results: any[] = [];
+    for (const oa of oas) {
+      const refreshed = await refreshZaloToken(oa).catch((e: any) => {
+        console.error('[zalo] force-refresh fail:', e?.message);
+        return false;
+      });
+      results.push({
+        oa_id: oa.oa_id,
+        oa_name: oa.oa_name,
+        refreshed,
+      });
+    }
+    res.json({ ok: true, results });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** v22: Debug endpoint — show token expiry status cho all OAs. */
+router.get('/token-status', (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const { getSetting } = require('../db');
+    const appId = getSetting('zalo_app_id');
+    const appSecret = getSetting('zalo_app_secret');
+
+    const rows = db.prepare(
+      `SELECT oa_id, oa_name, token_expires_at, LENGTH(access_token) as token_len,
+              LENGTH(refresh_token) as refresh_len, enabled
+       FROM zalo_oa WHERE hotel_id = ?`
+    ).all(hotelId) as any[];
+
+    const now = Date.now();
+    const items = rows.map((r: any) => ({
+      oa_id: r.oa_id,
+      oa_name: r.oa_name,
+      token_len: r.token_len,
+      refresh_token_present: !!r.refresh_len,
+      expires_at: r.token_expires_at ? new Date(r.token_expires_at).toISOString() : null,
+      expired: r.token_expires_at ? r.token_expires_at < now : null,
+      hours_until_expiry: r.token_expires_at ? +((r.token_expires_at - now) / 3600_000).toFixed(1) : null,
+      enabled: !!r.enabled,
+    }));
+
+    res.json({
+      credentials_set: !!(appId && appSecret),
+      app_id_preview: appId ? appId.slice(0, 8) + '...' : null,
+      app_secret_preview: appSecret ? '***' : null,
+      oas: items,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 /** Test OA connection + probe tier/send capability */
 router.post('/test', async (req: AuthRequest, res) => {
   const hotelId = getHotelId(req);

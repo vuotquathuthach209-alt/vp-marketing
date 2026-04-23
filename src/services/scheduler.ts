@@ -525,14 +525,35 @@ export function startScheduler() {
     }
   });
 
-  // Zalo OA token refresh — Zalo tokens live ~25h, refresh mỗi 20h cho safe
-  cron.schedule('0 */20 * * *', async () => {
+  // Zalo OA token refresh — v22: cron mỗi 6h (thay vì 20h) + notify admin nếu fail
+  //                              Trước đó 20h nhưng nếu miss 1 cycle → 40h → token expire (~25h life).
+  cron.schedule('0 */6 * * *', async () => {
     try {
       const { refreshZaloToken } = require('./zalo');
+      const { getSetting } = require('../db');
+      const appId = getSetting('zalo_app_id');
+      const appSecret = getSetting('zalo_app_secret');
+
+      if (!appId || !appSecret) {
+        console.warn('[scheduler] zalo-refresh SKIP — missing credentials in settings (zalo_app_id + zalo_app_secret). Use POST /api/zalo/set-credentials');
+        // Notify admin 1 lần/ngày
+        const today = new Date().toISOString().slice(0, 10);
+        const notifyKey = `zalo_missing_creds_${today}`;
+        if (!getSetting(notifyKey)) {
+          try {
+            const { notifyAll } = require('./telegram');
+            notifyAll(`🚨 *Zalo bot không hoạt động*\nThiếu zalo_app_id + zalo_app_secret trong settings.\n→ Call POST /api/zalo/set-credentials với App ID + App Secret từ Zalo Developer Console.`).catch(() => {});
+            const { setSetting } = require('../db');
+            setSetting(notifyKey, '1');
+          } catch {}
+        }
+        return;
+      }
+
       const rows = db.prepare(`SELECT * FROM zalo_oa WHERE enabled = 1`).all() as any[];
       let refreshed = 0, failed = 0;
+      const failedOAs: any[] = [];
       for (const row of rows) {
-        // Decrypt tokens từ row (refreshZaloToken expect raw ZaloOA with decrypted tokens)
         const { decrypt } = require('./crypto');
         const oa = {
           ...row,
@@ -542,10 +563,26 @@ export function startScheduler() {
         };
         const ok = await refreshZaloToken(oa);
         if (ok) refreshed++;
-        else failed++;
+        else {
+          failed++;
+          failedOAs.push({ oa_id: row.oa_id, name: row.oa_name });
+        }
       }
       if (rows.length > 0) {
         console.log(`[scheduler] zalo-refresh: ${refreshed} OK, ${failed} failed (of ${rows.length})`);
+
+        // Notify admin nếu có fail
+        if (failed > 0) {
+          try {
+            const { notifyAll } = require('./telegram');
+            notifyAll(
+              `⚠️ *Zalo token refresh fail*\n` +
+              `${failed}/${rows.length} OA(s) failed to refresh:\n` +
+              failedOAs.map((o: any) => `  • ${o.name || o.oa_id}`).join('\n') +
+              `\n→ Có thể refresh_token cũng hết hạn (> 3 tháng). Cần re-authorize qua Zalo OAuth.`
+            ).catch(() => {});
+          } catch {}
+        }
       }
     } catch (e: any) {
       console.error('[scheduler] zalo-refresh error:', e?.message);
