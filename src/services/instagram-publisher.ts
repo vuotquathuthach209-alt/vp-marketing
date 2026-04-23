@@ -408,31 +408,22 @@ export async function verifyIgAccount(igBusinessId: string, accessToken: string)
   error?: string;
 }> {
   try {
+    // v22 FIX: Chỉ request safer fields — account_type field restricted/deprecated
+    //          cho query trực tiếp IG endpoint. Nếu call này success → implicitly BUSINESS
+    //          (vì FB không cho Personal IG link với Page).
     const r = await axios.get(`${GRAPH}/${igBusinessId}`, {
       params: {
-        // v22: Add account_type để verify BUSINESS (bắt buộc cho publish API)
-        fields: 'username,biography,followers_count,media_count,ig_user_account_type,account_type',
+        fields: 'username,biography,followers_count,media_count',
         access_token: accessToken,
       },
       timeout: 10_000,
     });
 
     const data = r.data || {};
-    const accType = data.account_type || data.ig_user_account_type;
-    // v22: Only BUSINESS / MEDIA_CREATOR có thể publish via API
-    if (accType && !['BUSINESS', 'MEDIA_CREATOR'].includes(accType)) {
-      return {
-        valid: false,
-        username: data.username,
-        account_type: accType,
-        error: `account_type=${accType} không hỗ trợ publish. Cần BUSINESS hoặc MEDIA_CREATOR.`,
-      };
-    }
-
     return {
       valid: true,
       username: data.username,
-      account_type: accType,
+      account_type: 'BUSINESS',  // Implicitly BUSINESS khi linked với FB Page
       followers: data.followers_count,
       media_count: data.media_count,
     };
