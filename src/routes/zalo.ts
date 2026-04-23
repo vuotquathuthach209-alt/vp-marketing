@@ -82,11 +82,11 @@ zaloWebhookRouter.post('/webhook/zalo', async (req, res) => {
       try {
         await zaloSendText(oa, userId,
           `Xin chào! 👋 Cảm ơn anh/chị đã quan tâm ${oa.oa_name || 'Sonder'}.\n\n` +
-          `Sonder là chuỗi khách sạn & căn hộ chuẩn 3★ tại HCM (gần sân bay, quận 1, Bình Thạnh). ` +
+          `Sonder là hệ thống tư vấn phòng lưu trú tại HCM — hỗ trợ tìm khách sạn, homestay, căn hộ dịch vụ phù hợp nhu cầu. ` +
           `Anh/chị cần hỗ trợ:\n` +
-          `• 🏨 Đặt phòng / check giá\n` +
-          `• 📍 Xem vị trí khách sạn\n` +
-          `• 🛏 Tư vấn loại phòng\n\n` +
+          `• 🏨 Tư vấn chỗ ở phù hợp / check giá / còn phòng\n` +
+          `• 📍 Tìm chỗ theo khu vực + ngân sách\n` +
+          `• 💳 Hỗ trợ đặt phòng nhanh\n\n` +
           `Nhắn em để được hỗ trợ ngay ạ!`
         );
       } catch (e: any) { console.error('[zalo] follow welcome fail:', e?.message); }

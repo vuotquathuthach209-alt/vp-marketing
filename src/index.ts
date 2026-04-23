@@ -254,6 +254,27 @@ app.get('*', (req, res) => {
 app.listen(config.port, () => {
   console.log(`🚀 Marketing Auto chạy trên http://localhost:${config.port}`);
   console.log(`   TZ: ${config.tz}`);
+
+  // v24: Brand positioning migration — force-remove stale "chuỗi khách sạn" rows
+  //       rồi re-seed với positioning đúng ("hệ thống tư vấn phòng lưu trú")
+  try {
+    const { migrateBrandPositioning } = require('./services/brand-positioning-migrator');
+    const m = migrateBrandPositioning();
+    if (m.updated_templates > 0 || m.updated_wiki > 0) {
+      // Re-seed sau khi đã remove stale rows
+      try {
+        const { seedReplyTemplates } = require('./services/reply-template-seed');
+        const r1 = seedReplyTemplates();
+        console.log(`[boot] reply templates re-seeded: ${r1.created} created, ${r1.skipped} skipped`);
+      } catch (e: any) { console.warn('[boot] template re-seed fail:', e?.message); }
+      try {
+        const { seedWikiDefaults } = require('./scripts/seed-wiki');
+        const r2 = seedWikiDefaults();
+        console.log(`[boot] wiki re-seeded: ${JSON.stringify(r2)}`);
+      } catch (e: any) { console.warn('[boot] wiki re-seed fail:', e?.message); }
+    }
+  } catch (e: any) { console.warn('[boot] brand migrator fail:', e?.message); }
+
   startScheduler();
   startTelegramBot();
 });

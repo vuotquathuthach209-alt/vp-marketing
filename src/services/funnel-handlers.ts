@@ -191,7 +191,8 @@ export function handlePropertyTypeAsk(state: ConversationState): HandlerResult {
     } catch {}
 
     // v23: Gate — greeting only if NOT recently sent to this sender
-    const fallbackGreeting = `Chào anh/chị! 👋 Em là trợ lý Sonder — nền tảng đặt phòng trực tuyến.`;
+    // v24: Positioning — Sonder là HỆ THỐNG TƯ VẤN phòng lưu trú, không phải "chuỗi khách sạn"
+    const fallbackGreeting = `Chào anh/chị! 👋 Em là trợ lý tư vấn Sonder — hệ thống hỗ trợ tìm phòng lưu trú phù hợp ạ.`;
     const candidateGreeting = greetingText || fallbackGreeting;
     const okToGreet = shouldSendGreeting(senderId, candidateGreeting);
 

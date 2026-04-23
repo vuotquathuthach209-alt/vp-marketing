@@ -10,6 +10,11 @@ interface VariantSeed {
   variants: Array<{ name: string; content: string; weight?: number }>;
 }
 
+// v24: BRAND POSITIONING CORRECTION (user feedback):
+//   Sonder KHÔNG PHẢI "chuỗi khách sạn" — mà là "hệ thống tư vấn phòng lưu trú"
+//   (booking advisory platform, không phải hotel chain).
+//   Bot tư vấn cho khách nhiều chỗ (kể cả chỗ không phải thuộc Sonder), không
+//   tự xưng là chủ khách sạn.
 const TEMPLATE_VARIANTS: VariantSeed[] = [
   // 1. Greeting cho khách mới (first inbox)
   {
@@ -17,15 +22,15 @@ const TEMPLATE_VARIANTS: VariantSeed[] = [
     variants: [
       {
         name: 'A', // Warm + CTA rõ
-        content: 'Chào anh/chị! 👋 Em là Lan — tư vấn viên Sonder.\n\nEm có thể giúp gì ạ?\n  🏨 Check giá phòng\n  📍 Tư vấn chọn chỗ\n  💳 Đặt phòng ngay',
+        content: 'Chào anh/chị! 👋 Em là trợ lý tư vấn Sonder.\n\nEm có thể giúp gì ạ?\n  🏨 Tư vấn phòng lưu trú phù hợp\n  📍 Check giá + còn phòng\n  💳 Hỗ trợ đặt phòng',
       },
       {
         name: 'B', // Ngắn gọn
         content: 'Dạ Sonder em nghe! 🌿 Anh/chị cần em hỗ trợ gì ạ?',
       },
       {
-        name: 'C', // Product-first
-        content: 'Chào anh/chị! 👋\n\nSonder là chuỗi 7 chỗ ở tại HCM (gần sân bay, quận 1, Bình Thạnh). Phòng từ **550k/đêm**, CHDV thuê tháng từ 3.6tr.\n\nAnh/chị muốn em tư vấn cụ thể chỗ nào ạ?',
+        name: 'C', // Positioning-first (v24 fix)
+        content: 'Chào anh/chị! 👋\n\nSonder là hệ thống tư vấn phòng lưu trú — em hỗ trợ anh/chị tìm chỗ ở phù hợp (khách sạn, homestay, căn hộ dịch vụ) tại TP.HCM.\n\nAnh/chị cần em tư vấn gì ạ?',
       },
     ],
   },
