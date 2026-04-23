@@ -21,6 +21,8 @@
 
 import axios from 'axios';
 import { db } from '../db';
+import { truncateByCodePoints, redactSecrets } from './text-utils';
+import { isSafeUrl } from './news-ingest';
 
 const GRAPH = 'https://graph.facebook.com/v18.0';
 
@@ -71,7 +73,28 @@ export interface PublishImageInput {
 }
 
 export async function publishImage(input: PublishImageInput): Promise<{ ok: boolean; ig_media_id?: string; creation_id?: string; error?: string }> {
+  // v22: URL safety + image validation
+  const urlCheck = isSafeUrl(input.image_url);
+  if (!urlCheck.safe) {
+    return { ok: false, error: `unsafe_url:${urlCheck.reason}` };
+  }
   try {
+    // Validate image size + content-type via HEAD (tránh upload file quá lớn hoặc SVG nguy hiểm)
+    try {
+      const headResp = await axios.head(input.image_url, { timeout: 8_000, maxRedirects: 3 });
+      const size = parseInt(headResp.headers['content-length'] || '0', 10);
+      const ctype = String(headResp.headers['content-type'] || '').toLowerCase();
+      if (size > 8 * 1024 * 1024) {
+        return { ok: false, error: `image_too_large:${(size / 1024 / 1024).toFixed(1)}MB > 8MB (IG limit)` };
+      }
+      if (ctype && !['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].some(t => ctype.includes(t))) {
+        return { ok: false, error: `invalid_content_type:${ctype}` };
+      }
+    } catch (headErr: any) {
+      // HEAD có thể fail (không phải server nào cũng support) — log + proceed
+      console.warn('[ig-publisher] HEAD check skip:', headErr?.message?.slice(0, 100));
+    }
+
     // Step 1: Create container
     const createResp = await axios.post(
       `${GRAPH}/${input.ig_business_id}/media`,
@@ -79,7 +102,7 @@ export async function publishImage(input: PublishImageInput): Promise<{ ok: bool
       {
         params: {
           image_url: input.image_url,
-          caption: input.caption.slice(0, 2200),
+          caption: truncateByCodePoints(input.caption, 2200),   // v22 UTF-8 safe
           access_token: input.access_token,
         },
         timeout: 45_000,
@@ -115,8 +138,9 @@ export async function publishImage(input: PublishImageInput): Promise<{ ok: bool
     return { ok: true, ig_media_id: mediaId, creation_id: creationId };
   } catch (e: any) {
     const errMsg = e?.response?.data?.error?.message || e?.message || 'unknown';
-    console.warn('[ig-publisher] fail:', errMsg);
-    return { ok: false, error: errMsg };
+    const safe = redactSecrets(errMsg);  // v22: redact tokens
+    console.warn('[ig-publisher] fail:', safe);
+    return { ok: false, error: safe };
   }
 }
 

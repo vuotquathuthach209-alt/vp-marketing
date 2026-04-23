@@ -47,7 +47,15 @@ async function processDuePosts() {
     .all(now) as PostRow[];
 
   for (const post of due) {
-    db.prepare(`UPDATE posts SET status = 'publishing' WHERE id = ?`).run(post.id);
+    // v22 FIX: Atomic claim — UPDATE only if status still 'scheduled'.
+    // Prevents race condition when 2 workers/cron run concurrently.
+    const claim = db.prepare(
+      `UPDATE posts SET status = 'publishing' WHERE id = ? AND status = 'scheduled'`
+    ).run(post.id);
+    if (claim.changes === 0) {
+      console.log(`[scheduler] lost claim on post ${post.id} (another worker got it)`);
+      continue;
+    }
 
     try {
       const page = db

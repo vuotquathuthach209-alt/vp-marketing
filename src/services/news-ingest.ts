@@ -117,20 +117,60 @@ export function parseRSS(xml: string): RawArticle[] {
    OG IMAGE EXTRACTOR (fire-and-forget)
    ═══════════════════════════════════════════ */
 
+/** v22 FIX: SSRF protection — check URL không trỏ vào private IP / localhost. */
+export function isSafeUrl(url: string): { safe: boolean; reason?: string } {
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return { safe: false, reason: `invalid_protocol:${parsed.protocol}` };
+    }
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'localhost' || host === '0.0.0.0' ||
+        /^127\./.test(host) ||
+        /^10\./.test(host) ||
+        /^192\.168\./.test(host) ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+        /^169\.254\./.test(host) ||
+        /^fe80::/i.test(host) ||
+        /^fc00::/i.test(host) ||
+        host === '::1') {
+      return { safe: false, reason: `private_ip:${host}` };
+    }
+    return { safe: true };
+  } catch {
+    return { safe: false, reason: 'invalid_url' };
+  }
+}
+
 /** Fetch article HTML → extract og:image. Dùng khi RSS không có image. */
 export async function fetchOgImage(url: string): Promise<string | undefined> {
+  // v22 SSRF protection
+  const check = isSafeUrl(url);
+  if (!check.safe) {
+    console.warn(`[news-ingest] fetchOgImage blocked: ${check.reason} url=${url.slice(0, 80)}`);
+    return undefined;
+  }
   try {
     const resp = await axios.get(url, {
       timeout: 10_000,
       headers: { 'User-Agent': USER_AGENT, Accept: 'text/html,*/*' },
       maxContentLength: 2_000_000,  // 2MB max
       responseType: 'text',
+      maxRedirects: 3,  // v22: Prevent redirect loops
     });
     const html = String(resp.data || '').slice(0, 50_000);  // chỉ đọc đầu
     const og = html.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i)
       || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i)
       || html.match(/<meta[^>]*name=["']twitter:image["'][^>]*content=["']([^"']+)["']/i);
-    if (og) return og[1];
+    if (og) {
+      // v22: Verify og:image URL itself is safe
+      const imgCheck = isSafeUrl(og[1]);
+      if (!imgCheck.safe) {
+        console.warn(`[news-ingest] og:image blocked: ${imgCheck.reason}`);
+        return undefined;
+      }
+      return og[1];
+    }
   } catch { /* timeout / 4xx / 5xx → null */ }
   return undefined;
 }

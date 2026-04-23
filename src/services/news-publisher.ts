@@ -60,6 +60,39 @@ async function publishWithExternalUrl(
   return { fbPostId: resp.data.post_id || resp.data.id };
 }
 
+/** v22 FIX: Retry wrapper với exponential backoff.
+ *  Retries on 429 (rate limit), 500-503 (server error), network timeout.
+ *  Skip retry on 400 (bad request), 401/403 (auth). */
+async function withRetry<T>(fn: () => Promise<T>, context: string): Promise<T> {
+  let lastError: any;
+  for (let attempt = 0; attempt < RETRY_DELAYS_MS.length + 1; attempt++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      lastError = e;
+      const status = e?.response?.status;
+      const code = e?.code;
+
+      // Non-retryable errors
+      if (status === 400 || status === 401 || status === 403 || status === 404) {
+        throw e;
+      }
+
+      if (attempt >= RETRY_DELAYS_MS.length) break;
+
+      // Retryable: rate limit, server error, network
+      const retryable = status === 429 || (status >= 500 && status < 600) ||
+                        code === 'ECONNRESET' || code === 'ETIMEDOUT' || code === 'ENOTFOUND';
+      if (!retryable) throw e;
+
+      const delay = RETRY_DELAYS_MS[attempt];
+      console.log(`[news-publish retry] ${context} attempt ${attempt + 1} failed (${status || code}), retry after ${delay}ms`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw lastError;
+}
+
 export async function publishDraft(draftId: number): Promise<{ ok: boolean; fb_post_id?: string; error?: string }> {
   const draft = db.prepare(
     `SELECT d.*, a.source FROM news_post_drafts d
@@ -81,26 +114,35 @@ export async function publishDraft(draftId: number): Promise<{ ok: boolean; fb_p
   if (!message) return { ok: false, error: 'empty message' };
 
   try {
+    // v22: Wrap ALL FB API calls trong withRetry (exponential backoff on 429/5xx)
     let fbPostId: string;
     if (draft.image_url && /^https?:\/\//.test(draft.image_url)) {
-      // External og:image URL — FB fetch
-      const r = await publishWithExternalUrl(page.fb_page_id, page.access_token, message, draft.image_url);
+      const r = await withRetry(
+        () => publishWithExternalUrl(page.fb_page_id, page.access_token, message, draft.image_url),
+        `draft#${draftId}/external_url`,
+      );
       fbPostId = r.fbPostId;
     } else if (draft.image_url && draft.image_url.startsWith('/media/')) {
-      // Local AI image
       const filename = draft.image_url.replace('/media/', '');
       const filePath = path.join(config.mediaDir, filename);
       if (!fs.existsSync(filePath)) {
-        // Fallback to text-only
-        const r = await publishText(page.fb_page_id, page.access_token, message);
+        const r = await withRetry(
+          () => publishText(page.fb_page_id, page.access_token, message),
+          `draft#${draftId}/text_fallback`,
+        );
         fbPostId = r.fbPostId;
       } else {
-        const r = await publishImage(page.fb_page_id, page.access_token, message, filePath);
+        const r = await withRetry(
+          () => publishImage(page.fb_page_id, page.access_token, message, filePath),
+          `draft#${draftId}/local_image`,
+        );
         fbPostId = r.fbPostId;
       }
     } else {
-      // No image
-      const r = await publishText(page.fb_page_id, page.access_token, message);
+      const r = await withRetry(
+        () => publishText(page.fb_page_id, page.access_token, message),
+        `draft#${draftId}/text_only`,
+      );
       fbPostId = r.fbPostId;
     }
 
