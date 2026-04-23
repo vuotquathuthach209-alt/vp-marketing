@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VP MKT Admin Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.13.0/dist/cdn.min.js"></script>
+  <style>
+    .tile { transition: all 0.2s; }
+    .tile:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.08); }
+    .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #3B82F6; border-radius: 50%;
+               width: 24px; height: 24px; animation: spin 1s linear infinite; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+  </style>
+</head>
+<body class="bg-slate-50">
+<div x-data="dashboard()" x-init="loadAll()" class="max-w-7xl mx-auto p-6">
+
+  <!-- Header -->
+  <header class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-slate-800">📊 VP MKT Dashboard</h1>
+      <p class="text-sm text-slate-500">Real-time bot performance + revenue attribution</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <select x-model="period" @change="loadAll()" class="px-3 py-1.5 rounded-lg border border-slate-300 text-sm">
+        <option value="7">7 ngày</option>
+        <option value="30" selected>30 ngày</option>
+        <option value="90">90 ngày</option>
+      </select>
+      <button @click="loadAll()" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">🔄 Refresh</button>
+    </div>
+  </header>
+
+  <!-- Loading state -->
+  <div x-show="loading" class="flex items-center gap-2 text-slate-600">
+    <div class="spinner"></div>
+    <span>Loading data...</span>
+  </div>
+
+  <!-- KPI Tiles -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    <div class="tile bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+      <div class="text-xs uppercase tracking-wide text-slate-500">Revenue</div>
+      <div class="text-2xl font-bold text-emerald-600 mt-1" x-text="fmtVnd(revenue.total_revenue_vnd)"></div>
+      <div class="text-xs text-slate-500 mt-1" x-text="`${revenue.bookings || 0} bookings`"></div>
+    </div>
+    <div class="tile bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+      <div class="text-xs uppercase tracking-wide text-slate-500">Avg Order Value</div>
+      <div class="text-2xl font-bold text-blue-600 mt-1" x-text="fmtVnd(revenue.avg_order_value_vnd)"></div>
+      <div class="text-xs text-slate-500 mt-1">per booking</div>
+    </div>
+    <div class="tile bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+      <div class="text-xs uppercase tracking-wide text-slate-500">Bot Replies</div>
+      <div class="text-2xl font-bold text-slate-800 mt-1" x-text="feedback.totals?.replies ?? 0"></div>
+      <div class="text-xs text-slate-500 mt-1" x-text="`${((feedback.totals?.conversion_rate || 0) * 100).toFixed(1)}% conversion`"></div>
+    </div>
+    <div class="tile bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+      <div class="text-xs uppercase tracking-wide text-slate-500">Leads Captured</div>
+      <div class="text-2xl font-bold text-purple-600 mt-1" x-text="feedback.totals?.conversions ?? 0"></div>
+      <div class="text-xs text-slate-500 mt-1">converted_to_lead</div>
+    </div>
+    <div class="tile bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+      <div class="text-xs uppercase tracking-wide text-slate-500">Outreach Queued</div>
+      <div class="text-2xl font-bold text-amber-600 mt-1" x-text="outreach.queued ?? 0"></div>
+      <div class="text-xs text-slate-500 mt-1" x-text="`${outreach.sent || 0} sent, ${outreach.converted || 0} converted`"></div>
+    </div>
+    <div class="tile bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+      <div class="text-xs uppercase tracking-wide text-slate-500">Active Audiences</div>
+      <div class="text-2xl font-bold text-indigo-600 mt-1" x-text="audiences.length"></div>
+      <div class="text-xs text-slate-500 mt-1" x-text="`${audiences.reduce((s,a)=>s+a.member_count,0)} total members`"></div>
+    </div>
+    <div class="tile bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+      <div class="text-xs uppercase tracking-wide text-slate-500">A/B Experiments</div>
+      <div class="text-2xl font-bold text-pink-600 mt-1" x-text="experiments.running_count ?? 0"></div>
+      <div class="text-xs text-slate-500 mt-1" x-text="`${experiments.won_count || 0} winners selected`"></div>
+    </div>
+    <div class="tile bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+      <div class="text-xs uppercase tracking-wide text-slate-500">Promos Available</div>
+      <div class="text-2xl font-bold text-teal-600 mt-1" x-text="promos.length"></div>
+      <div class="text-xs text-slate-500 mt-1" x-text="`${promos.reduce((s,p)=>s+p.used_count,0)} uses`"></div>
+    </div>
+  </div>
+
+  <!-- Revenue Daily Chart + Funnel -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+    <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
+      <h2 class="text-base font-semibold text-slate-700 mb-3">💰 Revenue Daily Trend</h2>
+      <canvas id="revenueChart" height="200"></canvas>
+    </div>
+    <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
+      <h2 class="text-base font-semibold text-slate-700 mb-3">📉 Funnel Drop-off (stages)</h2>
+      <canvas id="funnelChart" height="200"></canvas>
+    </div>
+  </div>
+
+  <!-- Top performers + Attribution -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+    <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
+      <h2 class="text-base font-semibold text-slate-700 mb-3">🏆 Top Reply Sources (conversion)</h2>
+      <div class="space-y-2">
+        <template x-for="s in feedback.top_performing_sources || []" :key="s.reply_source">
+          <div class="flex items-center justify-between text-sm">
+            <span class="font-mono text-slate-700" x-text="s.reply_source"></span>
+            <div class="flex items-center gap-3">
+              <span class="text-xs text-slate-500" x-text="`${s.converted}/${s.total}`"></span>
+              <span class="text-emerald-600 font-semibold" x-text="`${(s.conversion_rate*100).toFixed(0)}%`"></span>
+            </div>
+          </div>
+        </template>
+        <div x-show="(feedback.top_performing_sources || []).length === 0" class="text-sm text-slate-400 italic">Chưa có data</div>
+      </div>
+    </div>
+    <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
+      <h2 class="text-base font-semibold text-slate-700 mb-3">💎 Revenue Attribution by Source</h2>
+      <div class="space-y-2">
+        <template x-for="a in attribution.slice(0, 8)" :key="a.touch_id">
+          <div class="flex items-center justify-between text-sm">
+            <div class="flex-1 truncate">
+              <span class="text-xs text-slate-400" x-text="`[${a.touch_type}]`"></span>
+              <span class="font-mono text-slate-700 ml-2" x-text="a.touch_value"></span>
+            </div>
+            <div class="text-right ml-3">
+              <div class="text-emerald-600 font-semibold" x-text="fmtVnd(a.attributed_revenue_vnd)"></div>
+              <div class="text-xs text-slate-500" x-text="`${a.bookings_attributed} bookings`"></div>
+            </div>
+          </div>
+        </template>
+        <div x-show="attribution.length === 0" class="text-sm text-slate-400 italic">Chưa có booking nào được attribute</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Audiences + A/B tests -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+    <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
+      <h2 class="text-base font-semibold text-slate-700 mb-3">🎯 Marketing Audiences</h2>
+      <div class="space-y-2">
+        <template x-for="a in audiences" :key="a.audience_name">
+          <div class="flex items-center justify-between text-sm p-2 rounded hover:bg-slate-50">
+            <div>
+              <div class="font-medium text-slate-700" x-text="a.display_name"></div>
+              <div class="text-xs text-slate-400 font-mono" x-text="a.audience_name"></div>
+            </div>
+            <div class="text-right">
+              <span class="text-indigo-600 font-semibold" x-text="a.member_count"></span>
+              <div class="text-xs text-slate-400">members</div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+    <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
+      <h2 class="text-base font-semibold text-slate-700 mb-3">🧪 A/B Test Templates</h2>
+      <div class="space-y-2">
+        <template x-for="t in templateVariants" :key="`${t.template_key}/${t.variant_name}`">
+          <div class="flex items-center justify-between text-sm p-2 rounded hover:bg-slate-50">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <span x-show="t.is_winner" class="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">👑 WINNER</span>
+                <span class="font-mono text-xs text-slate-700" x-text="`${t.template_key}/${t.variant_name}`"></span>
+              </div>
+              <div class="text-xs text-slate-400 mt-0.5" x-text="t.content.slice(0, 60) + '...'"></div>
+            </div>
+            <div class="text-right ml-2">
+              <div class="text-xs text-slate-500" x-text="`${t.impressions} imps`"></div>
+              <div class="text-pink-600 font-semibold text-sm" x-text="`${(t.conversion_rate*100).toFixed(0)}%`"></div>
+            </div>
+          </div>
+        </template>
+        <div x-show="templateVariants.length === 0" class="text-sm text-slate-400 italic">Chưa có variants — POST /api/improve/templates/seed</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Outreach + Recent OCR -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+    <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
+      <h2 class="text-base font-semibold text-slate-700 mb-3">📬 Proactive Outreach Performance</h2>
+      <div class="space-y-2">
+        <template x-for="t in outreachByTrigger" :key="t.trigger_type">
+          <div class="flex items-center justify-between text-sm p-2 rounded hover:bg-slate-50">
+            <div class="flex-1">
+              <div class="font-mono text-xs text-slate-700" x-text="t.trigger_type"></div>
+              <div class="text-xs text-slate-400" x-text="`${t.sent} sent, ${t.replied} replied, ${t.converted} converted`"></div>
+            </div>
+            <div class="text-right">
+              <div class="text-blue-600 font-semibold" x-text="`${(t.conversion_rate*100).toFixed(0)}%`"></div>
+              <div class="text-xs text-slate-400">conversion</div>
+            </div>
+          </div>
+        </template>
+        <div x-show="outreachByTrigger.length === 0" class="text-sm text-slate-400 italic">Chưa có outreach nào được gửi</div>
+      </div>
+    </div>
+    <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
+      <h2 class="text-base font-semibold text-slate-700 mb-3">📄 Recent OCR Receipts</h2>
+      <div class="space-y-2 max-h-64 overflow-y-auto">
+        <template x-for="r in recentOcr" :key="r.id">
+          <div class="flex items-center justify-between text-sm p-2 rounded hover:bg-slate-50 border border-slate-100">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <span :class="statusColor(r.verification_status)" class="text-xs px-2 py-0.5 rounded font-medium" x-text="r.verification_status"></span>
+                <span class="text-xs text-slate-500" x-text="r.detected_bank || '?'"></span>
+              </div>
+              <div class="text-xs text-slate-400 mt-0.5 font-mono" x-text="`${r.amount_vnd ? fmtVnd(r.amount_vnd) : '?'} → ${r.recipient_account || '?'}`"></div>
+            </div>
+          </div>
+        </template>
+        <div x-show="recentOcr.length === 0" class="text-sm text-slate-400 italic">Chưa có receipt nào</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top customers -->
+  <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-100 mb-6">
+    <h2 class="text-base font-semibold text-slate-700 mb-3">👑 Top Customers by LTV</h2>
+    <table class="w-full text-sm">
+      <thead class="text-xs uppercase text-slate-500 border-b">
+        <tr>
+          <th class="text-left py-2">Customer</th>
+          <th class="text-left py-2">Tier</th>
+          <th class="text-right py-2">Bookings</th>
+          <th class="text-right py-2">Total Revenue</th>
+          <th class="text-right py-2">AOV</th>
+          <th class="text-right py-2">Predicted LTV</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="c in topCustomers" :key="c.sender_id">
+          <tr class="border-b border-slate-100 hover:bg-slate-50">
+            <td class="py-2">
+              <div class="font-medium" x-text="c.customer_name || c.sender_id"></div>
+              <div class="text-xs text-slate-400" x-text="c.customer_phone || '-'"></div>
+            </td>
+            <td class="py-2">
+              <span :class="tierColor(c.customer_tier)" class="text-xs px-2 py-0.5 rounded font-medium" x-text="c.customer_tier"></span>
+            </td>
+            <td class="py-2 text-right" x-text="c.confirmed_bookings"></td>
+            <td class="py-2 text-right font-semibold text-emerald-600" x-text="fmtVnd(c.total_revenue_vnd)"></td>
+            <td class="py-2 text-right text-slate-600" x-text="fmtVnd(c.avg_order_value_vnd)"></td>
+            <td class="py-2 text-right text-purple-600 font-semibold" x-text="fmtVnd(c.predicted_ltv_vnd)"></td>
+          </tr>
+        </template>
+        <tr x-show="topCustomers.length === 0"><td colspan="6" class="py-4 text-center text-slate-400 italic">Chưa có customer booking nào</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <footer class="text-center text-xs text-slate-400 pb-4">
+    VP MKT v19 · Sonder Việt Nam · Last refresh <span x-text="lastRefresh"></span>
+  </footer>
+</div>
+
+<script>
+function dashboard() {
+  return {
+    loading: false,
+    period: '30',
+    revenue: {},
+    feedback: { totals: {}, top_performing_sources: [], worst_reply_sources: [], funnel_stage_flow: [] },
+    attribution: [],
+    audiences: [],
+    templateVariants: [],
+    experiments: { running_count: 0, won_count: 0 },
+    outreach: { queued: 0, sent: 0, converted: 0 },
+    outreachByTrigger: [],
+    promos: [],
+    recentOcr: [],
+    topCustomers: [],
+    lastRefresh: '',
+
+    fmtVnd(n) {
+      if (!n) return '0đ';
+      if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'tr';
+      if (n >= 1_000) return Math.round(n / 1_000) + 'k';
+      return n + 'đ';
+    },
+    statusColor(s) {
+      if (s === 'matched') return 'bg-emerald-100 text-emerald-700';
+      if (s === 'manual_confirmed') return 'bg-blue-100 text-blue-700';
+      if (s?.startsWith('mismatch')) return 'bg-amber-100 text-amber-700';
+      return 'bg-red-100 text-red-700';
+    },
+    tierColor(t) {
+      if (t === 'vip' || t === 'black_vip') return 'bg-purple-100 text-purple-700';
+      if (t === 'regular' || t === 'returning') return 'bg-blue-100 text-blue-700';
+      return 'bg-slate-100 text-slate-600';
+    },
+
+    async fetchJson(url) {
+      try {
+        const r = await fetch(url, { credentials: 'include' });
+        if (!r.ok) return null;
+        return await r.json();
+      } catch (e) { return null; }
+    },
+
+    async loadAll() {
+      this.loading = true;
+      const days = this.period;
+      const [rev, fb, attr_reply, attr_variant, attr_audience, attr_outreach, attr_promo,
+             auds, tmpls, exps, outreachStats, outreachList, prs, ocr, cust] = await Promise.all([
+        this.fetchJson(`/api/attribution/totals?days=${days}`),
+        this.fetchJson(`/api/feedback-loop/stats?days=${days}`),
+        this.fetchJson(`/api/attribution/by-type/reply_source?days=${days}`),
+        this.fetchJson(`/api/attribution/by-type/variant?days=${days}`),
+        this.fetchJson(`/api/attribution/by-type/audience?days=${days}`),
+        this.fetchJson(`/api/attribution/by-type/outreach?days=${days}`),
+        this.fetchJson(`/api/attribution/by-type/promo?days=${days}`),
+        this.fetchJson('/api/marketing/audiences'),
+        this.fetchJson('/api/improve/templates'),
+        this.fetchJson('/api/improve/experiments'),
+        this.fetchJson(`/api/outreach/stats/summary?days=${days}`),
+        this.fetchJson('/api/outreach/list?limit=1'),
+        this.fetchJson('/api/domain/promotions'),
+        this.fetchJson('/api/ocr/recent?limit=5'),
+        this.fetchJson('/api/attribution/top-customers?limit=15'),
+      ]);
+
+      this.revenue = rev || {};
+      this.feedback = fb || { totals: {}, top_performing_sources: [], worst_reply_sources: [] };
+      this.attribution = [
+        ...(attr_reply?.items || []).slice(0, 4),
+        ...(attr_variant?.items || []).slice(0, 2),
+        ...(attr_audience?.items || []).slice(0, 2),
+        ...(attr_outreach?.items || []).slice(0, 2),
+        ...(attr_promo?.items || []).slice(0, 2),
+      ].sort((a, b) => b.attributed_revenue_vnd - a.attributed_revenue_vnd);
+      this.audiences = auds?.items || [];
+      this.templateVariants = tmpls?.items || [];
+      const expsList = exps?.items || [];
+      this.experiments = {
+        running_count: expsList.filter(e => e.status === 'running').length,
+        won_count: expsList.filter(e => e.status === 'winner_selected').length,
+      };
+      const stats = outreachList?.stats || {};
+      this.outreach = {
+        queued: stats.queued || 0,
+        sent: stats.sent || 0,
+        converted: stats.converted || 0,
+      };
+      this.outreachByTrigger = outreachStats?.by_trigger || [];
+      this.promos = prs?.items || [];
+      this.recentOcr = ocr?.items || [];
+      this.topCustomers = cust?.items || [];
+
+      this.lastRefresh = new Date().toLocaleTimeString('vi-VN');
+      this.loading = false;
+
+      // Render charts
+      setTimeout(() => {
+        this.renderRevenueChart(rev?.daily || []);
+        this.renderFunnelChart(fb?.funnel_stage_flow || []);
+      }, 100);
+    },
+
+    renderRevenueChart(daily) {
+      const canvas = document.getElementById('revenueChart');
+      if (!canvas || typeof Chart === 'undefined') return;
+      if (this._revChart) this._revChart.destroy();
+      const data = daily.slice().reverse();
+      this._revChart = new Chart(canvas, {
+        type: 'bar',
+        data: {
+          labels: data.map(d => d.date),
+          datasets: [{
+            label: 'Revenue VND',
+            data: data.map(d => d.revenue_vnd),
+            backgroundColor: '#10b981',
+            borderRadius: 4,
+          }],
+        },
+        options: { responsive: true, plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true, ticks: { callback: v => (v/1_000_000).toFixed(1) + 'tr' } } } },
+      });
+    },
+
+    renderFunnelChart(flow) {
+      const canvas = document.getElementById('funnelChart');
+      if (!canvas || typeof Chart === 'undefined') return;
+      if (this._funnelChart) this._funnelChart.destroy();
+      this._funnelChart = new Chart(canvas, {
+        type: 'bar',
+        data: {
+          labels: flow.map(f => f.stage),
+          datasets: [{
+            label: 'Senders',
+            data: flow.map(f => f.senders),
+            backgroundColor: '#6366f1',
+            borderRadius: 4,
+          }],
+        },
+        options: { indexAxis: 'y', responsive: true, plugins: { legend: { display: false } } },
+      });
+    },
+  };
+}
+</script>
+
+</body>
+</html>

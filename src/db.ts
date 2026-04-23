@@ -897,6 +897,69 @@ CREATE TABLE IF NOT EXISTS outreach_rate_log (
 `);
 
 // ═══════════════════════════════════════════════════════════
+// v19 Revenue Attribution — track $ tied to every touchpoint
+// revenue_events: every booking/promo/upsell as $ event
+// attribution_links: booking × (reply_source, variant, audience, campaign, outreach, promo)
+// customer_ltv: cached LTV per customer
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+-- Every $ event (booking confirmed/paid, promo applied, upsell)
+CREATE TABLE IF NOT EXISTS revenue_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  event_type TEXT NOT NULL,                      -- 'booking_confirmed' | 'promo_applied' | 'upsell' | 'refund'
+  booking_id INTEGER,
+  sender_id TEXT,
+  customer_phone TEXT,
+  amount_vnd INTEGER NOT NULL,                   -- Positive = revenue, Negative = refund
+  margin_vnd INTEGER,                            -- Estimated profit (after cost)
+  currency TEXT DEFAULT 'VND',
+  notes TEXT,
+  occurred_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rev_booking ON revenue_events(booking_id);
+CREATE INDEX IF NOT EXISTS idx_rev_sender ON revenue_events(sender_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rev_occurred ON revenue_events(occurred_at DESC);
+
+-- Link each booking to the touches that contributed (multi-touch attribution)
+CREATE TABLE IF NOT EXISTS attribution_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  booking_id INTEGER NOT NULL,
+  sender_id TEXT,
+  touch_type TEXT NOT NULL,                      -- 'reply_source' | 'variant' | 'audience' | 'campaign' | 'outreach' | 'promo'
+  touch_id TEXT NOT NULL,                        -- reply_source key | variant_id | audience_id | campaign_id | outreach_id | promo_code
+  touch_value TEXT,                              -- Display name (variant_name, audience_name, etc.)
+  weight REAL DEFAULT 1.0,                       -- Attribution weight (first-touch=1, linear = 1/N, etc.)
+  attribution_model TEXT DEFAULT 'linear',       -- 'first_touch' | 'last_touch' | 'linear' | 'time_decay'
+  touched_at INTEGER,                            -- When touch happened
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_attr_booking ON attribution_links(booking_id);
+CREATE INDEX IF NOT EXISTS idx_attr_touch_type_id ON attribution_links(touch_type, touch_id);
+CREATE INDEX IF NOT EXISTS idx_attr_sender ON attribution_links(sender_id);
+
+-- Cached LTV per customer (refreshed when new booking)
+CREATE TABLE IF NOT EXISTS customer_ltv (
+  sender_id TEXT PRIMARY KEY,
+  customer_phone TEXT,
+  customer_name TEXT,
+  hotel_id INTEGER,
+  total_bookings INTEGER DEFAULT 0,
+  confirmed_bookings INTEGER DEFAULT 0,
+  total_revenue_vnd INTEGER DEFAULT 0,
+  avg_order_value_vnd INTEGER DEFAULT 0,
+  first_booking_at INTEGER,
+  last_booking_at INTEGER,
+  predicted_ltv_vnd INTEGER DEFAULT 0,           -- Simple model: total × retention multiplier
+  customer_tier TEXT DEFAULT 'new',
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ltv_phone ON customer_ltv(customer_phone);
+CREATE INDEX IF NOT EXISTS idx_ltv_total ON customer_ltv(total_revenue_vnd DESC);
+`);
+
+// ═══════════════════════════════════════════════════════════
 // v14 Sync Hub — Event broker giữa OTA Web team & VP MKT Bot
 // Mục đích: OTA push availability updates + Bot push bookings → PMS
 // HMAC-signed, audit logged, rate limited.

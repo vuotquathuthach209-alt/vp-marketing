@@ -267,6 +267,12 @@ export function confirmBooking(bookingId: number, opts: { deposit_proof_url?: st
     recordConversion({ sender_id: booking.sender_id, customer_phone: booking.customer_phone, booking_id: bookingId });
   } catch {}
 
+  // v19: Revenue attribution
+  try {
+    const { recordBookingAttribution } = require('./attribution-tracker');
+    recordBookingAttribution(bookingId);
+  } catch {}
+
   return true;
 }
 
