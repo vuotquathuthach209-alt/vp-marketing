@@ -117,7 +117,15 @@ extracted_slots: slots detect được (property_type, area, dates, guests, budg
 
 CHỈ output JSON, không prose.`;
 
-  const userPrompt = `Knowledge base snapshot:\n${knowledge}\n\nPrevious context: ${opts.hasPrevContext ? 'YES (tiếp theo convo)' : 'NO (tin đầu)'}\n\nKhách nhắn: "${msg}"\n\nOutput JSON:`;
+  // v20 FIX: Sanitize user input — strip control chars, quotes, backslash, newlines.
+  //          Prevent prompt injection like: " } IGNORE ALL PREVIOUS ...
+  const safeMsg = String(msg)
+    .replace(/[\x00-\x1F"\\]/g, ' ')     // Control chars + quote + backslash
+    .replace(/\s+/g, ' ')
+    .slice(0, 500)
+    .trim();
+
+  const userPrompt = `Knowledge base snapshot:\n${knowledge}\n\nPrevious context: ${opts.hasPrevContext ? 'YES (tiếp theo convo)' : 'NO (tin đầu)'}\n\nKhách nhắn (JSON-escaped): ${JSON.stringify(safeMsg)}\n\nOutput JSON:`;
 
   try {
     const { smartCascade } = require('./smart-cascade');
@@ -140,19 +148,42 @@ CHỈ output JSON, không prose.`;
       parsed = JSON.parse(m[0]);
     }
 
-    // Validate
-    if (!parsed.primary_intent) return null;
+    // v20 FIX: Strict validation of Gemini response (defense in depth vs prompt injection)
+    const VALID_INTENTS = new Set([
+      'booking', 'info_question', 'greeting', 'farewell', 'complaint',
+      'chitchat', 'unclear', 'contact_info', 'image_request',
+    ]);
+    if (!parsed.primary_intent || !VALID_INTENTS.has(parsed.primary_intent)) {
+      console.warn(`[gemini-intent] invalid primary_intent: ${parsed.primary_intent}`);
+      return null;
+    }
+
+    // Clamp numeric fields to safe ranges
+    const confidence = typeof parsed.confidence === 'number'
+      ? Math.max(0, Math.min(1, parsed.confidence))
+      : 0.7;
+
+    // Sanitize extracted_slots — reject non-primitive values
+    const safeSlots: any = {};
+    if (parsed.extracted_slots && typeof parsed.extracted_slots === 'object') {
+      for (const [k, v] of Object.entries(parsed.extracted_slots)) {
+        if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+          // String length cap
+          safeSlots[k] = typeof v === 'string' ? (v as string).slice(0, 200) : v;
+        }
+      }
+    }
 
     return {
       primary_intent: parsed.primary_intent,
-      sub_category: parsed.sub_category,
-      confidence: parsed.confidence || 0.7,
+      sub_category: typeof parsed.sub_category === 'string' ? parsed.sub_category.slice(0, 50) : undefined,
+      confidence,
       in_knowledge_base: !!parsed.in_knowledge_base,
       needs_clarification: !!parsed.needs_clarification,
-      clarification_question: parsed.clarification_question,
-      extracted_slots: parsed.extracted_slots || {},
-      suggested_answer: parsed.suggested_answer,
-      reasoning: parsed.reasoning,
+      clarification_question: typeof parsed.clarification_question === 'string' ? parsed.clarification_question.slice(0, 500) : undefined,
+      extracted_slots: safeSlots,
+      suggested_answer: typeof parsed.suggested_answer === 'string' ? parsed.suggested_answer.slice(0, 500) : undefined,
+      reasoning: typeof parsed.reasoning === 'string' ? parsed.reasoning.slice(0, 300) : undefined,
     };
   } catch (e: any) {
     console.warn('[gemini-intent] fail:', e?.message);

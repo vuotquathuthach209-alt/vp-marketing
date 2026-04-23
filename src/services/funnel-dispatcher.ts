@@ -641,8 +641,8 @@ export async function processFunnelMessage(
       // Telegram notify
       try {
         const { notifyAll } = require('./telegram');
-        notifyAll(`📱 *Lead mới qua OA*\n• Tên: ${name || '(chưa rõ)'}\n• SĐT: \`${phone}\`\n• Sender: \`${senderId}\`\n_Gọi trong 15 phút!_`).catch(() => {});
-      } catch {}
+        notifyAll(`📱 *Lead mới qua OA*\n• Tên: ${name || '(chưa rõ)'}\n• SĐT: \`${phone}\`\n• Sender: \`${senderId}\`\n_Gọi trong 15 phút!_`).catch((e: any) => console.warn('[funnel] tg notify fail:', e?.message));
+      } catch (e: any) { console.warn('[funnel] telegram require fail:', e?.message); }
       return {
         reply: `Dạ em đã ghi nhận thông tin:\n${name ? '• Tên: ' + name + '\n' : ''}• SĐT: ${phone}\n\n📞 Team em sẽ gọi trong 15 phút để tư vấn chi tiết ạ. Cảm ơn anh/chị! 🙏`,
         intent: 'contact_captured',
@@ -735,7 +735,7 @@ export async function processFunnelMessage(
         const geminiSlots = geminiSlotsToExtracted(geminiIntent.extracted_slots);
         const { mergeExtractedSlots } = require('./multi-slot-gemini');
         extracted = mergeExtractedSlots(extracted, geminiSlots);
-      } catch {}
+      } catch (e: any) { console.warn('[funnel] gemini slot merge fail:', e?.message); }
     }
     // Fallback: if deterministic extracted 0-1 slots AND msg is long → try Gemini
     const detCount = countExtracted(extracted);
@@ -973,6 +973,15 @@ export async function processFunnelMessage(
         state.same_stage_count = 0;
         console.log(`[funnel] exit UNCLEAR_FALLBACK → ${nextStage} (extracted ${extractedCount} slots)`);
       }
+      // v20: Hard stop — mark handed_off khi chuyển sang HANDED_OFF
+      if (nextStage === 'HANDED_OFF') {
+        state.handed_off = true;
+        console.log(`[funnel] Hard handoff: sender=${senderId} stuck in loop, transferring to human`);
+        try {
+          const { notifyAll } = require('./telegram');
+          notifyAll(`🆘 *Bot handoff needed*\nSender: \`${senderId}\`\nReason: Stuck in loop (${state.same_stage_count} turns)\nStage: ${state.last_bot_stage}\n→ Cần nhân viên tư vấn trực tiếp.`).catch((e: any) => console.warn('[funnel] handoff tg notify fail:', e?.message));
+        } catch (e: any) { console.warn('[funnel] telegram notify fail:', e?.message); }
+      }
     }
     // Fix #5 (same module): Stuck escape hatch
     if ((state.same_stage_count || 0) >= 2 && state.turns_since_extract >= 2) {
@@ -1013,7 +1022,7 @@ export async function processFunnelMessage(
         const prefix = [greeting, suggestion].filter(Boolean).join('\n\n');
         result.reply = prefix + '\n\n' + result.reply;
       }
-    } catch {}
+    } catch (e: any) { console.warn('[funnel] returning greeting fail:', e?.message); }
   }
 
   // 8. Save state
@@ -1098,7 +1107,7 @@ async function createBookingDraft(state: ConversationState): Promise<void> {
     try {
       const { rebuildCustomerProfile } = require('./customer-memory');
       rebuildCustomerProfile(state.sender_id);
-    } catch {}
+    } catch (e: any) { console.warn('[funnel] rebuildCustomerProfile fail:', e?.message); }
 
     // Enhanced Telegram notify — rich format + hotel-specific routing
     try {
@@ -1196,9 +1205,9 @@ async function createBookingDraft(state: ConversationState): Promise<void> {
             nights: s.nights, months: s.months,
             guests: s.guests_adults, total: totalEst,
             sender_id: state.sender_id,
-          }).catch(() => {});
+          }).catch((e: any) => console.warn('[funnel] email send fail:', e?.message));
         }
-      } catch {}
+      } catch (e: any) { console.warn('[funnel] email notify fail:', e?.message); }
     } catch (e: any) {
       console.warn('[funnel] notify fail:', e?.message);
     }

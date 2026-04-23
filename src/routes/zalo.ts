@@ -118,6 +118,25 @@ zaloWebhookRouter.post('/webhook/zalo', async (req, res) => {
     if (!text && !imageUrl) return;  // nothing to process
 
     const senderKey = `zalo:${userId}`;
+
+    // v20 FIX: Spam-guard — block abusive senders/messages
+    try {
+      const { checkSpam, logSpamEvent } = require('../services/spam-guard');
+      const spam = checkSpam({
+        senderId: senderKey,
+        pageId: 0,
+        message: text || '(image)',
+        hotelId: oa.hotel_id || 1,
+      });
+      if (spam.block) {
+        logSpamEvent(senderKey, 0, oa.hotel_id || 1, spam.reason || 'unknown', spam.detail || '', text || '(image)');
+        console.log(`[zalo] spam blocked ${senderKey}: ${spam.reason}`);
+        return;
+      }
+    } catch (e: any) {
+      console.warn('[zalo] spam-guard fail:', e?.message);
+    }
+
     const result = await smartReplyWithSender(
       text || '(image)',
       senderKey, undefined, !!imageUrl,

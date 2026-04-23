@@ -300,20 +300,43 @@ export function decideNextStage(state: ConversationState): Stage {
 
   // Priority 3: if SHOW_RESULTS onwards, follow linear pipe
   // Note: dispatcher may force explicit transitions (pick, confirm_yes, etc.)
+  //
+  // v20 FIX: Escape hatch cho stages cuối để tránh infinite loop khi khách
+  // không muốn cung cấp thông tin cuối (phone/name).
+  // - After 3 same_stage_count at CONFIRMATION/CLOSING → UNCLEAR_FALLBACK
+  // - After 2 more same_stage_count at UNCLEAR_FALLBACK → HANDED_OFF (hard stop)
+  const sameCnt = state.same_stage_count || 0;
+
   if (stage === 'CONFIRMATION_BEFORE_CLOSE') {
-    return slots.phone ? 'BOOKING_DRAFT_CREATED' : 'CONFIRMATION_BEFORE_CLOSE';
+    if (slots.phone) return 'BOOKING_DRAFT_CREATED';
+    if (sameCnt >= 3) return 'UNCLEAR_FALLBACK';
+    return 'CONFIRMATION_BEFORE_CLOSE';
   }
   if (stage === 'CLOSING_CONTACT') {
-    return slots.phone && slots.name ? 'BOOKING_DRAFT_CREATED' : 'CLOSING_CONTACT';
+    if (slots.phone && slots.name) return 'BOOKING_DRAFT_CREATED';
+    if (slots.phone) return 'BOOKING_DRAFT_CREATED';   // relax: chỉ cần phone, name optional
+    if (sameCnt >= 3) return 'UNCLEAR_FALLBACK';
+    return 'CLOSING_CONTACT';
+  }
+  if (stage === 'UNCLEAR_FALLBACK') {
+    // Hard stop: 2 lần không thoát được UNCLEAR → chuyển human
+    if (sameCnt >= 2) return 'HANDED_OFF';
+    return 'UNCLEAR_FALLBACK';
   }
   if (stage === 'SHOW_ROOMS') {
-    return slots.selected_room_id ? 'SHOW_ROOMS' : 'PROPERTY_PICKED';
+    if (slots.selected_room_id) return 'SHOW_ROOMS';
+    if (sameCnt >= 3) return 'UNCLEAR_FALLBACK';
+    return 'PROPERTY_PICKED';
   }
   if (stage === 'PROPERTY_PICKED') {
-    return slots.selected_room_id ? 'SHOW_ROOMS' : 'PROPERTY_PICKED';
+    if (slots.selected_room_id) return 'SHOW_ROOMS';
+    if (sameCnt >= 3) return 'UNCLEAR_FALLBACK';
+    return 'PROPERTY_PICKED';
   }
   if (stage === 'SHOW_RESULTS') {
-    return slots.selected_property_id ? 'PROPERTY_PICKED' : 'SHOW_RESULTS';
+    if (slots.selected_property_id) return 'PROPERTY_PICKED';
+    if (sameCnt >= 3) return 'UNCLEAR_FALLBACK';
+    return 'SHOW_RESULTS';
   }
 
   // Priority 4: Collecting slots (before SHOW_RESULTS)

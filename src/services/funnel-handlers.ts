@@ -959,7 +959,14 @@ export function dispatchHandler(state: ConversationState): HandlerResult {
     case 'UNCLEAR_FALLBACK':
       return handleUnclearFallback(state);
     case 'HANDED_OFF':
-      return { reply: '', next_stage: 'HANDED_OFF' };
+      // v20: Graceful handoff message + mark handed_off = 1 để không loop tiếp
+      return {
+        reply: `Dạ để em nhờ nhân viên tư vấn hỗ trợ trực tiếp nhé ạ 🙏\n\n` +
+          `📞 Hotline: **0348 644 833** (8h-22h hằng ngày)\n` +
+          `💬 Hoặc anh/chị để lại SĐT, team em sẽ gọi trong 15 phút.\n\n` +
+          `Cảm ơn anh/chị đã quan tâm Sonder! 💚`,
+        next_stage: 'HANDED_OFF',
+      };
     default:
       return handlePropertyTypeAsk(state);
   }
