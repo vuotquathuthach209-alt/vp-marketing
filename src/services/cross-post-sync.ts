@@ -247,14 +247,46 @@ export async function crossPostToAllPlatforms(src: CrossPostSource): Promise<Cro
 }
 
 /**
+ * Fetch image URL trực tiếp từ FB CDN (via Graph API) cho bài đã publish.
+ * Đáng tin cậy hơn local media URL vì:
+ *   - FB CDN luôn reachable globally (IG + Zalo fetch dễ)
+ *   - Không phụ thuộc DNS của mkt.sondervn.com
+ *   - Image format + size đã được FB xử lý chuẩn
+ */
+async function fetchFbPostImageUrl(fbPostId: string, accessToken: string): Promise<string | undefined> {
+  try {
+    const axios = require('axios').default;
+    // Try full_picture first (largest image)
+    const r = await axios.get(`https://graph.facebook.com/v18.0/${fbPostId}`, {
+      params: { fields: 'full_picture,attachments{media}', access_token: accessToken },
+      timeout: 10_000,
+    });
+    const data = r.data || {};
+    if (data.full_picture && /^https:\/\//.test(data.full_picture)) return data.full_picture;
+    // Fallback: attachments[].media.image.src
+    const atts = data.attachments?.data || [];
+    for (const a of atts) {
+      const src = a?.media?.image?.src;
+      if (src && /^https:\/\//.test(src)) return src;
+    }
+    return undefined;
+  } catch (e: any) {
+    console.warn('[cross-post] fetch FB image fail:', e?.response?.data?.error?.message || e?.message);
+    return undefined;
+  }
+}
+
+/**
  * Resolve post caption + image from posts table → call crossPostToAllPlatforms.
- * Convenience wrapper cho scheduler/campaigns/posts routes.
+ * v24: Prefer FB CDN image URL over local media (tránh DNS issue + đảm bảo
+ *      URL globally reachable).
  */
 export async function crossPostFromPostId(postId: number, sourceType?: string): Promise<CrossPostResult | null> {
   try {
     const post = db.prepare(
       `SELECT p.id, p.fb_post_id, p.hotel_id, p.page_id, p.caption, p.media_id, p.media_type,
-              m.filename as media_filename, pg.fb_page_id as fb_page_id
+              m.filename as media_filename,
+              pg.fb_page_id as fb_page_id, pg.access_token as page_access_token
        FROM posts p
        LEFT JOIN media m ON m.id = p.media_id
        LEFT JOIN pages pg ON pg.id = p.page_id
@@ -263,12 +295,21 @@ export async function crossPostFromPostId(postId: number, sourceType?: string): 
 
     if (!post) return null;
 
-    // Resolve image URL — convert local media filename → public URL
+    // Resolve image URL — PRIORITY 1: fetch from FB CDN (most reliable)
     let imageUrl: string | undefined;
-    if (post.media_type === 'image' && post.media_filename) {
+    if (post.media_type === 'image' && post.page_access_token && post.fb_post_id) {
+      imageUrl = await fetchFbPostImageUrl(post.fb_post_id, post.page_access_token);
+      if (imageUrl) {
+        console.log(`[cross-post] resolved FB CDN image: ${imageUrl.slice(0, 80)}...`);
+      }
+    }
+
+    // Priority 2: fallback to public base URL (nếu FB fetch fail)
+    if (!imageUrl && post.media_type === 'image' && post.media_filename) {
       const { config } = require('../config');
       const baseUrl = config.publicBaseUrl || process.env.PUBLIC_BASE_URL || 'https://mkt.sondervn.com';
       imageUrl = `${baseUrl.replace(/\/$/, '')}/media/${post.media_filename}`;
+      console.log(`[cross-post] fallback to public base URL: ${imageUrl.slice(0, 80)}...`);
     }
 
     return await crossPostToAllPlatforms({
