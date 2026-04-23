@@ -74,11 +74,11 @@ export const BUILTIN_AUDIENCES: Record<string, { sql: string; description: strin
              cm.phone as customer_phone,
              cm.name as customer_name,
              ? as hotel_id,
-             json_object('tier', cm.customer_tier, 'ltv_vnd', cm.total_spent_vnd,
-                         'bookings', cm.confirmed_bookings, 'last_booking_at', cm.last_booking_at) as metadata
+             json_object('tier', cm.customer_tier, 'ltv_vnd', cm.lifetime_value,
+                         'bookings', cm.confirmed_bookings, 'last_seen_at', cm.last_seen_at) as metadata
       FROM customer_memory cm
-      WHERE cm.customer_tier IN ('vip', 'black_vip')
-        AND cm.last_booking_at < ?
+      WHERE cm.customer_tier = 'vip'
+        AND cm.last_seen_at < ?
     `,
     params: (hotelId: number) => [hotelId, Date.now() - 30 * 24 * 3600_000],
   },
@@ -92,10 +92,10 @@ export const BUILTIN_AUDIENCES: Record<string, { sql: string; description: strin
              cm.name as customer_name,
              ? as hotel_id,
              json_object('tier', cm.customer_tier, 'bookings', cm.confirmed_bookings,
-                         'last_booking_at', cm.last_booking_at) as metadata
+                         'last_seen_at', cm.last_seen_at) as metadata
       FROM customer_memory cm
-      WHERE cm.customer_tier = 'regular'
-        AND cm.last_booking_at BETWEEN ? AND ?
+      WHERE cm.customer_tier IN ('regular', 'returning')
+        AND cm.last_seen_at BETWEEN ? AND ?
     `,
     params: (hotelId: number) => [hotelId, Date.now() - 60 * 24 * 3600_000, Date.now() - 15 * 24 * 3600_000],
   },
@@ -109,11 +109,11 @@ export const BUILTIN_AUDIENCES: Record<string, { sql: string; description: strin
              cm.name as customer_name,
              ? as hotel_id,
              json_object('tier', cm.customer_tier, 'bookings', cm.confirmed_bookings,
-                         'last_booking_at', cm.last_booking_at,
-                         'days_inactive', (? - cm.last_booking_at)/86400000) as metadata
+                         'last_seen_at', cm.last_seen_at,
+                         'days_inactive', (? - cm.last_seen_at)/86400000) as metadata
       FROM customer_memory cm
-      WHERE cm.customer_tier IN ('regular', 'vip', 'black_vip')
-        AND cm.last_booking_at < ?
+      WHERE cm.customer_tier IN ('regular', 'returning', 'vip')
+        AND cm.last_seen_at < ?
     `,
     params: (hotelId: number) => [hotelId, Date.now(), Date.now() - 90 * 24 * 3600_000],
   },
@@ -160,20 +160,21 @@ export const BUILTIN_AUDIENCES: Record<string, { sql: string; description: strin
     params: (hotelId: number) => [hotelId, Date.now() - 30 * 24 * 3600_000],
   },
 
-  /** Birthday this month — nếu customer_memory có DOB */
+  /** Birthday this month — cần guest_profiles có DOB */
   birthday_this_month: {
     description: 'Khách có sinh nhật tháng này (áp dụng promo BIRTHDAY)',
     sql: `
-      SELECT cm.sender_id,
-             cm.phone as customer_phone,
-             cm.name as customer_name,
-             ? as hotel_id,
-             json_object('dob', cm.dob, 'tier', cm.customer_tier) as metadata
-      FROM customer_memory cm
-      WHERE cm.dob IS NOT NULL
-        AND strftime('%m', cm.dob, 'unixepoch') = strftime('%m', 'now')
+      SELECT gp.fb_user_id as sender_id,
+             gp.phone as customer_phone,
+             gp.name as customer_name,
+             gp.hotel_id,
+             json_object('tier', COALESCE(cm.customer_tier, 'new')) as metadata
+      FROM guest_profiles gp
+      LEFT JOIN customer_memory cm ON cm.sender_id = gp.fb_user_id
+      WHERE json_extract(gp.preferences, '$.dob') IS NOT NULL
+        AND CAST(strftime('%m', json_extract(gp.preferences, '$.dob'), 'unixepoch') AS INTEGER) = CAST(strftime('%m', 'now') AS INTEGER)
     `,
-    params: (hotelId: number) => [hotelId],
+    params: (_hotelId: number) => [],
   },
 };
 
