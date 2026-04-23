@@ -168,7 +168,7 @@ export function getActivePromotions(hotelId?: number): Promotion[] {
        AND (valid_from IS NULL OR valid_from <= ?)
        AND (valid_to IS NULL OR valid_to >= ?)
        ${where}
-     ORDER BY valid_to ASC NULLS LAST, id DESC`
+     ORDER BY (valid_to IS NULL) ASC, valid_to ASC, id DESC`
   ).all(...params) as any[];
 
   return rows.map(r => ({
