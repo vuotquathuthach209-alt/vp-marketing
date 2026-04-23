@@ -22,16 +22,10 @@ import { authMiddleware, AuthRequest, getHotelId } from '../middleware/auth';
 
 const router = Router();
 
-// Raw body parser — cần cho HMAC verify
-function rawBodyMiddleware(req: any, _res: any, next: any) {
-  let data = '';
-  req.setEncoding('utf8');
-  req.on('data', (chunk: string) => { data += chunk; });
-  req.on('end', () => {
-    req.rawBody = data;
-    try { req.body = data ? JSON.parse(data) : {}; } catch { req.body = {}; }
-    next();
-  });
+// Note: Express global body parser đã populate req.rawBody (index.ts line 70-72).
+// Middleware này pass-through.
+function rawBodyMiddleware(_req: any, _res: any, next: any) {
+  next();
 }
 
 /** Middleware: verify HMAC + permission. */
