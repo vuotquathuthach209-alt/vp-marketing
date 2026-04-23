@@ -988,16 +988,30 @@ async function handleDeterministic(
    RAG AI — Chỉ dùng cho câu hỏi phức tạp, BẮT BUỘC có context
    ═══════════════════════════════════════════ */
 
-const RAG_SYSTEM = `Bạn là nhân viên tư vấn khách sạn Việt Nam. Giọng thân thiện, như hai người bạn nói chuyện.
+// v24 FIX (Bug #2): Persona strictly "em/anh/chị" — tuyệt đối KHÔNG "bạn/tôi/mình".
+const RAG_SYSTEM = `Bạn là Em — nhân viên tư vấn của chuỗi khách sạn Sonder Vietnam. Giọng thân thiện, lễ phép.
+
+XƯNG HÔ BẮT BUỘC (vi phạm = sai):
+- Bot xưng: "em"
+- Gọi khách: "anh/chị" (KHÔNG dùng "bạn", KHÔNG dùng "quý khách")
+- KHÔNG bao giờ dùng "tôi", "mình", "bạn"
+- Câu kết có "ạ" / "nhé ạ" / "dạ"
 
 QUY TẮC TUYỆT ĐỐI (vi phạm = sai):
 1. CHỈ trả lời dựa trên NGỮ CẢNH được cung cấp bên dưới. KHÔNG suy diễn.
-2. Nếu NGỮ CẢNH không có thông tin → trả lời CHÍNH XÁC: "Để mình kiểm tra và báo lại bạn nhé!"
+2. Nếu NGỮ CẢNH không có thông tin → trả lời CHÍNH XÁC: "Dạ em kiểm tra và báo lại anh/chị ngay ạ 🙏"
 3. KHÔNG bịa giá, số liệu, tiện ích, địa chỉ.
 4. KHÔNG dùng các cụm: "theo tôi biết", "có lẽ", "khoảng chừng", "mình nghĩ là".
 5. Trả lời ngắn gọn 2-4 câu, tiếng Việt tự nhiên, 1-2 emoji.
 6. Đọc LỊCH SỬ HỘI THOẠI — KHÔNG hỏi lại thứ khách đã nói.
-7. Cuối câu gợi ý bước tiếp theo (xem giá / xem hình / đặt phòng).`;
+7. Cuối câu gợi ý bước tiếp theo (xem giá / xem hình / đặt phòng).
+8. KHÔNG DÙNG MARKDOWN (*bold*, **bold**, _italic_, # heading, ...) — viết plain text vì Zalo không render.
+
+FALLBACK PATTERNS (khi bí ý hoặc data không đủ):
+- Không hiểu ý khách: "Dạ em xin lỗi, em chưa nắm rõ ý anh/chị ạ 🙏 Anh/chị có thể nói lại giúp em được không ạ?"
+- Data không có trong KB: "Dạ em kiểm tra và báo lại anh/chị ngay ạ 🙏"
+- Cần thông tin thêm: "Anh/chị cho em xin thêm [X] để em hỗ trợ chính xác hơn ạ"
+- Hệ thống lỗi: "Dạ em gặp chút sự cố kỹ thuật, để em nhờ nhân viên hỗ trợ anh/chị nhé 🙏 Hotline 0348 644 833"`;
 
 const HALLUCINATION_MARKERS = [
   'theo tôi biết', 'theo mình biết', 'có lẽ', 'có thể là',
@@ -1948,11 +1962,10 @@ export async function smartReply(
     // Chọn giọng điệu theo mức độ
     let reply: string;
     if (intent === 'complaint' || emotion === 'frustrated') {
-      // Bức xúc thật sự → xin lỗi chân thành
-      reply = `Mình thành thật xin lỗi vì trải nghiệm chưa tốt này ạ. 🙏\nĐể quản lý trực tiếp gọi bạn xử lý nhanh nhất, bạn cho mình xin *số điện thoại* nhé? Bên mình cam kết phản hồi trong 5 phút ạ. 📞`;
+      // v24: persona strictly em/anh/chị
+      reply = `Dạ em thành thật xin lỗi anh/chị vì trải nghiệm chưa tốt này ạ 🙏\nĐể quản lý trực tiếp gọi xử lý nhanh nhất, anh/chị cho em xin số điện thoại nhé ạ? Bên em cam kết phản hồi trong 5 phút 📞`;
     } else {
-      // Khó hiểu / bot không hiểu được → chuyển người thật nhẹ nhàng
-      reply = `Xin lỗi bạn, có vẻ mình chưa hiểu ý bạn đúng ạ. 🙏\nĐể được tư vấn chính xác và nhanh nhất, bạn cho mình xin *số điện thoại* nhé? Team CSKH sẽ gọi lại bạn trong vài phút thôi. 📞💚`;
+      reply = `Dạ em xin lỗi, em chưa nắm rõ ý anh/chị ạ 🙏\nĐể được tư vấn chính xác và nhanh nhất, anh/chị cho em xin số điện thoại nhé ạ? Team CSKH sẽ gọi lại trong vài phút thôi 📞💚`;
     }
     saveMessage(senderId, pid, 'bot', reply, 'negative_phone_request');
     return { reply, tier: 'phone_capture', latency_ms: Date.now() - t0, intent: 'negative', confidence };
@@ -2005,9 +2018,10 @@ export async function smartReply(
   }
 
   // ─── STEP 8: SOFT FALLBACK ───
+  // v24: persona strictly em/anh/chị
   const fallback = alreadyHasPhone
-    ? `Mình đã ghi nhận rồi ạ! Team sẽ gọi bạn sớm nhất. 💚\n\n${friendlyClosing(senderName)}`
-    : `Cảm ơn bạn! 😊 Để tư vấn chính xác nhất, bạn cho mình biết:\n• Ngày check-in bạn muốn?\n• Mấy khách, mấy đêm?\n\nHoặc gõ "giá" / "hình" / "đặt phòng" để mình hỗ trợ ngay nhé!`;
+    ? `Dạ em đã ghi nhận rồi ạ! Team em sẽ gọi anh/chị sớm nhất 💚\n\n${friendlyClosing(senderName)}`
+    : `Dạ cảm ơn anh/chị 😊 Để em tư vấn chính xác nhất, anh/chị cho em biết thêm:\n• Ngày check-in dự định?\n• Mấy khách, mấy đêm?\n\nHoặc gõ "giá" / "hình" / "đặt phòng" để em hỗ trợ ngay nhé ạ!`;
   if (senderId) saveMessage(senderId, pid, 'bot', fallback, 'fallback');
   return {
     reply: fallback,

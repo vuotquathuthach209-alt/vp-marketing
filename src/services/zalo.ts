@@ -150,11 +150,16 @@ export function saveZaloOA(input: {
 /** Gửi text message qua Zalo OA. recipient.user_id là Zalo user ID. */
 export async function zaloSendText(oa: ZaloOA, userId: string, text: string): Promise<any> {
   try {
+    // v24: Zalo KHÔNG render markdown → strip **bold**, *italic*, ... trước khi gửi.
+    //       Nếu để nguyên, khách thấy "**550k/đêm**" literal → lộ rõ là bot.
+    const { sanitizeForZalo } = require('./message-sanitizer');
+    const cleanText = sanitizeForZalo(text);
+
     const r = await axios.post(
       'https://openapi.zalo.me/v3.0/oa/message/cs',
       {
         recipient: { user_id: userId },
-        message: { text: text.slice(0, 2000) },
+        message: { text: cleanText },
       },
       {
         headers: {

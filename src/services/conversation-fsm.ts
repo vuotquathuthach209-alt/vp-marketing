@@ -142,11 +142,48 @@ export interface ConversationState {
    CRUD
    ═══════════════════════════════════════════ */
 
+// v24: Session TTL — reset FSM state if last activity > threshold ago.
+//      Khách chào "Chào bạn" sau 2h im lặng KHÔNG được nhận reply
+//      "Đã nhận ảnh chuyển khoản! Lễ tân đang xác nhận booking #1" (state cũ).
+const SESSION_TTL_MS = 30 * 60_000;             // 30 phút cho flow thông thường
+const TERMINAL_TTL_MS = 15 * 60_000;            // 15 phút cho stage terminal (BOOKING_DRAFT_CREATED, HANDED_OFF)
+
+const TERMINAL_STAGES = new Set(['BOOKING_DRAFT_CREATED', 'HANDED_OFF', 'CONFIRMATION_BEFORE_CLOSE']);
+
 export function getState(senderId: string): ConversationState | null {
   const row = db.prepare(
     `SELECT * FROM bot_conversation_state WHERE sender_id = ?`
   ).get(senderId) as any;
   if (!row) return null;
+
+  // v24: TTL check — if stale, treat as null (new conversation)
+  const age = Date.now() - (row.updated_at || 0);
+  const ttl = TERMINAL_STAGES.has(row.stage) ? TERMINAL_TTL_MS : SESSION_TTL_MS;
+  if (age > ttl) {
+    console.log(`[fsm] session stale for ${senderId} (${Math.round(age/60_000)}min, stage=${row.stage}) → reset to INIT`);
+    // Archive slots cho analytics, reset về INIT
+    try {
+      db.prepare(
+        `UPDATE bot_conversation_state
+         SET stage = 'INIT',
+             slots = '{}',
+             turns_since_extract = 0,
+             turn_count = 0,
+             same_stage_count = 0,
+             handed_off = 0,
+             last_bot_stage = stage,
+             history_summary = ?,
+             updated_at = ?
+         WHERE sender_id = ?`
+      ).run(
+        `expired_${row.stage}_at_${new Date(row.updated_at).toISOString()}`,
+        Date.now(),
+        senderId,
+      );
+    } catch (e) { console.warn('[fsm] stale reset fail:', e); }
+    return null;      // treat as fresh conversation
+  }
+
   try {
     return {
       sender_id: row.sender_id,

@@ -15,6 +15,7 @@ import { db } from '../db';
 import { ConversationState, Stage, BookingSlots, decideNextStage } from './conversation-fsm';
 import { searchByArea, searchNearby } from './hotel-knowledge';
 import { shouldSendGreeting, hasRecentBotActivity } from './greeting-gate';
+import { formatDateVNDisplay, formatDateVN, checkinUrgency } from './vn-date-formatter';
 
 /* ═══════════════════════════════════════════
    Types
@@ -240,7 +241,9 @@ function buildSlotAck(state: ConversationState): string {
     ackParts.push(newSlots.city);
   }
   if (newSlots.checkin_date && newSlots.checkin_date !== 'flexible') {
-    ackParts.push(`check-in ${newSlots.checkin_date}`);
+    // v24: format YYYY-MM-DD thành "hôm nay (23/4)", "thứ 5 này (25/4)"...
+    const nice = formatDateVNDisplay(newSlots.checkin_date) || newSlots.checkin_date;
+    ackParts.push(`check-in ${nice}`);
   }
   if (newSlots.nights) {
     ackParts.push(`${newSlots.nights} đêm`);
@@ -276,11 +279,77 @@ function buildSlotAck(state: ConversationState): string {
   return `${prefix} ${ackParts.join(' + ')} rồi ạ 👍. `;
 }
 
+/**
+ * v24 (Bug #5): Build a SINGLE combined question for multiple missing slots.
+ *
+ * Khách nhắn 1 câu đầy đủ "homestay sân bay 2 người 1 đêm hôm nay tầm 800k":
+ *   → slot-extractor fill nhiều slot cùng lúc → rest ít, không cần batch.
+ * Khách nhắn ngắn "homestay" (chỉ property_type):
+ *   → batch hỏi: ngày + khách + budget + khu vực trong 1 câu, không chia 4 turn.
+ */
+interface MissingSlotsPrompt {
+  parts: string[];            // human-readable list
+  examples: string[];         // example answers
+  count: number;
+}
+
+function getMissingSlotsForFlow(state: ConversationState): MissingSlotsPrompt {
+  const s = state.slots;
+  const isLong = s.rental_mode === 'long_term';
+  const parts: string[] = [];
+  const examples: string[] = [];
+
+  if (isLong) {
+    if (!s.months) { parts.push('thời gian thuê'); examples.push('3 tháng'); }
+    if (!s.checkin_date) { parts.push('ngày dọn vào'); examples.push('đầu tháng sau'); }
+    if (!s.guests_adults) { parts.push('số người'); examples.push('2 người'); }
+    if (!s.budget_max && !s.budget_no_filter) { parts.push('budget/tháng'); examples.push('≤8tr'); }
+    if (!s.area_normalized) { parts.push('khu vực'); examples.push('Q1'); }
+  } else {
+    if (!s.checkin_date) { parts.push('ngày check-in'); examples.push('25/5'); }
+    if (!s.nights) { parts.push('số đêm'); examples.push('2 đêm'); }
+    if (!s.guests_adults) { parts.push('số khách'); examples.push('2 người'); }
+    if (!s.budget_max && !s.budget_no_filter) { parts.push('budget'); examples.push('≤800k/đêm'); }
+    if (!s.area_normalized) { parts.push('khu vực'); examples.push('gần sân bay'); }
+  }
+
+  return { parts, examples, count: parts.length };
+}
+
+/**
+ * Build combined ask message when ≥2 slots are missing.
+ * Returns null if 0-1 missing (use handler's single-slot ask).
+ */
+function buildBatchedAsk(state: ConversationState): string | null {
+  const missing = getMissingSlotsForFlow(state);
+  if (missing.count < 2) return null;      // fall back to single-slot handler
+
+  const ack = buildSlotAck(state);
+  const example = missing.examples.slice(0, Math.min(missing.count, 4)).join(' ');
+
+  return `${ack}Anh/chị cho em xin thêm ${missing.parts.join(' + ')} để em check phòng phù hợp nhất ạ 📋\n\n` +
+    `Em gợi ý cách trả lời gọn: "${example}"`;
+}
+
 /* ═══════════════════════════════════════════
    S4. DATES_ASK (short-term)
    ═══════════════════════════════════════════ */
 
 export function handleDatesAsk(state: ConversationState): HandlerResult {
+  // v24 (Bug #5): if ≥2 slots missing, combine into one batched ask
+  const batched = buildBatchedAsk(state);
+  if (batched) {
+    return {
+      reply: batched,
+      next_stage: 'DATES_ASK',
+      quick_replies: [
+        { title: '📅 Hôm nay', payload: 'dates_today' },
+        { title: '📅 Cuối tuần', payload: 'dates_weekend' },
+        { title: '📅 Tuần sau', payload: 'dates_nextweek' },
+      ],
+    };
+  }
+
   const typeLabel = PROP_LABEL[state.slots.property_type || 'hotel'] || 'chỗ ở';
   const ack = buildSlotAck(state);
   return {
@@ -335,6 +404,20 @@ export function handleChdvStartDateAsk(state: ConversationState): HandlerResult 
    ═══════════════════════════════════════════ */
 
 export function handleGuestsAsk(state: ConversationState): HandlerResult {
+  // v24 (Bug #5): batch if ≥2 slots missing
+  const batched = buildBatchedAsk(state);
+  if (batched) {
+    return {
+      reply: batched,
+      next_stage: 'GUESTS_ASK',
+      quick_replies: [
+        { title: '1 khách', payload: 'guests_1' },
+        { title: '2 khách', payload: 'guests_2' },
+        { title: '4+ khách', payload: 'guests_4plus' },
+      ],
+    };
+  }
+
   const isLong = state.slots.rental_mode === 'long_term';
   const ack = buildSlotAck(state);
   const reply = isLong
@@ -358,6 +441,20 @@ export function handleGuestsAsk(state: ConversationState): HandlerResult {
    ═══════════════════════════════════════════ */
 
 export function handleBudgetAsk(state: ConversationState): HandlerResult {
+  // v24 (Bug #5): batch if ≥2 slots missing
+  const batched = buildBatchedAsk(state);
+  if (batched) {
+    return {
+      reply: batched,
+      next_stage: 'BUDGET_ASK',
+      quick_replies: [
+        { title: '< 500k', payload: 'budget_n_low' },
+        { title: '500k-1tr', payload: 'budget_n_mid' },
+        { title: 'Đâu cũng được', payload: 'budget_any' },
+      ],
+    };
+  }
+
   const isLong = state.slots.rental_mode === 'long_term';
   const isHourly = state.slots.rental_sub_mode === 'hourly';
   const ack = buildSlotAck(state);
@@ -405,6 +502,20 @@ export function handleBudgetAsk(state: ConversationState): HandlerResult {
    ═══════════════════════════════════════════ */
 
 export function handleAreaAsk(state: ConversationState): HandlerResult {
+  // v24 (Bug #5): batch if ≥2 slots missing (unlikely tại AREA_ASK — thường cuối flow)
+  const batched = buildBatchedAsk(state);
+  if (batched) {
+    return {
+      reply: batched,
+      next_stage: 'AREA_ASK',
+      quick_replies: [
+        { title: 'Q1', payload: 'area_q1' },
+        { title: 'Sân bay', payload: 'area_airport' },
+        { title: 'Đâu cũng được', payload: 'area_any' },
+      ],
+    };
+  }
+
   const typeLabel = PROP_LABEL[state.slots.property_type || 'hotel'] || 'chỗ ở';
   const ack = buildSlotAck(state);
   return {

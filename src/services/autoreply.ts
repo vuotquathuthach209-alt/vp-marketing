@@ -229,11 +229,14 @@ async function replyToMessages(page: any) {
 
 /** Send a message to a Facebook user via Messenger */
 export async function sendFBMessage(accessToken: string, recipientId: string, text: string) {
+  // v24: FB Messenger KHÔNG render markdown chuẩn; strip để tránh lộ bot.
+  const { sanitizeForChannel } = require('./message-sanitizer');
+  const cleanText = sanitizeForChannel(text, 'fb');
   await axios.post(
     `${GRAPH}/me/messages`,
     {
       recipient: { id: recipientId },
-      message: { text },
+      message: { text: cleanText },
       messaging_type: 'RESPONSE',
     },
     {

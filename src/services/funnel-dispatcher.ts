@@ -76,8 +76,12 @@ function diffSlots(before: BookingSlots, after: BookingSlots): Partial<BookingSl
 /**
  * Build generic answer cho topic phổ biến — liệt kê tất cả hotels thay vì clarify ngay.
  * Return null nếu không có generic answer cho topic đó.
+ *
+ * v24: optional `currentSlots` — nếu đã có slot (area, dates, guests, budget)
+ *      TRÁNH ask lại. Thay vào đó: trả lời dựa trên slot đã có, hoặc chỉ hỏi
+ *      slot còn thiếu.
  */
-function buildGenericAnswer(subCategory: string, msg: string): string | null {
+function buildGenericAnswer(subCategory: string, msg: string, currentSlots?: any): string | null {
   try {
     const hotels = db.prepare(
       `SELECT hp.hotel_id, hp.name_canonical, hp.property_type, hp.district, hp.star_rating,
@@ -127,7 +131,54 @@ function buildGenericAnswer(subCategory: string, msg: string): string | null {
       }
 
       case 'availability': {
-        return `📅 Em check được phòng trống ngay nếu anh/chị cho em biết:\n• Ngày check-in + số đêm\n• Số khách\n• Khu vực muốn ở (Tân Bình / Q1 / ...)\n\nVd: "25/5 2 đêm 2 người gần sân bay"`;
+        // v24 FIX (Bug #1): use current slots instead of re-asking from scratch.
+        //   Nếu khách đã nói "homestay sân bay 2 người hôm nay budget 800k"
+        //   và giờ hỏi "sân bay còn không" → KHÔNG hỏi lại, chạy search ngay.
+        const s = currentSlots || {};
+        const hasDate = !!(s.checkin_date && s.checkin_date !== 'flexible');
+        const hasGuests = !!s.guests_adults;
+        const hasArea = !!(s.area_normalized || s.area);
+
+        // Format acknowledgment of what we already know
+        const have: string[] = [];
+        const missing: string[] = [];
+        if (s.property_type) {
+          const lbl: Record<string, string> = {
+            hotel: 'khách sạn', homestay: 'homestay', villa: 'villa',
+            apartment: 'căn hộ dịch vụ', resort: 'resort',
+          };
+          have.push(lbl[s.property_type] || s.property_type);
+        }
+        if (hasArea) have.push(s.area_normalized || s.area);
+        if (hasDate) {
+          try {
+            const { formatDateVNDisplay } = require('./vn-date-formatter');
+            have.push(`check-in ${formatDateVNDisplay(s.checkin_date) || s.checkin_date}`);
+          } catch { have.push(`check-in ${s.checkin_date}`); }
+        } else {
+          missing.push('ngày check-in');
+        }
+        if (hasGuests) {
+          have.push(`${s.guests_adults} khách${s.guests_children ? ' + ' + s.guests_children + ' bé' : ''}`);
+        } else {
+          missing.push('số khách');
+        }
+        if (s.budget_max) {
+          const tier = s.budget_max >= 1_000_000
+            ? `${(s.budget_max / 1_000_000).toFixed(1)}tr`
+            : `${Math.round(s.budget_max / 1000)}k`;
+          have.push(`budget ≤${tier}`);
+        }
+
+        // Nếu có đủ (dates + guests) → trả SIGNAL null cho dispatcher tự route
+        // vào handleShowResults (không trả lời hardcoded). Tránh re-ask.
+        if (hasDate && hasGuests) {
+          return null;   // dispatcher sẽ route vào SHOW_RESULTS/real search
+        }
+
+        // Có 1 phần — acknowledge + chỉ hỏi phần thiếu (gộp, không chia turn)
+        const haveStr = have.length ? `Dạ em note ${have.join(' + ')} rồi ạ 👍. ` : '';
+        return `${haveStr}Anh/chị cho em xin thêm ${missing.join(' + ')} để em check phòng trống ngay nhé ạ 📅`;
       }
 
       case 'location': {
@@ -563,13 +614,16 @@ export async function processFunnelMessage(
   // ROUTE 1: Try answer GENERIC FIRST — nếu info_question về topic chung
   //          (price, wifi, checkin_time, pet, ...) → trả lời overview
   //          cho toàn bộ active hotels thay vì clarify ngay.
+  // v24: pass currentSlots để availability answer biết context + không re-ask
   if (geminiIntent?.primary_intent === 'info_question' && geminiIntent.sub_category && geminiIntent.in_knowledge_base) {
-    const genericAnswer = buildGenericAnswer(geminiIntent.sub_category, msg);
+    const currentState = getState(senderId);
+    const currentSlots = currentState?.slots || {};
+    const genericAnswer = buildGenericAnswer(geminiIntent.sub_category, msg, currentSlots);
     if (genericAnswer) {
       return {
         reply: genericAnswer,
         intent: `generic_${geminiIntent.sub_category}`,
-        stage: 'INIT',
+        stage: currentState?.stage || 'INIT',   // v24: PRESERVE stage — không reset về INIT nếu đang trong form
         meta: { gemini: geminiIntent },
       };
     }
