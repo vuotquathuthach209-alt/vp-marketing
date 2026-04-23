@@ -21,15 +21,15 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 import uvicorn
 
-# PaddleOCR imports — lazy để startup nhanh và error rõ ràng
+# EasyOCR imports — nhẹ hơn PaddleOCR và stable hơn trên Ubuntu 24.04
 try:
-    from paddleocr import PaddleOCR
+    import easyocr
     import numpy as np
     from PIL import Image
     import io
 except ImportError as e:
     print(f"FATAL: {e}", file=sys.stderr)
-    print("Run: pip install paddlepaddle paddleocr pillow", file=sys.stderr)
+    print("Run: pip install easyocr torch pillow opencv-python-headless", file=sys.stderr)
     sys.exit(1)
 
 # Logging
@@ -44,21 +44,16 @@ SHARED_TOKEN = os.environ.get("OCR_SHARED_TOKEN", "dev-token-change-me")
 MAX_IMAGE_SIZE_MB = 10
 
 # ═══════════════════════════════════════════════════════════
-# Preload PaddleOCR models (1 time, at startup)
+# Preload EasyOCR models (1 time, at startup)
 # ═══════════════════════════════════════════════════════════
-log.info("Loading PaddleOCR models...")
+log.info("Loading EasyOCR models (vi + en)...")
 t0 = time.time()
 try:
-    # PP-OCRv4 mobile (small + fast) with multilingual recognition
-    # lang='en' actually loads Latin rec model which handles Vietnamese OK
-    ocr = PaddleOCR(
-        use_angle_cls=False,    # Screenshots đã đúng orientation
-        lang='en',              # 'en' = latin_PP-OCRv3_rec (handle EN + VN without diacritics)
-        show_log=False,
-    )
+    # Vietnamese + English — handle cả dấu tiếng Việt + số + English keyword
+    reader = easyocr.Reader(['vi', 'en'], gpu=False, verbose=False)
     log.info(f"Models loaded in {time.time() - t0:.1f}s")
 except Exception as e:
-    log.error(f"Failed to load PaddleOCR: {e}")
+    log.error(f"Failed to load EasyOCR: {e}")
     raise
 
 # ═══════════════════════════════════════════════════════════
@@ -135,32 +130,28 @@ async def ocr_endpoint(req: OcrRequest):
 
         width, height = img.size
 
-        # Run OCR
+        # Run OCR (EasyOCR format)
         try:
-            result = ocr.ocr(img_np, cls=False)
+            # readtext returns: [(bbox, text, confidence), ...]
+            result = reader.readtext(img_np, detail=1, paragraph=False)
         except Exception as e:
             log.error(f"OCR inference fail: {e}")
             raise HTTPException(status_code=500, detail=f"ocr inference error: {e}")
 
         lines = []
         raw_text_parts = []
-        # result format: [[ [bbox, (text, confidence)], ... ]] (outer list = pages)
-        if result and result[0]:
-            for item in result[0]:
-                if not item or len(item) < 2:
-                    continue
-                bbox, rec = item[0], item[1]
-                if not rec or len(rec) < 2:
-                    continue
-                text, conf = rec[0], float(rec[1])
-                if conf < req.min_confidence:
-                    continue
-                lines.append({
-                    "text": text,
-                    "confidence": round(conf, 3),
-                    "bbox": [[float(p[0]), float(p[1])] for p in bbox] if bbox else [],
-                })
-                raw_text_parts.append(text)
+        for item in (result or []):
+            if not item or len(item) < 3:
+                continue
+            bbox, text, conf = item[0], item[1], float(item[2])
+            if conf < req.min_confidence:
+                continue
+            lines.append({
+                "text": text,
+                "confidence": round(conf, 3),
+                "bbox": [[float(p[0]), float(p[1])] for p in bbox] if bbox else [],
+            })
+            raw_text_parts.append(text)
 
         latency = int((time.time() - t0) * 1000)
         log.info(f"OCR: {len(lines)} lines, {latency}ms, image {width}x{height} {size_mb:.1f}MB")

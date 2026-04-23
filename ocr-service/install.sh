@@ -33,10 +33,10 @@ echo "[3/5] Installing PaddleOCR (may take 5-10 min)..."
 "$VENV_DIR/bin/pip" install -r requirements.txt
 
 # 4. Warmup (download models)
-echo "[4/5] Warmup — downloading PaddleOCR models (~25MB)..."
+echo "[4/5] Warmup — downloading EasyOCR models (~100MB for vi+en)..."
 "$VENV_DIR/bin/python" -c "
-from paddleocr import PaddleOCR
-ocr = PaddleOCR(use_angle_cls=False, lang='en', show_log=False)
+import easyocr
+r = easyocr.Reader(['vi', 'en'], gpu=False, verbose=False)
 print('Models ready.')
 " || echo "WARN: warmup failed, models sẽ download khi chạy service"
 
