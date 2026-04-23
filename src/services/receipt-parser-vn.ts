@@ -80,13 +80,15 @@ function parseAmount(text: string): number | null {
   return null;
 }
 
-/** Parse timestamp từ biên lai (nhiều format). Return epoch ms. */
+/** Parse timestamp từ biên lai (nhiều format). Return epoch ms.
+ *  Note: EasyOCR đôi khi đọc ':' thành '.' → tolerate [:.] between time parts. */
 function parseTimestamp(text: string): { ts: number | null; raw: string | null } {
   // Pattern: HH:MM:SS DD/MM/YYYY or HH:MM DD/MM/YYYY
+  // EasyOCR có thể đọc ':' thành '.' hoặc ';' → regex dùng [:.;]
   const patterns = [
-    /(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(?:ngày\s+)?(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/i,
-    /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/i,
-    /(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/,
+    /(\d{1,2})[:.;](\d{2})(?:[:.;](\d{2}))?\s*(?:ngày\s+)?(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/i,
+    /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})\s+(\d{1,2})[:.;](\d{2})(?:[:.;](\d{2}))?/i,
+    /(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2})[:.;](\d{2})(?:[:.;](\d{2}))?/,
   ];
 
   for (let i = 0; i < patterns.length; i++) {
