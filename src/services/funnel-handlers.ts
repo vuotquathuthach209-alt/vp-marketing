@@ -439,9 +439,95 @@ function getReturningCustomerHint(phone: string | undefined): string | null {
   return null;
 }
 
+/**
+ * v14: Reply khi hết phòng — gợi ý ngày liền kề còn phòng + hotels alternative.
+ */
+function buildNoAvailabilityReply(checkinDate: string, guests: number): HandlerResult {
+  const lines: string[] = [];
+  lines.push(`😔 Tiếc quá, toàn bộ chỗ Sonder đã kín phòng cho ngày ${checkinDate} rồi ạ.`);
+
+  // Gợi ý: tìm ngày liền kề (±3 ngày) còn phòng
+  const alternativeDates: Array<{ date: string; available_hotels: number; min_price: number }> = [];
+  for (let offset of [1, -1, 2, -2, 3, -3]) {
+    const d = new Date(checkinDate);
+    d.setDate(d.getDate() + offset);
+    const dateStr = d.toISOString().slice(0, 10);
+    try {
+      const { getAnyAvailable } = require('./sync-hub');
+      const hotels = getAnyAvailable(dateStr);
+      if (hotels.length > 0) {
+        const total = hotels.reduce((sum: number, h: any) => sum + h.total_available, 0);
+        const minPrice = Math.min(...hotels.map((h: any) => h.min_price || Infinity));
+        alternativeDates.push({ date: dateStr, available_hotels: hotels.length, min_price: minPrice });
+        if (alternativeDates.length >= 3) break;
+      }
+    } catch {}
+  }
+
+  if (alternativeDates.length > 0) {
+    lines.push('\n✨ Em có ngày khác còn phòng cho anh/chị:');
+    alternativeDates.forEach((a, i) => {
+      const priceStr = a.min_price && a.min_price !== Infinity ? ` từ ${Math.round(a.min_price / 1000)}k/đêm` : '';
+      lines.push(`  ${i + 1}. ${a.date} — ${a.available_hotels} chỗ còn phòng${priceStr}`);
+    });
+    lines.push('\nAnh/chị muốn chọn ngày nào ạ?');
+  } else {
+    lines.push('\n💡 Anh/chị để em xin SĐT, em sẽ notify ngay khi có khách hủy nhé ạ 🙏');
+  }
+
+  // Notify staff: peak date alert
+  try {
+    const db = require('../db').db;
+    const count = db.prepare(
+      `SELECT COUNT(*) as n FROM conversation_memory
+       WHERE message LIKE ? AND created_at > ?`
+    ).get('%' + checkinDate + '%', Date.now() - 24 * 3600_000) as any;
+    if (count?.n >= 3) {
+      // Hơn 3 khách hỏi cùng 1 peak date → Telegram notify
+      const { notifyAll } = require('./telegram');
+      notifyAll(`⚠️ *Peak date alert*\nNgày: ${checkinDate}\n${count.n} khách hỏi trong 24h qua, tất cả Sonder đã full.`).catch(() => {});
+    }
+  } catch {}
+
+  return {
+    reply: lines.join('\n'),
+    next_stage: 'INIT',
+    quick_replies: alternativeDates.length > 0
+      ? alternativeDates.slice(0, 3).map((a) => ({
+          title: `📅 ${a.date}`,
+          payload: `change_date_${a.date}`,
+        }))
+      : [{ title: '📱 Để SĐT, notify em', payload: 'ask_phone' }],
+  };
+}
+
 export function handleShowResults(state: ConversationState): HandlerResult {
   const slots = state.slots;
   const isLong = slots.rental_mode === 'long_term';
+
+  // v14: 24h cutoff — check-in trong 24h → redirect OTA web (không cọc qua bot)
+  if (slots.checkin_date && slots.checkin_date !== 'flexible' && !isLong) {
+    const checkinTs = Date.parse(slots.checkin_date + 'T14:00:00+07:00');  // 14h VN check-in
+    const hoursUntil = (checkinTs - Date.now()) / 3600_000;
+    if (!isNaN(hoursUntil) && hoursUntil < 24 && hoursUntil > -12) {
+      // Within 24h — send OTA booking link
+      const hoursText = hoursUntil > 1
+        ? `${Math.round(hoursUntil)} tiếng`
+        : hoursUntil > 0
+        ? `< 1 tiếng`
+        : `hôm nay`;
+      return {
+        reply: `Dạ do check-in trong ${hoursText} tới, để đảm bảo giữ phòng ngay em gửi link đặt trực tiếp trên web Sonder nhé ạ 🔗\n\n` +
+          `👉 https://sondervn.com/book?checkin=${slots.checkin_date}${slots.nights ? `&nights=${slots.nights}` : ''}${slots.guests_adults ? `&guests=${slots.guests_adults}` : ''}\n\n` +
+          `✨ Ưu điểm đặt qua web:\n` +
+          `  • Xác nhận phòng ngay (không chờ verify cọc)\n` +
+          `  • Thanh toán qua VNPay/MoMo/Credit card\n` +
+          `  • Có confirmation email ngay\n\n` +
+          `Hoặc gọi hotline **0348 644 833** để staff hỗ trợ đặt nhanh ạ.`,
+        next_stage: 'INIT',
+      };
+    }
+  }
 
   // Query matching properties
   let results = searchByArea({
@@ -452,6 +538,36 @@ export function handleShowResults(state: ConversationState): HandlerResult {
     min_guests: slots.guests_adults,
     limit: 5,
   });
+
+  // v14: Filter by availability nếu có checkin_date
+  if (slots.checkin_date && slots.checkin_date !== 'flexible' && !isLong && results.length > 0) {
+    try {
+      const availableHotelIds = db.prepare(
+        `SELECT DISTINCT hotel_id FROM sync_availability
+         WHERE date_str = ? AND available_rooms > 0 AND stop_sell = 0
+           AND hotel_id IN (${results.map(() => '?').join(',')})`
+      ).all(slots.checkin_date, ...results.map(r => r.hotel_id)) as any[];
+      const availableSet = new Set(availableHotelIds.map(r => r.hotel_id));
+
+      // Only keep hotels với availability confirmed. Nếu sync_availability EMPTY cho ngày này
+      // → không filter (fallback legacy behavior, giả định còn phòng)
+      const hasAnyAvailData = db.prepare(
+        `SELECT COUNT(*) as n FROM sync_availability WHERE date_str = ?`
+      ).get(slots.checkin_date) as any;
+
+      if (hasAnyAvailData.n > 0) {
+        const filtered = results.filter(r => availableSet.has(r.hotel_id));
+        if (filtered.length === 0) {
+          // Tất cả full — reply "hết phòng" + gợi ý ngày khác
+          return buildNoAvailabilityReply(slots.checkin_date, slots.guests_adults || 2);
+        }
+        results = filtered;
+      }
+    } catch (e: any) {
+      console.warn('[funnel] availability filter fail:', e?.message);
+      // Tiếp tục với results không filter
+    }
+  }
 
   // Fix #4: Progressive fallback — broaden filters lần lượt
   let fallbackNote = '';

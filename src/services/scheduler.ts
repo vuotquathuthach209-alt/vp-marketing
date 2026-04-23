@@ -173,20 +173,16 @@ export function startScheduler() {
     }
   });
 
-  // ── OTA Sync: hotels+rooms mỗi 6h ──
-  cron.schedule('0 */6 * * *', () => {
-    runFullSync().catch(e => console.error('[scheduler] ota-sync full error:', e));
-  });
-
-  // ── OTA Sync: bookings mỗi 1h ──
-  cron.schedule('30 * * * *', () => {
-    runBookingSync().catch(e => console.error('[scheduler] ota-sync bookings error:', e));
-  });
-
-  // Run initial OTA sync on startup (non-blocking)
-  setTimeout(() => {
-    runFullSync().catch(e => console.error('[scheduler] initial ota-sync error:', e));
-  }, 10000);
+  // ── OTA Sync (v13: DISABLED — returning 0 hotels, replaced by Sync Hub) ──
+  // Old pull-based sync đang fail vì:
+  //   - OTA data validation fail ("missing name_canonical")
+  //   - JSON parse errors (undefined values)
+  // New approach: OTA team push availability qua /api/sync/availability endpoint.
+  // Nếu cần resurrect old sync, uncomment + fix source data trước.
+  //
+  // cron.schedule('0 */6 * * *', () => { runFullSync()... });
+  // cron.schedule('30 * * * *', () => { runBookingSync()... });
+  // setTimeout(() => runFullSync(), 10000);
 
   // ── FB Token auto-refresh: 2h sáng mỗi ngày ──
   cron.schedule('0 2 * * *', () => {

@@ -596,6 +596,95 @@ CREATE INDEX IF NOT EXISTS idx_labels_hotel ON conversation_labels(hotel_id, cre
 CREATE INDEX IF NOT EXISTS idx_labels_outcome ON conversation_labels(outcome_id);
 `);
 
+// ═══════════════════════════════════════════════════════════
+// v14 Sync Hub — Event broker giữa OTA Web team & VP MKT Bot
+// Mục đích: OTA push availability updates + Bot push bookings → PMS
+// HMAC-signed, audit logged, rate limited.
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+-- API keys cho các team gọi sync hub
+CREATE TABLE IF NOT EXISTS sync_api_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key_id TEXT UNIQUE NOT NULL,          -- 'ota-web-prod', 'bot-internal'
+  secret TEXT NOT NULL,                 -- HMAC SHA256 secret (64 chars)
+  team_name TEXT NOT NULL,
+  permissions TEXT NOT NULL,            -- JSON array: ['write_availability', 'read_bookings']
+  active INTEGER DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER,
+  request_count INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_sync_keys_active ON sync_api_keys(active, key_id);
+
+-- Availability layer: room_type × date
+CREATE TABLE IF NOT EXISTS sync_availability (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  room_type_code TEXT NOT NULL,         -- match hotel_room_catalog.room_key
+  date_str TEXT NOT NULL,               -- 'YYYY-MM-DD' VN timezone
+  total_rooms INTEGER NOT NULL DEFAULT 0,
+  available_rooms INTEGER NOT NULL DEFAULT 0,
+  base_price INTEGER,                   -- VND per night
+  stop_sell INTEGER DEFAULT 0,          -- manual block
+  source TEXT DEFAULT 'ota',            -- 'ota' | 'bot' | 'manual' | 'seed'
+  updated_at INTEGER NOT NULL,
+  UNIQUE(hotel_id, room_type_code, date_str)
+);
+CREATE INDEX IF NOT EXISTS idx_sync_avail_hotel_date ON sync_availability(hotel_id, date_str);
+CREATE INDEX IF NOT EXISTS idx_sync_avail_date ON sync_availability(date_str, available_rooms);
+CREATE INDEX IF NOT EXISTS idx_sync_avail_updated ON sync_availability(updated_at);
+
+-- Booking shared layer: bot + OTA + PMS cùng dùng
+CREATE TABLE IF NOT EXISTS sync_bookings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  source TEXT NOT NULL,                 -- 'bot' | 'ota' | 'walk_in'
+  source_ref TEXT,                      -- internal ID của source system
+  pms_booking_id TEXT,                  -- set bởi OTA team khi đã note PMS
+  room_type_code TEXT NOT NULL,
+  checkin_date TEXT NOT NULL,
+  checkout_date TEXT NOT NULL,
+  nights INTEGER NOT NULL DEFAULT 1,
+  guests INTEGER DEFAULT 2,
+  total_price INTEGER,
+  deposit_amount INTEGER,
+  deposit_paid INTEGER DEFAULT 0,
+  deposit_proof_url TEXT,
+  customer_name TEXT,
+  customer_phone TEXT,
+  customer_email TEXT,
+  status TEXT DEFAULT 'hold',           -- 'hold'(15min) | 'confirmed' | 'synced' | 'cancelled' | 'checked_in' | 'no_show'
+  expires_at INTEGER,                   -- cho status='hold'
+  synced_to_pms_at INTEGER,
+  sender_id TEXT,
+  created_by TEXT,                      -- 'bot' | 'admin' | 'ota_import'
+  notes TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sync_bookings_hotel_date ON sync_bookings(hotel_id, checkin_date);
+CREATE INDEX IF NOT EXISTS idx_sync_bookings_status ON sync_bookings(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_sync_bookings_pending_pms ON sync_bookings(status, synced_to_pms_at);
+CREATE INDEX IF NOT EXISTS idx_sync_bookings_expires ON sync_bookings(status, expires_at);
+
+-- Audit log (moi request in/out)
+CREATE TABLE IF NOT EXISTS sync_events_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type TEXT NOT NULL,             -- 'availability_push' | 'booking_hold' | 'booking_confirm' | 'pms_sync_done'
+  direction TEXT,                       -- 'inbound' | 'outbound'
+  actor TEXT,                           -- key_id của API key hoặc 'bot_internal'
+  hotel_id INTEGER,
+  payload_json TEXT,
+  hmac_verified INTEGER,
+  http_status INTEGER,
+  error TEXT,
+  duration_ms INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sync_events_type ON sync_events_log(event_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sync_events_actor ON sync_events_log(actor, created_at DESC);
+`);
+
 // 1.1 Migration: thêm hotel_id vào các bảng hiện tại (safe — chỉ ADD COLUMN nếu chưa có)
 function safeAddColumn(table: string, column: string, type: string, defaultVal?: string) {
   try {
