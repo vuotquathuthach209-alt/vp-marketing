@@ -336,9 +336,11 @@ export async function discoverIgFromFbPages(hotelId: number): Promise<Array<{
 
   for (const page of pages) {
     try {
+      // v22 FIX: account_type field chỉ có trong IG Graph API khi query IG directly,
+      // không phải khi nested qua Page. Dùng safer fields trước.
       const pageResp = await axios.get(`${GRAPH}/${page.fb_page_id}`, {
         params: {
-          fields: 'instagram_business_account{id,username,followers_count,media_count,account_type,biography}',
+          fields: 'instagram_business_account{id,username,followers_count,media_count,biography}',
           access_token: page.access_token,
         },
         timeout: 10_000,
@@ -355,6 +357,17 @@ export async function discoverIgFromFbPages(hotelId: number): Promise<Array<{
         continue;
       }
 
+      // Optional: thử lấy account_type qua IG endpoint (không critical)
+      let accType: string | undefined;
+      try {
+        const igResp = await axios.get(`${GRAPH}/${ig.id}`, {
+          params: { fields: 'username,ig_id', access_token: page.access_token },
+          timeout: 5_000,
+        });
+        // Nếu call này success → token có permission đủ để publish
+        accType = 'BUSINESS';  // Implicitly BUSINESS vì IG đã link với Page (FB chỉ cho phép Business IG link)
+      } catch {}
+
       // Check nếu đã config trong DB chưa
       const existing = db.prepare(
         `SELECT id FROM instagram_accounts WHERE ig_business_id = ? AND hotel_id = ? AND active = 1`
@@ -365,8 +378,9 @@ export async function discoverIgFromFbPages(hotelId: number): Promise<Array<{
         fb_page_name: page.name,
         ig_business_id: ig.id,
         ig_username: ig.username,
-        ig_account_type: ig.account_type,
+        ig_account_type: accType,
         ig_followers: ig.followers_count,
+        ig_media_count: ig.media_count,
         linked: true,
         already_configured: !!existing,
       });
