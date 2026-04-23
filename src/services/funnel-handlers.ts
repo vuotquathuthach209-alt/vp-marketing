@@ -162,11 +162,31 @@ export function handlePropertyTypeAsk(state: ConversationState): HandlerResult {
       replyParts.push(lines.join('\n'));
     }
   } else {
-    // New customer
-    replyParts.push(`Chào anh/chị! 👋 Em là trợ lý Sonder — nền tảng đặt phòng trực tuyến.`);
-    replyParts.push(`Anh/chị cần loại hình nào ạ?`);
-    replyParts.push(lines.join('\n'));
-    replyParts.push(`Cho em biết loại hình + ngày check-in + số khách, em tư vấn chỗ phù hợp nhất ạ! 🙌`);
+    // New customer — try A/B variant of greeting
+    let greetingText: string | null = null;
+    let variantId: number | null = null;
+    try {
+      const { pickVariant, recordImpression } = require('./reply-variant-selector');
+      const variant = pickVariant(state.sender_id || 'anonymous', state.hotel_id || 0, 'greeting_new');
+      if (variant) {
+        greetingText = variant.content;
+        variantId = variant.id;
+        recordImpression(variant.id);
+        (state as any)._variant_greeting_id = variant.id;  // cho classifier record outcome sau
+      }
+    } catch {}
+
+    if (greetingText) {
+      // Variant content có thể đã có CTA → chỉ append list types
+      replyParts.push(greetingText);
+      replyParts.push(lines.join('\n'));
+    } else {
+      // Fallback hardcoded
+      replyParts.push(`Chào anh/chị! 👋 Em là trợ lý Sonder — nền tảng đặt phòng trực tuyến.`);
+      replyParts.push(`Anh/chị cần loại hình nào ạ?`);
+      replyParts.push(lines.join('\n'));
+      replyParts.push(`Cho em biết loại hình + ngày check-in + số khách, em tư vấn chỗ phù hợp nhất ạ! 🙌`);
+    }
   }
 
   return {

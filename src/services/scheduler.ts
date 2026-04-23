@@ -392,6 +392,32 @@ export function startScheduler() {
     }
   });
 
+  // ── v17 Self-improvement: weekly winner selection + report ──
+  // Chủ Nhật 9h sáng VN time = 2h UTC Sunday
+  cron.schedule('0 2 * * 0', async () => {
+    try {
+      const { selectAllWinners } = require('./winner-selector');
+      const { sendWeeklyPerformanceReport } = require('./weekly-performance-report');
+      const { extractLessonsFromLabels } = require('./prompt-lessons');
+
+      // 1. Extract new lessons từ admin labels
+      const lessons = extractLessonsFromLabels();
+      console.log(`[scheduler] prompt-lessons: ${JSON.stringify(lessons)}`);
+
+      // 2. Auto winner selection cho running experiments
+      const winners = selectAllWinners();
+      const promoted = winners.filter((w: any) => w.decision === 'promoted').length;
+      if (winners.length > 0) {
+        console.log(`[scheduler] winner-select: ${promoted}/${winners.length} promoted`);
+      }
+
+      // 3. Weekly report Telegram
+      await sendWeeklyPerformanceReport(1);
+    } catch (e: any) {
+      console.error('[scheduler] weekly self-improvement error:', e?.message);
+    }
+  });
+
   // ── Content Intelligence — AUTO WEEKLY POST ────────────────────────
   // Thứ 2 lúc 9h sáng VN time (= 2h UTC): bot tự fetch inspiration + remix + publish 1 bài/tuần
   // Cron: 0 2 * * 1 (UTC) = 9h VN time thứ 2

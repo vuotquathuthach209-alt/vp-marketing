@@ -775,6 +775,86 @@ CREATE INDEX IF NOT EXISTS idx_sends_sender ON broadcast_sends(sender_id);
 `);
 
 // ═══════════════════════════════════════════════════════════
+// v17 Self-Improvement Engine
+// - reply_templates: variant pool cho mỗi touchpoint (greeting, show_results, closing, ...)
+// - reply_experiments: A/B test config (which variants compete)
+// - reply_assignments: deterministic hash(sender×experiment) → variant
+// - prompt_lessons: supervised signals từ conversation_labels (do/don't injections)
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+-- Template pool — mỗi row = 1 variant cho 1 touchpoint
+CREATE TABLE IF NOT EXISTS reply_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL DEFAULT 0,          -- 0 = global
+  template_key TEXT NOT NULL,                    -- 'greeting_new' | 'show_results_empty' | 'show_results_list' | 'closing_ask_phone'
+  variant_name TEXT NOT NULL,                    -- 'A' | 'B' | 'C'
+  content TEXT NOT NULL,                         -- Template text with {{vars}} placeholders
+  vars_schema TEXT,                              -- JSON {vars: ['user_name', 'hotel_name']} — hint
+  weight INTEGER DEFAULT 100,                    -- Traffic split (higher = more traffic)
+  active INTEGER DEFAULT 1,
+  is_winner INTEGER DEFAULT 0,                   -- 1 = promoted winner after A/B test
+  impressions INTEGER DEFAULT 0,
+  conversions INTEGER DEFAULT 0,
+  misunderstood INTEGER DEFAULT 0,
+  ghosted INTEGER DEFAULT 0,
+  converted_to_lead INTEGER DEFAULT 0,
+  booked INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE(hotel_id, template_key, variant_name)
+);
+CREATE INDEX IF NOT EXISTS idx_tmpl_key_active ON reply_templates(template_key, active, weight);
+
+-- A/B experiment config
+CREATE TABLE IF NOT EXISTS reply_experiments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL DEFAULT 0,
+  experiment_name TEXT NOT NULL,
+  template_key TEXT NOT NULL,
+  status TEXT DEFAULT 'running',                 -- 'running' | 'winner_selected' | 'stopped'
+  min_sample_size INTEGER DEFAULT 50,
+  winner_variant_id INTEGER,
+  winner_conversion_rate REAL,
+  winner_selected_at INTEGER,
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER,
+  notes TEXT,
+  UNIQUE(hotel_id, template_key, experiment_name)
+);
+CREATE INDEX IF NOT EXISTS idx_exp_status ON reply_experiments(status, template_key);
+
+-- Assignments (sender × experiment → variant) cho consistency cross-session
+CREATE TABLE IF NOT EXISTS reply_assignments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sender_id TEXT NOT NULL,
+  experiment_id INTEGER NOT NULL,
+  variant_id INTEGER NOT NULL,
+  assigned_at INTEGER NOT NULL,
+  UNIQUE(sender_id, experiment_id)
+);
+CREATE INDEX IF NOT EXISTS idx_assign_sender ON reply_assignments(sender_id);
+CREATE INDEX IF NOT EXISTS idx_assign_variant ON reply_assignments(variant_id);
+
+-- Supervised lessons extracted từ conversation_labels (admin review từ v13)
+CREATE TABLE IF NOT EXISTS prompt_lessons (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL DEFAULT 0,
+  lesson_type TEXT NOT NULL,                     -- 'avoid' | 'prefer' | 'tone' | 'fact_correction'
+  context TEXT,                                  -- 'greeting' | 'cancellation' | 'any'
+  description TEXT NOT NULL,                     -- natural language lesson
+  example_bad TEXT,                              -- bot reply that was labeled 'bad'
+  example_good TEXT,                             -- admin-provided correction
+  source_outcome_id INTEGER,                     -- link bot_reply_outcomes
+  source_label_id INTEGER,                       -- link conversation_labels
+  injected_count INTEGER DEFAULT 0,              -- how many times injected into prompts
+  active INTEGER DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lessons_context ON prompt_lessons(context, active, lesson_type);
+`);
+
+// ═══════════════════════════════════════════════════════════
 // v14 Sync Hub — Event broker giữa OTA Web team & VP MKT Bot
 // Mục đích: OTA push availability updates + Bot push bookings → PMS
 // HMAC-signed, audit logged, rate limited.
