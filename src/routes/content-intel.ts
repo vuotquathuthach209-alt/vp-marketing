@@ -281,10 +281,12 @@ router.post('/auto-weekly/run-now', async (req: AuthRequest, res) => {
     const { runWeeklyAutoPost, ciPublishedThisWeek } = require('../services/ci-auto-weekly');
 
     if (force) {
-      // Reset đếm: không thực sự xóa, chỉ tạm set published_at backward cho bài tuần này
+      // Reset đếm: backdate bài tuần này (calendar week) để cho phép chạy lại
+      const { startOfCurrentWeekVN } = require('../services/ci-auto-weekly');
+      const weekStart = startOfCurrentWeekVN();
       db.prepare(
-        `UPDATE remix_drafts SET published_at = published_at - ? WHERE hotel_id = ? AND published_at > ?`
-      ).run(8 * 24 * 3600_000, hotelId, Date.now() - 7 * 24 * 3600_000);
+        `UPDATE remix_drafts SET published_at = published_at - ? WHERE hotel_id = ? AND published_at >= ?`
+      ).run(8 * 24 * 3600_000, hotelId, weekStart);
     }
 
     const already = ciPublishedThisWeek(hotelId);

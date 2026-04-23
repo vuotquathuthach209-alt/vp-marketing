@@ -14,26 +14,47 @@
  * Safety: originality_score >= 0.5 (remix khác bài gốc >= 50%).
  */
 
+import fs from 'fs';
+import path from 'path';
 import { db } from '../db';
+import { config } from '../config';
 import {
   analyzeInspiration,
   remixPost,
   InspirationAnalysis,
 } from './content-intelligence';
-import { publishText } from './facebook';
+import { publishText, publishImage } from './facebook';
 import { fetchOgImage } from './news-ingest';
+import { generateImagePollinations } from './pollinations';
 import { notifyAll } from './telegram';
 
 /* ═══════════════════════════════════════════
-   WEEKLY LIMIT CHECK (CI-specific, independent of news-publisher)
+   WEEKLY LIMIT CHECK (calendar week Mon–Sun VN time)
    ═══════════════════════════════════════════ */
 
+/** Trả về timestamp start-of-week hiện tại (Thứ 2 00:00 VN time, UTC ms). */
+export function startOfCurrentWeekVN(): number {
+  const now = new Date();
+  // VN time = UTC + 7
+  const vnNow = new Date(now.getTime() + 7 * 3600_000);
+  // JS Date.getUTCDay(): Sun=0, Mon=1, ..., Sat=6
+  const vnDay = vnNow.getUTCDay();
+  // Days since Monday: Mon=0, Tue=1, ..., Sun=6
+  const daysSinceMonday = (vnDay + 6) % 7;
+  // Monday 00:00 VN time
+  const monday = new Date(vnNow);
+  monday.setUTCDate(vnNow.getUTCDate() - daysSinceMonday);
+  monday.setUTCHours(0, 0, 0, 0);
+  // Convert back to UTC ms
+  return monday.getTime() - 7 * 3600_000;
+}
+
 export function ciPublishedThisWeek(hotelId: number): number {
-  const weekAgo = Date.now() - 7 * 24 * 3600_000;
+  const weekStart = startOfCurrentWeekVN();
   const row = db.prepare(
     `SELECT COUNT(*) as n FROM remix_drafts
-     WHERE hotel_id = ? AND status = 'published' AND published_at > ?`
-  ).get(hotelId, weekAgo) as any;
+     WHERE hotel_id = ? AND status = 'published' AND published_at >= ?`
+  ).get(hotelId, weekStart) as any;
   return row?.n || 0;
 }
 
@@ -54,6 +75,29 @@ interface InspirationSource {
 /** Ưu tiên picking: article mới nhất về du lịch/khách sạn (region không trùng bài đã post tuần trước) */
 function pickInspirationSource(hotelId: number): InspirationSource | null {
   const twoWeeksAgo = Date.now() - 14 * 24 * 3600_000;
+
+  // Priority 0: inspiration_posts từ social/blog (analyzed, chưa remix gần đây)
+  //             → ƯU TIÊN vì đây là nguồn user-curated / social trend
+  const fromSocial = db.prepare(
+    `SELECT ip.* FROM inspiration_posts ip
+     WHERE ip.hotel_id = ? AND ip.status = 'analyzed'
+       AND NOT EXISTS (
+         SELECT 1 FROM remix_drafts rd
+         WHERE rd.inspiration_id = ip.id AND rd.created_at > ?
+       )
+     ORDER BY ip.created_at DESC
+     LIMIT 1`
+  ).get(hotelId, twoWeeksAgo) as any;
+
+  if (fromSocial) {
+    return {
+      kind: 'existing_inspiration',
+      id: fromSocial.id,
+      text: fromSocial.original_text,
+      source_name: fromSocial.source_name || 'Social/Blog',
+      source_url: fromSocial.source_url,
+    };
+  }
 
   // Loại bỏ các region đã post trong 2 tuần qua (tránh trùng topic)
   const recentRegions = db.prepare(
@@ -106,28 +150,6 @@ function pickInspirationSource(hotelId: number): InspirationSource | null {
         region: article.region,
       };
     }
-  }
-
-  // Priority 2: inspiration_posts đã có AI analysis, chưa được remix gần đây
-  const existing = db.prepare(
-    `SELECT ip.* FROM inspiration_posts ip
-     WHERE ip.hotel_id = ? AND ip.status = 'analyzed'
-       AND NOT EXISTS (
-         SELECT 1 FROM remix_drafts rd
-         WHERE rd.inspiration_id = ip.id AND rd.created_at > ?
-       )
-     ORDER BY ip.created_at DESC
-     LIMIT 1`
-  ).get(hotelId, twoWeeksAgo) as any;
-
-  if (existing) {
-    return {
-      kind: 'existing_inspiration',
-      id: existing.id,
-      text: existing.original_text,
-      source_name: existing.source_name || 'Inspiration',
-      source_url: existing.source_url,
-    };
   }
 
   return null;
@@ -215,13 +237,22 @@ export async function runWeeklyAutoPost(hotelId: number = 1): Promise<WeeklyRunR
     return { ok: false, skipped: `already_posted_this_week(${already})` };
   }
 
-  // 2. Pick inspiration source
+  // 2a. Fresh ingest từ blog travel VN + (nếu token OK) FB fanpage competitors
+  try {
+    const { ingestAllInspirationSources } = require('./social-inspiration-fetcher');
+    const res = await ingestAllInspirationSources(hotelId);
+    console.log(`[ci-weekly] Social ingest: blog=${res.blog.saved} fb=${res.facebook.saved} analyzed=${res.total_analyzed}`);
+  } catch (e: any) {
+    console.warn(`[ci-weekly] social ingest fail:`, e?.message);
+  }
+
+  // 2b. Pick inspiration source (priority: social/blog > news_articles)
   const source = pickInspirationSource(hotelId);
   if (!source) {
     console.log(`[ci-weekly] SKIP: không tìm thấy inspiration source phù hợp`);
     return { ok: false, skipped: 'no_inspiration_available' };
   }
-  console.log(`[ci-weekly] Source: ${source.kind} #${source.id} — "${source.text.slice(0, 60)}..."`);
+  console.log(`[ci-weekly] Source: ${source.kind} #${source.id} (${source.source_name}) — "${source.text.slice(0, 60)}..."`);
 
   // 3. Ensure analyzed
   const analyzed = await ensureInspirationAnalyzed(source, hotelId);
@@ -291,13 +322,34 @@ export async function runWeeklyAutoPost(hotelId: number = 1): Promise<WeeklyRunR
     return { ok: false, error: 'no_fb_page_for_hotel' };
   }
 
-  // 8. Fetch og:image nếu có source_url (tăng engagement)
+  // 8a. Fetch og:image nếu có source_url (tăng engagement)
   let imageUrl: string | undefined = source.image_url;
   if (!imageUrl && source.source_url) {
     try {
       imageUrl = await fetchOgImage(source.source_url);
       console.log(`[ci-weekly] og:image: ${imageUrl ? 'found' : 'none'}`);
     } catch {}
+  }
+
+  // 8b. Nếu vẫn không có image → gen bằng Pollinations AI từ topic_tags
+  let localImagePath: string | null = null;
+  if (!imageUrl) {
+    try {
+      const tags = analyzed.analysis.topic_tags.slice(0, 3).join(', ');
+      const prompt = tags
+        ? `Vietnamese travel scene: ${tags}, hotel apartment, warm lighting, cinematic, high quality, no text, no logo`
+        : 'Vietnam travel luxury serviced apartment, warm lighting, cinematic, cozy, no text, no logo';
+      console.log(`[ci-weekly] Generating AI image: "${prompt.slice(0, 80)}..."`);
+      const mediaId = await generateImagePollinations(prompt);
+      const media = db.prepare(`SELECT filename FROM media WHERE id = ?`).get(mediaId) as any;
+      if (media?.filename) {
+        localImagePath = path.join(config.mediaDir, media.filename);
+        if (!fs.existsSync(localImagePath)) localImagePath = null;
+      }
+      console.log(`[ci-weekly] AI image: ${localImagePath ? 'OK' : 'fail'}`);
+    } catch (e: any) {
+      console.warn(`[ci-weekly] AI image gen fail:`, e?.message);
+    }
   }
 
   // 9. Publish!
@@ -316,6 +368,10 @@ export async function runWeeklyAutoPost(hotelId: number = 1): Promise<WeeklyRunR
         }
       );
       fbPostId = resp.data.post_id || resp.data.id;
+    } else if (localImagePath) {
+      // AI-generated local file
+      const r = await publishImage(page.fb_page_id, page.access_token, remix.remix_text, localImagePath);
+      fbPostId = r.fbPostId;
     } else {
       const r = await publishText(page.fb_page_id, page.access_token, remix.remix_text);
       fbPostId = r.fbPostId;

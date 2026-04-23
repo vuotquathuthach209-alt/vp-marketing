@@ -435,6 +435,16 @@ async function pollLoop() {
       running = false;
       return;
     }
+    if (status === 409) {
+      // Duplicate poller (webhook hoặc instance khác đang dùng same token).
+      // Gỡ webhook + backoff dài.
+      console.warn('[telegram] 409 conflict — deleting any webhook + backing off 60s');
+      try {
+        await axios.post(`${API(token)}/deleteWebhook`, null, { params: { drop_pending_updates: false }, timeout: 10000 });
+      } catch {}
+      pollTimer = setTimeout(pollLoop, 60_000);
+      return;
+    }
     console.warn('[telegram] poll error:', e?.message);
     pollTimer = setTimeout(pollLoop, 5000);
   }
