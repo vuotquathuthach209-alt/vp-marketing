@@ -44,6 +44,7 @@ import contentIntelRouter from './routes/content-intel';
 import feedbackLoopRouter from './routes/feedback-loop';
 import { syncHubRouter, syncHubAdminRouter, syncHubDocsRouter } from './routes/sync-hub';
 import ocrRouter from './routes/ocr';
+import domainDataRouter from './routes/domain-data';
 import './services/agent-tools'; // init table + register tools
 import './services/ota-readonly-guard'; // self-test fires on boot (fail-fast if guard broken)
 // v8: Intent matcher self-test
@@ -168,6 +169,7 @@ app.use('/api/sync', syncHubRouter);             // HMAC auth for OTA team
 app.use('/api/sync-admin', syncHubAdminRouter);  // UI admin (cookie auth)
 app.use('/sync-hub', syncHubDocsRouter);         // Public docs page
 app.use('/api/ocr', ocrRouter);                  // OCR testing + config
+app.use('/api/domain', domainDataRouter);        // Policies + pricing + promotions
 // (OTA push router đã mount trước /api/ota phía trên)
 app.use('/api/data-deletion', dataDeletionRouter);
 app.use('/data-deletion', dataDeletionRouter); // also accept /data-deletion/status (URL returned to FB)

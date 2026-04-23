@@ -597,6 +597,88 @@ CREATE INDEX IF NOT EXISTS idx_labels_outcome ON conversation_labels(outcome_id)
 `);
 
 // ═══════════════════════════════════════════════════════════
+// v15 Domain Data — bot trả lời giá động + chính sách + promo
+// hotel_policy_rules: cancellation, VIP discount, early-checkin, late-checkout, pet, smoking
+// pricing_rules: weekend markup, long-stay discount, early-bird, last-minute, seasonal
+// promotions: active promo codes (SONDER2026, BIRTHDAY, ...)
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+-- Policy rules (detailed, nhiều rules/hotel)
+CREATE TABLE IF NOT EXISTS hotel_policy_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,            -- 0 = global apply all hotels
+  policy_type TEXT NOT NULL,            -- 'cancellation' | 'early_checkin' | 'late_checkout' | 'vip_discount' | 'pet' | 'smoking' | 'child' | 'damage' | 'payment'
+  rule_name TEXT NOT NULL,              -- 'free_48h_cancel', 'vip_tier_regular', ...
+  conditions_json TEXT,                 -- {"hours_before_checkin": 48} | {"customer_tier": "vip"} | {"pet_type": "small_dog"}
+  effect_json TEXT,                     -- {"refund_percent": 100} | {"discount_percent": 10} | {"allowed": true, "surcharge_vnd": 200000}
+  description TEXT,                     -- nội dung bot đọc khi trả lời khách
+  priority INTEGER DEFAULT 0,           -- higher = applied first (when multiple match)
+  active INTEGER DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_policy_rules_hotel_type ON hotel_policy_rules(hotel_id, policy_type, active);
+
+-- Pricing rules (dynamic price calculator)
+CREATE TABLE IF NOT EXISTS pricing_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,            -- 0 = global
+  room_type_code TEXT,                  -- NULL = apply all room types
+  rule_type TEXT NOT NULL,              -- 'weekend_markup' | 'long_stay' | 'early_bird' | 'last_minute' | 'seasonal' | 'group'
+  rule_name TEXT NOT NULL,              -- 'weekend_fri_sat', 'long_7plus_nights', ...
+  conditions_json TEXT,                 -- {"days_of_week": [5,6]} | {"nights_min": 7} | {"days_ahead_max": 3} | {"date_from": "2026-04-30", "date_to": "2026-05-02"}
+  modifier_type TEXT NOT NULL,          -- 'percent_add' | 'percent_discount' | 'fixed_add' | 'fixed_discount'
+  modifier_value REAL NOT NULL,
+  priority INTEGER DEFAULT 0,           -- higher applied first
+  stackable INTEGER DEFAULT 1,          -- 0 = exclusive with other rules
+  description TEXT,
+  active INTEGER DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pricing_rules_hotel_type ON pricing_rules(hotel_id, rule_type, active);
+
+-- Promotions (active codes)
+CREATE TABLE IF NOT EXISTS promotions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL DEFAULT 0,  -- 0 = global
+  code TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  discount_type TEXT NOT NULL,          -- 'percent' | 'fixed_vnd'
+  discount_value REAL NOT NULL,
+  max_discount_vnd INTEGER,             -- cap nếu percent
+  min_order_vnd INTEGER,
+  eligibility_json TEXT,                -- {"first_time_only": true, "customer_tier": ["new", "regular"]}
+  usage_limit INTEGER,                  -- total (NULL = unlimited)
+  usage_per_customer INTEGER DEFAULT 1,
+  used_count INTEGER DEFAULT 0,
+  valid_from INTEGER,
+  valid_to INTEGER,
+  active INTEGER DEFAULT 1,
+  description TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_promotions_code ON promotions(code, active);
+CREATE INDEX IF NOT EXISTS idx_promotions_valid ON promotions(active, valid_from, valid_to);
+
+-- Track promo usage (anti-abuse + analytics)
+CREATE TABLE IF NOT EXISTS promotion_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  promotion_id INTEGER NOT NULL,
+  promotion_code TEXT NOT NULL,
+  sender_id TEXT,
+  booking_id INTEGER,
+  customer_phone TEXT,
+  discount_applied_vnd INTEGER,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (promotion_id) REFERENCES promotions(id)
+);
+CREATE INDEX IF NOT EXISTS idx_promo_usage_sender ON promotion_usage(sender_id, promotion_id);
+CREATE INDEX IF NOT EXISTS idx_promo_usage_booking ON promotion_usage(booking_id);
+`);
+
+// ═══════════════════════════════════════════════════════════
 // v14 Sync Hub — Event broker giữa OTA Web team & VP MKT Bot
 // Mục đích: OTA push availability updates + Bot push bookings → PMS
 // HMAC-signed, audit logged, rate limited.
