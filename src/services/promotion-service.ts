@@ -159,8 +159,9 @@ export function getActivePromotions(hotelId?: number): Promotion[] {
   const where = hotelId
     ? `AND (hotel_id = ? OR hotel_id = 0)`
     : '';
+  // Param order matches placeholders in order: now, now, [hotelId]
   const params: any[] = [now, now];
-  if (hotelId) params.unshift(hotelId);
+  if (hotelId) params.push(hotelId);
 
   const rows = db.prepare(
     `SELECT * FROM promotions
