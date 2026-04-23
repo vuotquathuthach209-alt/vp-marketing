@@ -314,6 +314,76 @@ export function addIgAccount(input: {
   return Number(r.lastInsertRowid);
 }
 
+/** v22: Auto-discover IG Business accounts linked to FB Pages của hotel.
+ *  Calls FB Graph /{page-id}?fields=instagram_business_account — trả về IG nếu đã link.
+ *  Dùng khi admin setup lần đầu: nếu đã link IG ↔ FB Page, chỉ cần 1 click. */
+export async function discoverIgFromFbPages(hotelId: number): Promise<Array<{
+  fb_page_id: number;
+  fb_page_name: string;
+  ig_business_id?: string;
+  ig_username?: string;
+  ig_account_type?: string;
+  ig_followers?: number;
+  linked: boolean;
+  error?: string;
+  already_configured?: boolean;
+}>> {
+  const pages = db.prepare(
+    `SELECT id, fb_page_id, name, access_token FROM pages WHERE hotel_id = ?`
+  ).all(hotelId) as any[];
+
+  const results: any[] = [];
+
+  for (const page of pages) {
+    try {
+      const pageResp = await axios.get(`${GRAPH}/${page.fb_page_id}`, {
+        params: {
+          fields: 'instagram_business_account{id,username,followers_count,media_count,account_type,biography}',
+          access_token: page.access_token,
+        },
+        timeout: 10_000,
+      });
+
+      const ig = pageResp.data?.instagram_business_account;
+      if (!ig) {
+        results.push({
+          fb_page_id: page.id,
+          fb_page_name: page.name,
+          linked: false,
+          error: 'No IG Business account linked. Link tại: Meta Business Suite → Settings → Instagram accounts → Add',
+        });
+        continue;
+      }
+
+      // Check nếu đã config trong DB chưa
+      const existing = db.prepare(
+        `SELECT id FROM instagram_accounts WHERE ig_business_id = ? AND hotel_id = ? AND active = 1`
+      ).get(ig.id, hotelId) as any;
+
+      results.push({
+        fb_page_id: page.id,
+        fb_page_name: page.name,
+        ig_business_id: ig.id,
+        ig_username: ig.username,
+        ig_account_type: ig.account_type,
+        ig_followers: ig.followers_count,
+        linked: true,
+        already_configured: !!existing,
+      });
+    } catch (e: any) {
+      const errMsg = e?.response?.data?.error?.message || e?.message || 'unknown';
+      results.push({
+        fb_page_id: page.id,
+        fb_page_name: page.name,
+        linked: false,
+        error: redactSecrets(errMsg),
+      });
+    }
+  }
+
+  return results;
+}
+
 /** Verify IG account — check Business account type + permissions. */
 export async function verifyIgAccount(igBusinessId: string, accessToken: string): Promise<{
   valid: boolean;

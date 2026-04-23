@@ -8,6 +8,7 @@ import { db } from '../db';
 import { authMiddleware, AuthRequest, getHotelId } from '../middleware/auth';
 import {
   addIgAccount, getIgAccountsForHotel, publishToHotel, verifyIgAccount,
+  discoverIgFromFbPages,
 } from '../services/instagram-publisher';
 import {
   getCrossPostLinks, addCrossPostLink, scheduleCrossPost, publishToTargetPage,
@@ -28,6 +29,59 @@ router.get('/ig/accounts', (req: AuthRequest, res) => {
   try {
     const hotelId = getHotelId(req);
     res.json({ items: getIgAccountsForHotel(hotelId) });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/** v22: Auto-discover IG accounts linked với FB Pages của hotel.
+ *  Không cần tự tìm ig_business_id — gọi API này sẽ lấy tự động.
+ *  Response: [{fb_page_name, ig_business_id, ig_username, linked: true/false}]
+ */
+router.get('/ig/discover', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const results = await discoverIgFromFbPages(hotelId);
+    res.json({
+      discovered: results.length,
+      linked_count: results.filter(r => r.linked).length,
+      already_configured: results.filter(r => r.already_configured).length,
+      items: results,
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/** v22: One-click connect — dùng ig_business_id từ discover để auto-add IG account. */
+router.post('/ig/connect', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const { ig_business_id, linked_fb_page_id } = req.body || {};
+    if (!ig_business_id || !linked_fb_page_id) {
+      return res.status(400).json({ error: 'ig_business_id + linked_fb_page_id required (call /discover to get them)' });
+    }
+
+    // Check dup
+    const existing = db.prepare(
+      `SELECT id FROM instagram_accounts WHERE ig_business_id = ? AND hotel_id = ?`
+    ).get(ig_business_id, hotelId) as any;
+    if (existing) {
+      return res.json({ ok: true, id: existing.id, note: 'already configured' });
+    }
+
+    // Get IG info for auto-fill username
+    const page = db.prepare(`SELECT access_token FROM pages WHERE id = ? AND hotel_id = ?`).get(linked_fb_page_id, hotelId) as any;
+    let username: string | undefined;
+    if (page) {
+      const v = await verifyIgAccount(ig_business_id, page.access_token);
+      username = v.username;
+    }
+
+    const id = addIgAccount({
+      hotel_id: hotelId,
+      ig_business_id,
+      ig_username: username,
+      linked_fb_page_id,
+      // Không set access_token → reuse linked page's token
+    });
+    res.json({ ok: true, id, ig_username: username });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
