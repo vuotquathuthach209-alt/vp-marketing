@@ -246,16 +246,30 @@ function formatPrice(n: number): string {
 // ---------- Process booking step ----------
 
 // Tin nhắn KHÔNG phải booking info — cần để RAG/AI trả lời tự nhiên
-// Khớp: than đắt ("mắc", "đắt"), hỏi giảm giá, chào hỏi ngắn, câu hỏi khác
+// v24: FIX — tháo anchor $ để match "chào bạn" / "hi em" / "alo ơi"
+//            (trước đây /^(chào)$/ chỉ match "chào" 1 từ, "chào bạn" skip → bot stuck)
 const NON_BOOKING_PATTERNS: RegExp[] = [
   /\b(mắc|đắt|ma('|'|)c|dat)\s*(quá|thế|v[aậ]y)?\b/i,
   /\b(giảm giá|bớt|discount|khuyến mãi|voucher|sale|rẻ hơn)\b/i,
   /\b(ok|oke|uhm|um|ừ|ờ|vâng|dạ)\s*(thôi|đó|vậy|nhé|nha)?\s*$/i,
-  /^(alo|a lô|hello|hi|hey|chào|xin chào|hellu|hi c[aả])$/i,
+  // v24: greeting patterns — anchor ^ only, allow trailing words
+  /^(alo|a lô|hello|hi|hey|chào|xin chào|hellu|hi c[aả]|chao)\b/i,
+  // v24: standalone greeting with optional name/pronoun
+  /^(chào|xin chào|hello|hi)\s+(bạn|em|anh|chị|mình|c[aả]|shop|ad|admin|ơi|ạ)?\s*$/i,
   /\b(còn phòng|hỏi|cho hỏi|xem|thôi không|không đặt nữa|để sau|tính sau|cảm ơn|c[aả]m ơn)\b/i,
   /\b(ở đâu|địa chỉ|đường|map|bản đồ|check.?in|checkout|giờ|mấy giờ|có (gì|chỗ|chi))\b/i,
   /\?$/, // kết thúc bằng dấu ?
 ];
+
+// v24: PURE GREETING — nếu msg chỉ là chào (không kèm intent booking) → exit ngay
+//      để FSM/funnel xử lý greeting đúng persona
+const PURE_GREETING_PATTERN = /^(alo|a lô|hello|hi|hey|chào|xin chào|hellu|chao)\s*(bạn|em|anh|chị|mình|cả nhà|shop|ad|admin|ơi|ạ|nhé|nha)*\s*$/i;
+
+function isPureGreeting(msg: string): boolean {
+  const trimmed = (msg || '').trim();
+  if (trimmed.length > 40) return false;   // too long → không phải greeting thuần
+  return PURE_GREETING_PATTERN.test(trimmed);
+}
 
 function looksLikeBookingInfo(msg: string, config: BookingConfig): boolean {
   // Có ít nhất 1 trong: số (ngày/tháng), từ khóa phòng, đơn vị ngày đêm
@@ -270,8 +284,35 @@ function looksLikeBookingInfo(msg: string, config: BookingConfig): boolean {
 
 export function processBookingStep(senderId: string, message: string, senderName?: string): string | null {
   const config = getBookingConfig();
-  const booking = getOrCreateBooking(senderId, senderName);
   const msg = message.trim();
+
+  // v24 FIX: pure greeting → exit để FSM/funnel chào khách đúng persona
+  //          (Tránh bug khách nhắn "chào bạn" → bot trả "Đã nhận ảnh chuyển khoản")
+  if (isPureGreeting(msg)) {
+    console.log(`[bookingflow] pure greeting from ${senderId} → skip legacy, hand over to FSM`);
+    return null;
+  }
+
+  const booking = getOrCreateBooking(senderId, senderName);
+
+  // v24 FIX: TTL check per-status — booking stuck quá lâu → reset để FSM handle
+  const STALE_THRESHOLDS_MS: Record<string, number> = {
+    collecting: 60 * 60_000,          // 1h
+    quoting: 30 * 60_000,             // 30 min
+    awaiting_transfer: 6 * 3600_000,  // 6h (user có thể bận đi ngân hàng)
+    awaiting_confirm: 24 * 3600_000,  // 24h (lễ tân có time review)
+  };
+  const threshold = STALE_THRESHOLDS_MS[booking.status];
+  if (threshold) {
+    const age = Date.now() - (booking.updated_at || booking.created_at || 0);
+    if (age > threshold) {
+      console.log(`[bookingflow] booking #${booking.id} stale (${Math.round(age/60000)}min at ${booking.status}) → auto-cancel + handover FSM`);
+      try {
+        updateBooking(booking.id, { status: 'cancelled' });
+      } catch {}
+      return null;
+    }
+  }
 
   switch (booking.status) {
     case 'collecting': {
@@ -400,67 +441,95 @@ export function processBookingStep(senderId: string, message: string, senderName
         missing.push(`loại phòng:\n${types}`);
       }
 
+      // v24: Persona fix
       return `🏨 Đặt phòng tại ${config.hotel_name}\n\n` +
-        `Mình cần thêm thông tin:\n` +
+        `Em cần thêm thông tin ạ:\n` +
         missing.map((m, i) => `${i + 1}. ${m}`).join('\n') +
-        `\n\nBạn nhắn ngày + loại phòng nhé!`;
+        `\n\nAnh/chị nhắn ngày + loại phòng cho em nhé ạ!`;
     }
 
     case 'quoting': {
+      // v24: Escape hatch — khách hỏi chuyện khác → FSM handle
+      const looksNonBooking = NON_BOOKING_PATTERNS.some(p => p.test(msg));
+      if (looksNonBooking) {
+        return null;
+      }
+
       const lower = msg.toLowerCase();
       if (/^(ok|đặt|book|chuyển|đồng ý|xác nhận|được|đặt phòng|yes|có)/.test(lower)) {
         updateBooking(booking.id, { status: 'awaiting_transfer' });
 
-        let bankInfo = `✅ Cảm ơn bạn! Để hoàn tất đặt phòng, vui lòng chuyển khoản:\n\n` +
+        // v24: Persona fix
+        let bankInfo = `✅ Dạ cảm ơn anh/chị ạ! Để hoàn tất đặt phòng, anh/chị vui lòng chuyển khoản:\n\n` +
           `💳 Số tiền cọc: ${formatPrice(booking.deposit_amount)}\n` +
           `📝 Nội dung CK: SONDER ${booking.id}\n\n`;
 
         if (config.bank_qr_image_id) {
-          bankInfo += `Mình sẽ gửi mã QR ngân hàng. Sau khi chuyển khoản xong, gửi ảnh chụp màn hình cho mình nhé!`;
+          bankInfo += `Em sẽ gửi mã QR ngân hàng. Sau khi chuyển khoản xong, anh/chị gửi ảnh chụp màn hình cho em nhé ạ!`;
         } else {
-          bankInfo += `Sau khi chuyển khoản, gửi ảnh chụp màn hình cho mình nhé! Hotline: ${config.hotline}`;
+          bankInfo += `Sau khi chuyển khoản, anh/chị gửi ảnh chụp màn hình cho em nhé ạ! Hotline: ${config.hotline}`;
         }
         return bankInfo;
       }
 
       if (/^(không|cancel|huỷ|hủy|thôi|no)/.test(lower)) {
         updateBooking(booking.id, { status: 'cancelled' });
-        return `Đã huỷ đặt phòng. Nếu cần đặt lại, nhắn "đặt phòng" bất kỳ lúc nào nhé! 😊`;
+        return `Dạ em đã huỷ đặt phòng ạ. Nếu cần đặt lại, anh/chị nhắn "đặt phòng" bất kỳ lúc nào nhé ạ 😊`;
       }
 
-      return `Bạn đồng ý đặt phòng với giá ${formatPrice(booking.total_price)} (cọc ${formatPrice(booking.deposit_amount)})?\n\n` +
-        `Nhắn "ok" để xác nhận, hoặc "huỷ" để huỷ.`;
+      // v24: Persona fix
+      return `Anh/chị đồng ý đặt phòng với giá ${formatPrice(booking.total_price)} (cọc ${formatPrice(booking.deposit_amount)}) không ạ?\n\n` +
+        `Nhắn "ok" để xác nhận, hoặc "huỷ" để huỷ ạ.`;
     }
 
     case 'awaiting_transfer': {
-      return `⏳ Mình đang chờ ảnh chuyển khoản của bạn.\n\n` +
+      // v24 FIX: Escape hatch — nếu khách hỏi chuyện khác → cho RAG/FSM trả lời,
+      //          không spam template "đang chờ ảnh chuyển khoản"
+      const looksNonBooking = NON_BOOKING_PATTERNS.some(p => p.test(msg));
+      if (looksNonBooking || !looksLikeBookingInfo(msg, config)) {
+        return null;   // Fall through to FSM
+      }
+      // v24: Persona fix — "em/anh/chị" thay "Mình/bạn"
+      return `⏳ Dạ em đang chờ ảnh chuyển khoản của anh/chị ạ.\n\n` +
         `💳 Cọc: ${formatPrice(booking.deposit_amount)}\n` +
         `📝 Nội dung CK: SONDER ${booking.id}\n\n` +
-        `Chuyển xong gửi ảnh cho mình nhé! Hotline: ${config.hotline}`;
+        `Chuyển xong anh/chị gửi ảnh cho em nhé ạ! Hotline: ${config.hotline}`;
     }
 
     case 'awaiting_confirm': {
-      return `⏳ Đã nhận ảnh chuyển khoản! Lễ tân đang xác nhận booking #${booking.id}.\n` +
-        `Mình sẽ thông báo ngay khi xong. Cảm ơn bạn đã kiên nhẫn! 🙏`;
+      // v24 FIX: Escape hatch — khách hỏi chuyện khác → cho FSM handle
+      const looksNonBooking = NON_BOOKING_PATTERNS.some(p => p.test(msg));
+      if (looksNonBooking || !looksLikeBookingInfo(msg, config)) {
+        return null;
+      }
+      // v24: Persona fix
+      return `⏳ Dạ em đã nhận ảnh chuyển khoản rồi ạ! Lễ tân đang xác nhận booking #${booking.id}.\n` +
+        `Em sẽ thông báo ngay khi xong. Cảm ơn anh/chị đã kiên nhẫn ạ 🙏`;
     }
 
     case 'confirmed': {
-      return `✅ Booking #${booking.id} đã được xác nhận!\n\n` +
+      // v24: Escape + persona
+      const looksNonBooking = NON_BOOKING_PATTERNS.some(p => p.test(msg));
+      if (looksNonBooking) return null;
+      return `✅ Dạ booking #${booking.id} đã được xác nhận rồi ạ!\n\n` +
         `🛏️ Phòng: ${booking.assigned_room || booking.room_type}\n` +
         `📅 Check-in: ${booking.checkin_date} lúc ${config.checkin_time}\n` +
         `📍 ${config.address}\n` +
         `📱 Hotline: ${config.hotline}\n\n` +
-        `Hẹn gặp bạn! 😊`;
+        `Hẹn gặp anh/chị ạ 😊`;
     }
 
     case 'rejected': {
-      return `❌ Booking #${booking.id} không được xác nhận.\n` +
+      // v24: Escape + persona
+      const looksNonBooking = NON_BOOKING_PATTERNS.some(p => p.test(msg));
+      if (looksNonBooking) return null;
+      return `❌ Dạ booking #${booking.id} không được xác nhận ạ.\n` +
         (booking.reject_reason ? `Lý do: ${booking.reject_reason}\n` : '') +
-        `\nVui lòng liên hệ hotline ${config.hotline} hoặc nhắn "đặt phòng" để thử lại.`;
+        `\nAnh/chị vui lòng liên hệ hotline ${config.hotline} hoặc nhắn "đặt phòng" để thử lại ạ.`;
     }
 
     default:
-      return `Nhắn "đặt phòng" để bắt đầu đặt phòng tại ${config.hotel_name}! 🏨`;
+      return `Nhắn "đặt phòng" để bắt đầu đặt phòng tại ${config.hotel_name} ạ! 🏨`;
   }
 }
 
@@ -496,7 +565,8 @@ export function markTransferReceived(senderId: string, imageUrl?: string): { boo
 
   return {
     booking: updated,
-    reply: `✅ Đã nhận ảnh chuyển khoản! Lễ tân đang xác nhận booking #${booking.id}.\nMình sẽ thông báo ngay khi xong. Cảm ơn bạn! 🙏`,
+    // v24: Persona fix
+    reply: `✅ Dạ em đã nhận ảnh chuyển khoản rồi ạ! Lễ tân đang xác nhận booking #${booking.id}.\nEm sẽ thông báo ngay khi xong. Cảm ơn anh/chị ạ 🙏`,
   };
 }
 
@@ -569,12 +639,40 @@ export function isBookingIntent(message: string): boolean {
 }
 
 export function hasActiveBooking(senderId: string): boolean {
+  // v24 FIX: Apply TTL at query level — stale bookings không được coi là active.
+  //          Tránh bug "Chào bạn" sau 2h → bot trả "Đã nhận ảnh chuyển khoản" (state cũ).
+  //
+  //  Threshold per-status:
+  //    collecting:         1h — chưa cọc, user quên nhanh
+  //    quoting:           30min — user nói "ok" trong 30min nếu thực sự muốn
+  //    awaiting_transfer:  6h — cho đi ngân hàng
+  //    awaiting_confirm:  24h — cho lễ tân review
   const row = db.prepare(
-    `SELECT id FROM pending_bookings
+    `SELECT id, status, updated_at, created_at FROM pending_bookings
      WHERE fb_sender_id = ? AND status NOT IN ('confirmed','rejected','cancelled','paused')
-     LIMIT 1`
-  ).get(senderId);
-  return !!row;
+     ORDER BY id DESC LIMIT 1`
+  ).get(senderId) as any;
+  if (!row) return false;
+
+  const STALE_MS: Record<string, number> = {
+    collecting: 60 * 60_000,
+    quoting: 30 * 60_000,
+    awaiting_transfer: 6 * 3600_000,
+    awaiting_confirm: 24 * 3600_000,
+  };
+  const threshold = STALE_MS[row.status];
+  if (threshold) {
+    const age = Date.now() - (row.updated_at || row.created_at || 0);
+    if (age > threshold) {
+      // Auto-cancel stale → khách sau này nhắn sẽ như booking mới
+      try {
+        db.prepare(`UPDATE pending_bookings SET status = 'cancelled', updated_at = ? WHERE id = ?`)
+          .run(Date.now(), row.id);
+      } catch {}
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
