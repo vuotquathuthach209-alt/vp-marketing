@@ -413,6 +413,84 @@ export async function processFunnelMessage(
     } catch (e: any) { console.warn('[funnel] bare hotel name check fail:', e?.message); }
   }
 
+  // ROUTE 0.7: v15 — POLICY QUERY (hủy phòng, check-in sớm, pet, khách VIP, ...)
+  //            Đặt TRƯỚC generic/RAG vì policy có structured answer từ hotel_policy_rules.
+  {
+    const policyKeywords: Array<{ re: RegExp; type: string }> = [
+      { re: /(hủy|huỷ|cancel|refund|hoàn tiền|huỷ phòng|cancel booking)/i, type: 'cancellation' },
+      { re: /(check\W?in sớm|vào sớm|nhận phòng sớm|early check|early in)/i, type: 'early_checkin' },
+      { re: /(check\W?out (trễ|muộn)|trả phòng (trễ|muộn)|late check|late out)/i, type: 'late_checkout' },
+      { re: /(khách (VIP|quen|thân)|giảm giá khách|ưu đãi khách)/i, type: 'vip_discount' },
+    ];
+    for (const { re, type } of policyKeywords) {
+      if (re.test(msg)) {
+        try {
+          const { getPoliciesByType } = require('./policy-lookup');
+          const rules = getPoliciesByType(hotelId, type);
+          if (rules.length > 0) {
+            const lines = rules.map((r: any) => `• ${r.description}`);
+            const header: Record<string, string> = {
+              cancellation: '📋 Chính sách hủy phòng Sonder:',
+              early_checkin: '🕐 Chính sách check-in sớm:',
+              late_checkout: '🕐 Chính sách check-out muộn:',
+              vip_discount: '💎 Ưu đãi khách thân thiết:',
+            };
+            return {
+              reply: `${header[type] || 'Chính sách liên quan:'}\n\n${lines.join('\n')}\n\nAnh/chị cần em support thêm gì không ạ?`,
+              intent: `policy_${type}`,
+              stage: 'INIT',
+              meta: { gemini: geminiIntent, policy_type: type, rules_count: rules.length },
+            };
+          }
+        } catch (e: any) { console.warn('[funnel] policy lookup fail:', e?.message); }
+        break;
+      }
+    }
+  }
+
+  // ROUTE 0.8: v15 — PROMO CODE QUERY ("có mã khuyến mãi không")
+  if (/(khuyến mãi|khuyen mai|mã giảm|mã khuyến|ưu đãi|promo|discount code|coupon|voucher)/i.test(msg)) {
+    try {
+      const { getActivePromotions } = require('./promotion-service');
+      const promos = getActivePromotions(hotelId);
+      if (promos.length > 0) {
+        const lines = promos.slice(0, 5).map((p: any) => `🎁 **${p.code}** — ${p.description || p.name}`);
+        return {
+          reply: `🎉 Sonder đang có các mã ưu đãi sau:\n\n${lines.join('\n')}\n\nAnh/chị có thể dùng mã khi đặt phòng để được giảm ạ 💚`,
+          intent: 'promo_list',
+          stage: 'INIT',
+          meta: { gemini: geminiIntent, promo_count: promos.length },
+        };
+      }
+    } catch (e: any) { console.warn('[funnel] promo list fail:', e?.message); }
+  }
+
+  // ROUTE 0.9: v15 — PRICING QUERY ("cuối tuần có đắt hơn", "ở 7 đêm có giảm", "lễ có đắt")
+  if (/(cuối tuần|weekend|ở (lâu|dài|nhiều đêm|[0-9]+ đêm)|long stay|đặt sớm|early bird|dịp lễ|peak|lễ|giá tết|giá lễ)/i.test(msg)) {
+    const lines: string[] = [];
+    if (/cuối tuần|weekend/i.test(msg)) lines.push('🔸 Cuối tuần (T6-T7): **+20%** so với ngày thường');
+    if (/ở (lâu|dài|nhiều đêm)|long stay|[0-9]+ đêm/i.test(msg)) {
+      lines.push('🔸 Ở 3-6 đêm: **-5%**');
+      lines.push('🔸 Ở 7-13 đêm: **-10%**');
+      lines.push('🔸 Ở từ 14 đêm: **-15%**');
+    }
+    if (/đặt sớm|early bird/i.test(msg)) lines.push('🔸 Đặt trước 30+ ngày: **-10%**');
+    if (/lễ|peak|dịp|tết/i.test(msg)) {
+      lines.push('🔸 30/4-1/5: **+30%**');
+      lines.push('🔸 2/9: **+25%**');
+      lines.push('🔸 Giáng Sinh + Tết Tây: **+40%**');
+      lines.push('🔸 Tết Âm 2027: **+50%**');
+    }
+    if (lines.length > 0) {
+      return {
+        reply: `💰 Chính sách giá Sonder:\n\n${lines.join('\n')}\n\n👉 Anh/chị cho em ngày check-in + số đêm + loại phòng, em tính giá chính xác nhé!`,
+        intent: 'pricing_rules_list',
+        stage: 'INIT',
+        meta: { gemini: geminiIntent },
+      };
+    }
+  }
+
   // ROUTE 1: Try answer GENERIC FIRST — nếu info_question về topic chung
   //          (price, wifi, checkin_time, pet, ...) → trả lời overview
   //          cho toàn bộ active hotels thay vì clarify ngay.
@@ -442,97 +520,6 @@ export async function processFunnelMessage(
         };
       }
     } catch (e: any) { console.warn('[funnel] RAG fail:', e?.message); }
-  }
-
-  // ROUTE 2.3: v15 — POLICY QUERY (hủy phòng, check-in sớm, pet, khách VIP, ...)
-  //            Detect qua keywords. Áp dụng TRƯỚC RAG vì policy cần structured answer.
-  const policyKeywords: Array<{ re: RegExp; type: string }> = [
-    { re: /(hủy|huỷ|cancel|refund|hoàn tiền|huỷ phòng|cancel booking)/i, type: 'cancellation' },
-    { re: /(check\W?in sớm|vào sớm|nhận phòng sớm|early check|early in)/i, type: 'early_checkin' },
-    { re: /(check\W?out (trễ|muộn)|trả phòng (trễ|muộn)|late check|late out)/i, type: 'late_checkout' },
-    { re: /(khách (VIP|quen|thân)|giảm giá khách|ưu đãi khách)/i, type: 'vip_discount' },
-    { re: /(thú cưng|chó|mèo|pet|dogs|cats)/i, type: 'pet' },
-    { re: /(hút thuốc|smoking|smoke)/i, type: 'smoking' },
-    { re: /(trẻ em|trẻ con|baby|child|em bé|kid)/i, type: 'child' },
-    { re: /(thanh toán|thanh toan|payment|card|MoMo|VNPay)/i, type: 'payment' },
-  ];
-  for (const { re, type } of policyKeywords) {
-    if (re.test(msg)) {
-      try {
-        const { getPoliciesByType } = require('./policy-lookup');
-        const rules = getPoliciesByType(hotelId, type);
-        if (rules.length > 0) {
-          const lines = rules.map((r: any) => `• ${r.description}`);
-          const header: Record<string, string> = {
-            cancellation: '📋 Chính sách hủy phòng Sonder:',
-            early_checkin: '🕐 Chính sách check-in sớm:',
-            late_checkout: '🕐 Chính sách check-out muộn:',
-            vip_discount: '💎 Ưu đãi khách thân thiết:',
-            pet: '🐕 Chính sách thú cưng:',
-            smoking: '🚭 Quy định về hút thuốc:',
-            child: '👶 Chính sách trẻ em:',
-            payment: '💳 Phương thức thanh toán:',
-          };
-          return {
-            reply: `${header[type] || 'Chính sách liên quan:'}\n\n${lines.join('\n')}\n\nAnh/chị cần em support thêm gì không ạ?`,
-            intent: `policy_${type}`,
-            stage: 'INIT',
-            meta: { gemini: geminiIntent, policy_type: type, rules_count: rules.length },
-          };
-        }
-      } catch (e: any) { console.warn('[funnel] policy lookup fail:', e?.message); }
-      break;   // found matching keyword, don't check others
-    }
-  }
-
-  // ROUTE 2.4: v15 — PROMO CODE query ("có mã khuyến mãi không", "ưu đãi gì không")
-  const isPromoQuery = /(khuyến mãi|khuyen mai|mã giảm|mã khuyến|ưu đãi|promo|discount code|coupon|voucher)/i.test(msg);
-  if (isPromoQuery) {
-    try {
-      const { getActivePromotions } = require('./promotion-service');
-      const promos = getActivePromotions(hotelId);
-      if (promos.length > 0) {
-        const lines = promos.slice(0, 5).map((p: any) => `🎁 **${p.code}** — ${p.description || p.name}`);
-        return {
-          reply: `🎉 Sonder đang có các mã ưu đãi sau:\n\n${lines.join('\n')}\n\nAnh/chị có thể dùng mã khi đặt phòng để được giảm ạ 💚`,
-          intent: 'promo_list',
-          stage: 'INIT',
-          meta: { gemini: geminiIntent, promo_count: promos.length },
-        };
-      }
-    } catch (e: any) { console.warn('[funnel] promo list fail:', e?.message); }
-  }
-
-  // ROUTE 2.45: v15 — PRICING QUERY ("cuối tuần có đắt hơn không", "ở 7 đêm có giảm không")
-  //             Chỉ detect + mô tả rule áp dụng (bot chưa tính giá cụ thể vì thiếu room_type_code)
-  const isPricingQuery = /(cuối tuần (có đắt|đắt hơn|giá|tăng)|weekend (more|price)|ở (lâu|dài|nhiều đêm).*giảm|long stay discount|đặt sớm.*giảm|early bird|giá dịp lễ|lễ.*giá|peak (season|date))/i.test(msg);
-  if (isPricingQuery && !geminiIntent?.sub_category) {
-    try {
-      const { describeApplicableRules } = require('./pricing-calculator');
-      // Default: check next weekend vs description
-      const lines: string[] = [];
-      if (/cuối tuần|weekend/i.test(msg)) lines.push('🔸 Cuối tuần (T6-T7): **+20%** so với ngày thường');
-      if (/ở (lâu|dài|nhiều đêm)|long stay/i.test(msg)) {
-        lines.push('🔸 Ở 3-6 đêm: **-5%**');
-        lines.push('🔸 Ở 7-13 đêm: **-10%**');
-        lines.push('🔸 Ở từ 14 đêm: **-15%**');
-      }
-      if (/đặt sớm|early bird/i.test(msg)) lines.push('🔸 Đặt trước 30+ ngày: **-10%**');
-      if (/lễ|peak|dịp/i.test(msg)) {
-        lines.push('🔸 30/4-1/5: **+30%**');
-        lines.push('🔸 2/9: **+25%**');
-        lines.push('🔸 Tết Tây (24/12-2/1): **+40%**');
-        lines.push('🔸 Tết Âm 2027: **+50%**');
-      }
-      if (lines.length > 0) {
-        return {
-          reply: `💰 Chính sách giá Sonder:\n\n${lines.join('\n')}\n\n👉 Anh/chị cho em ngày check-in + số đêm để em tính giá chính xác nhé!`,
-          intent: 'pricing_rules_list',
-          stage: 'INIT',
-          meta: { gemini: geminiIntent },
-        };
-      }
-    } catch (e: any) { console.warn('[funnel] pricing rules fail:', e?.message); }
   }
 
   // ROUTE 2.5: Image request — move BEFORE clarify (khách xin "ảnh phòng" thì cứ show, đừng hỏi lại)
