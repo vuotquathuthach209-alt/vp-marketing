@@ -965,6 +965,21 @@ export async function processFunnelMessage(
   const stageBeforeMerge = state.stage;
   const slotsBeforeMerge = { ...state.slots };  // snapshot cho slot-diff ack
   state = mergeSlots(state, extracted);
+
+  // v20: POST-MERGE explicit CLEAR signals — override bất kỳ giá trị nào extractor/Gemini
+  // đã set (ví dụ "any" từ "bất kỳ khu nào").
+  if (/(không giới hạn|bỏ|không quan tâm)\s*(budget|giá|tiền|ngân sách)/i.test(msg)) {
+    state.slots.budget_min = undefined;
+    state.slots.budget_max = undefined;
+    state.slots.budget_no_filter = true;
+  }
+  if (/(bất kỳ|khu nào cũng|đâu cũng|không quan tâm khu)/i.test(msg)) {
+    // City-wide search (clear district filter)
+    (state.slots as any).area_type = 'city';
+    state.slots.area_normalized = 'Ho Chi Minh';
+    state.slots.area = 'TP.HCM';
+  }
+
   // Preserve explicit stage overrides from step 2b (text-based pick/confirm)
   const stageWasForced = state.stage !== stageBeforeMerge;
   // Store newly-filled slots trong state (temp field, không persist) cho handler dùng làm ack
