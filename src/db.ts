@@ -679,6 +679,102 @@ CREATE INDEX IF NOT EXISTS idx_promo_usage_booking ON promotion_usage(booking_id
 `);
 
 // ═══════════════════════════════════════════════════════════
+// v16 Marketing Audiences — segmentation + broadcast campaigns
+// Flow: define audience → cron refresh members → admin create campaign →
+//       send Zalo ZNS / FB → track delivery/open/click/conversion
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+-- Audience definitions (segment rules)
+CREATE TABLE IF NOT EXISTS marketing_audiences (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL DEFAULT 0,    -- 0 = global
+  audience_name TEXT NOT NULL,            -- 'vip_inactive_30d'
+  display_name TEXT NOT NULL,             -- 'Khách VIP không hoạt động 30 ngày'
+  description TEXT,
+  filter_type TEXT NOT NULL,              -- 'sql_rule' | 'custom_fn' | 'manual'
+  filter_criteria TEXT NOT NULL,          -- JSON: {tier:"vip", last_booking_days_gte:30}
+  sql_query TEXT,                         -- For filter_type='sql_rule' (custom SELECT returning sender_id)
+  refresh_interval_min INTEGER DEFAULT 1440,
+  last_refreshed_at INTEGER,
+  last_refresh_duration_ms INTEGER,
+  member_count INTEGER DEFAULT 0,
+  active INTEGER DEFAULT 1,
+  created_by TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE(hotel_id, audience_name)
+);
+CREATE INDEX IF NOT EXISTS idx_audiences_active ON marketing_audiences(active, hotel_id);
+
+-- Memberships (who's in which audience)
+CREATE TABLE IF NOT EXISTS audience_memberships (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  audience_id INTEGER NOT NULL,
+  sender_id TEXT,
+  customer_phone TEXT,
+  customer_name TEXT,
+  hotel_id INTEGER,
+  metadata TEXT,                          -- JSON {last_booking_at, ltv_vnd, bookings_count, ...}
+  added_at INTEGER NOT NULL,
+  FOREIGN KEY (audience_id) REFERENCES marketing_audiences(id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memberships_unique ON audience_memberships(audience_id, sender_id, customer_phone);
+CREATE INDEX IF NOT EXISTS idx_memberships_audience ON audience_memberships(audience_id);
+CREATE INDEX IF NOT EXISTS idx_memberships_sender ON audience_memberships(sender_id);
+
+-- Broadcast campaigns
+CREATE TABLE IF NOT EXISTS broadcast_campaigns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  audience_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  channel TEXT NOT NULL,                  -- 'zalo_zns' | 'fb_message' | 'email' | 'sms'
+  template_id TEXT,                       -- Zalo ZNS template_id hoặc FB message template
+  template_params TEXT,                   -- JSON variables cho template
+  message_content TEXT,                   -- Raw message cho FB/email (ZNS dùng template)
+  status TEXT DEFAULT 'draft',            -- 'draft'|'scheduled'|'sending'|'sent'|'failed'|'cancelled'
+  scheduled_at INTEGER,
+  started_at INTEGER,
+  completed_at INTEGER,
+  target_count INTEGER DEFAULT 0,
+  sent_count INTEGER DEFAULT 0,
+  delivered_count INTEGER DEFAULT 0,
+  opened_count INTEGER DEFAULT 0,
+  clicked_count INTEGER DEFAULT 0,
+  converted_count INTEGER DEFAULT 0,
+  error_summary TEXT,
+  created_by TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (audience_id) REFERENCES marketing_audiences(id)
+);
+CREATE INDEX IF NOT EXISTS idx_campaigns_status ON broadcast_campaigns(status, scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_campaigns_audience ON broadcast_campaigns(audience_id);
+
+-- Per-recipient send tracking
+CREATE TABLE IF NOT EXISTS broadcast_sends (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  campaign_id INTEGER NOT NULL,
+  sender_id TEXT,
+  customer_phone TEXT,
+  customer_name TEXT,
+  channel TEXT,
+  status TEXT DEFAULT 'queued',           -- 'queued'|'sent'|'delivered'|'opened'|'clicked'|'converted'|'failed'|'blocked'
+  provider_msg_id TEXT,                   -- Zalo ZNS tracking_id
+  sent_at INTEGER,
+  delivered_at INTEGER,
+  opened_at INTEGER,
+  clicked_at INTEGER,
+  converted_at INTEGER,
+  converted_booking_id INTEGER,
+  error TEXT,
+  FOREIGN KEY (campaign_id) REFERENCES broadcast_campaigns(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_sends_campaign ON broadcast_sends(campaign_id, status);
+CREATE INDEX IF NOT EXISTS idx_sends_sender ON broadcast_sends(sender_id);
+`);
+
+// ═══════════════════════════════════════════════════════════
 // v14 Sync Hub — Event broker giữa OTA Web team & VP MKT Bot
 // Mục đích: OTA push availability updates + Bot push bookings → PMS
 // HMAC-signed, audit logged, rate limited.

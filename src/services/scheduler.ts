@@ -367,6 +367,31 @@ export function startScheduler() {
     }
   });
 
+  // ── v16 Marketing Audiences — refresh each audience respecting their interval ──
+  // Runs hourly: each audience has refresh_interval_min (60 for abandoned_cart, 1440 for daily)
+  cron.schedule('10 * * * *', () => {
+    try {
+      const { refreshAllAudiences } = require('./marketing-audience-engine');
+      const results = refreshAllAudiences(false);
+      if (results.length > 0) {
+        const ok = results.filter((r: any) => !r.error).length;
+        console.log(`[scheduler] audience-refresh: ${ok}/${results.length} refreshed`);
+      }
+    } catch (e: any) {
+      console.error('[scheduler] audience-refresh error:', e?.message);
+    }
+  });
+
+  // ── v16 Broadcast campaigns — send scheduled campaigns due now ──
+  cron.schedule('*/5 * * * *', async () => {
+    try {
+      const { sendDueCampaigns } = require('./broadcast-sender');
+      await sendDueCampaigns();
+    } catch (e: any) {
+      console.error('[scheduler] broadcast-send error:', e?.message);
+    }
+  });
+
   // ── Content Intelligence — AUTO WEEKLY POST ────────────────────────
   // Thứ 2 lúc 9h sáng VN time (= 2h UTC): bot tự fetch inspiration + remix + publish 1 bài/tuần
   // Cron: 0 2 * * 1 (UTC) = 9h VN time thứ 2
