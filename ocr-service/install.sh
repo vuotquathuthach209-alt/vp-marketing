@@ -29,7 +29,7 @@ fi
 
 # 3. Install Python packages
 echo "[3/5] Installing PaddleOCR (may take 5-10 min)..."
-"$VENV_DIR/bin/pip" install --upgrade pip -q
+"$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel -q
 "$VENV_DIR/bin/pip" install -r requirements.txt
 
 # 4. Warmup (download models)
