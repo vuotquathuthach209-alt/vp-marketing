@@ -99,14 +99,30 @@ zaloWebhookRouter.post('/webhook/zalo', async (req, res) => {
       'user_send_message',
       'anonymous_send_text',
       'user_submit_info',
+      'user_send_image',          // v14: Zalo image event
     ]);
     if (!textEvents.has(event)) return;
 
     const text = String(body.message?.text || '').trim();
-    if (!userId || !text) return;
+    // v14 Phase 3: detect image attachment từ Zalo
+    let imageUrl: string | undefined;
+    try {
+      const attachments = body.message?.attachments || [];
+      const firstImg = attachments.find((a: any) => a.type === 'image' || a.payload?.url);
+      if (firstImg) {
+        imageUrl = firstImg.payload?.url || firstImg.url;
+      }
+    } catch {}
+
+    if (!userId) return;
+    if (!text && !imageUrl) return;  // nothing to process
 
     const senderKey = `zalo:${userId}`;
-    const result = await smartReplyWithSender(text, senderKey, undefined, false, oa.hotel_id, 0);
+    const result = await smartReplyWithSender(
+      text || '(image)',
+      senderKey, undefined, !!imageUrl,
+      oa.hotel_id, 0, imageUrl,
+    );
     if (result?.reply) {
       try {
         await zaloSendText(oa, userId, result.reply);

@@ -328,8 +328,38 @@ export async function processFunnelMessage(
   senderId: string,
   hotelId: number,
   msg: string,
-  opts: { payload?: string; language?: string } = {},
+  opts: { payload?: string; language?: string; imageUrl?: string } = {},
 ): Promise<FunnelResponse> {
+  // v14 Phase 3: Image upload → check if khách đang trong stage cọc → OCR pipeline
+  if (opts.imageUrl) {
+    try {
+      // Check có hold booking active không
+      const { handleDepositReceipt } = require('./deposit-handler');
+      const hasActiveBooking = db.prepare(
+        `SELECT id FROM sync_bookings WHERE hotel_id = ? AND sender_id = ? AND status = 'hold' AND expires_at > ? LIMIT 1`
+      ).get(hotelId, senderId, Date.now()) as any;
+
+      if (hasActiveBooking) {
+        console.log(`[funnel] image received for sender=${senderId} with active booking #${hasActiveBooking.id} → OCR pipeline`);
+        const r = await handleDepositReceipt({
+          hotel_id: hotelId,
+          sender_id: senderId,
+          image_url: opts.imageUrl,
+          booking_id: hasActiveBooking.id,
+        });
+        return {
+          reply: r.reply,
+          intent: `deposit_${r.status}`,
+          stage: r.status === 'matched' ? 'BOOKING_DRAFT_CREATED' : 'CONFIRMATION_BEFORE_CLOSE',
+          meta: { ocr_status: r.status, booking_id: r.booking_id, ocr_receipt_id: r.ocr_receipt_id },
+        };
+      }
+      // Nếu không có active booking, ảnh không dùng → fall through xử lý bình thường
+    } catch (e: any) {
+      console.warn('[funnel] deposit handler fail:', e?.message);
+    }
+  }
+
   // 0. Gemini Intent Classifier — smart analyze ý định khách TRƯỚC khi enter FSM.
   //    Replaces regex detectContentQuestion với AI classification.
   let geminiIntent: any = null;

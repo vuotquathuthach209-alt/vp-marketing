@@ -182,7 +182,8 @@ async function replyToMessages(page: any) {
           senderName,
           hasImage,
           page.hotel_id || 1,
-          page.id
+          page.id,
+          imageUrl || undefined,   // v14 Phase 3: pass image URL xuống funnel OCR
         );
         if (!reply) continue; // bot paused
         await sendFBMessage(page.access_token, senderId, reply);

@@ -1240,6 +1240,7 @@ export async function smartReplyWithSender(
   hasImage?: boolean,
   hotelId?: number,
   pageId?: number,
+  imageUrl?: string,   // v14 Phase 3: ảnh biên lai từ webhook
 ): Promise<SmartReplyResult> {
   const t0 = Date.now();
   const msg = message.trim();
@@ -1264,7 +1265,7 @@ export async function smartReplyWithSender(
     const { isFunnelEnabled } = require('./conversation-fsm');
     if (isFunnelEnabled() && senderId) {
       const { processFunnelMessage } = require('./funnel-dispatcher');
-      const fr = await processFunnelMessage(senderId, hid, msg);
+      const fr = await processFunnelMessage(senderId, hid, msg, { imageUrl });
       if (fr.handed_off) {
         return { reply: '', tier: 'rules', latency_ms: Date.now() - t0, intent: 'handed_off' };
       }

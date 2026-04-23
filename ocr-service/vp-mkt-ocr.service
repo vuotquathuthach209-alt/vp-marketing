@@ -1,0 +1,23 @@
+[Unit]
+Description=VP MKT PaddleOCR Sidecar (biên lai chuyển khoản)
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/vp-marketing/ocr-service
+EnvironmentFile=/etc/vp-mkt-ocr.env
+ExecStart=/opt/vp-marketing/ocr-service/venv/bin/python main.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Resource limits
+MemoryMax=2G
+CPUQuota=300%
+
+[Install]
+WantedBy=multi-user.target
