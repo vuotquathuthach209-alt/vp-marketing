@@ -43,9 +43,9 @@ export interface SmartReplyResult {
 
 const MAX_HISTORY = 8;
 
-function saveMessage(senderId: string, pageId: number, role: 'user' | 'bot', message: string, intent?: string) {
+function saveMessage(senderId: string, pageId: number, role: 'user' | 'bot', message: string, intent?: string): number | null {
   try {
-    db.prepare(
+    const r = db.prepare(
       `INSERT INTO conversation_memory (sender_id, page_id, role, message, intent, created_at) VALUES (?, ?, ?, ?, ?, ?)`
     ).run(senderId, pageId, role, message.slice(0, 500), intent || null, Date.now());
     db.prepare(
@@ -53,7 +53,8 @@ function saveMessage(senderId: string, pageId: number, role: 'user' | 'bot', mes
         SELECT id FROM conversation_memory WHERE sender_id = ? ORDER BY created_at DESC LIMIT 20
       )`
     ).run(senderId, senderId);
-  } catch {}
+    return r.lastInsertRowid as number;
+  } catch { return null; }
 }
 
 function getConversationHistory(senderId: string): Array<{ role: string; message: string; intent: string | null }> {
@@ -1268,7 +1269,23 @@ export async function smartReplyWithSender(
         return { reply: '', tier: 'rules', latency_ms: Date.now() - t0, intent: 'handed_off' };
       }
       if (fr.reply) {
-        saveMessage(senderId, pid, 'bot', fr.reply, fr.intent);
+        const memId = saveMessage(senderId, pid, 'bot', fr.reply, fr.intent);
+        // v13: Log reply outcome cho feedback loop
+        try {
+          const { logBotReply } = require('./reply-outcome-logger');
+          logBotReply({
+            hotelId: hid,
+            senderId,
+            userMessage: msg,
+            botReply: fr.reply,
+            intent: fr.intent,
+            stage: fr.stage,
+            replySource: fr.intent || 'funnel_unknown',
+            llmProvider: fr.meta?.gemini ? 'gemini' : undefined,
+            latencyMs: Date.now() - t0,
+            conversationMemoryId: typeof memId === 'number' ? memId : undefined,
+          });
+        } catch (e: any) { console.warn('[smartreply] logBotReply fail:', e?.message); }
         return {
           reply: fr.reply,
           tier: 'rules',

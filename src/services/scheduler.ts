@@ -353,6 +353,24 @@ export function startScheduler() {
     }
   });
 
+  // ── v13 Feedback Loop — Outcome classifier ─────────────────────────
+  // Mỗi 15 phút: quét bot_reply_outcomes status='pending' và classify based on user behavior
+  cron.schedule('*/15 * * * *', () => {
+    try {
+      const { classifyPendingOutcomes, aggregateFunnelDaily } = require('./outcome-classifier');
+      const r = classifyPendingOutcomes();
+      if (r.processed > 0) {
+        const updated = Object.entries(r.updated_by_outcome)
+          .map(([k, v]) => `${k}=${v}`).join(' ');
+        console.log(`[scheduler] outcome-classify: processed=${r.processed} still_pending=${r.still_pending} | ${updated}`);
+      }
+      // Daily rollup của funnel metrics
+      aggregateFunnelDaily();
+    } catch (e: any) {
+      console.error('[scheduler] outcome-classify error:', e?.message);
+    }
+  });
+
   // ── Content Intelligence — AUTO WEEKLY POST ────────────────────────
   // Thứ 2 lúc 9h sáng VN time (= 2h UTC): bot tự fetch inspiration + remix + publish 1 bài/tuần
   // Cron: 0 2 * * 1 (UTC) = 9h VN time thứ 2

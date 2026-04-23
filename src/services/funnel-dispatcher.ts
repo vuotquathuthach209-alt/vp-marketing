@@ -839,6 +839,25 @@ export async function processFunnelMessage(
     // Allow transition from UNCLEAR_FALLBACK if user provided new slots (escape!)
     const canExitUnclear = state.stage === 'UNCLEAR_FALLBACK' && extractedCount > 0;
     if (state.stage !== nextStage && (state.stage !== 'UNCLEAR_FALLBACK' || canExitUnclear)) {
+      // v13: Log stage transition cho funnel analytics
+      try {
+        const fromStage = state.stage;
+        db.prepare(
+          `INSERT INTO funnel_stage_transitions
+           (hotel_id, sender_id, from_stage, to_stage, trigger_intent, trigger_msg,
+            slots_snapshot, same_stage_count, transition_type, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          hotelId, senderId, fromStage, nextStage,
+          geminiIntent?.primary_intent || null,
+          (msg || '').slice(0, 200),
+          JSON.stringify(state.slots || {}),
+          state.same_stage_count || 0,
+          canExitUnclear ? 'reset' : 'forward',
+          Date.now(),
+        );
+      } catch (e: any) { console.warn('[funnel] transition log fail:', e?.message); }
+
       state.last_bot_stage = state.stage;
       state.stage = nextStage;
       // Reset same_stage_count khi thoát UNCLEAR_FALLBACK

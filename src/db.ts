@@ -513,6 +513,89 @@ CREATE TABLE IF NOT EXISTS monthly_learnings (
 CREATE INDEX IF NOT EXISTS idx_learnings_month ON monthly_learnings(month);
 `);
 
+// ═══════════════════════════════════════════════════════════
+// v13 Feedback Loop — Bot self-evolution infrastructure
+// Mục đích: log mọi reply + outcome → bot biết đúng/sai để tự tune
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+-- Mỗi reply của bot = 1 row; outcome ban đầu = 'pending', classifier update sau
+CREATE TABLE IF NOT EXISTS bot_reply_outcomes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  sender_id TEXT NOT NULL,
+  conversation_memory_id INTEGER,       -- link tới row trong conversation_memory (bot reply)
+  user_message TEXT,                    -- câu hỏi gốc của khách
+  bot_reply TEXT NOT NULL,              -- câu trả lời bot đã gửi
+  intent TEXT,                          -- intent được classifier detect
+  stage TEXT,                           -- FSM stage khi reply
+  reply_source TEXT,                    -- 'generic_*', 'rag_*', 'hotel_overview', 'funnel_*', 'contact_captured'
+  rag_chunks_used TEXT,                 -- JSON array: chunk_ids + scores (nếu dùng RAG)
+  llm_provider TEXT,                    -- 'gemini' | 'ollama' | 'groq'
+  llm_model TEXT,
+  latency_ms INTEGER,
+  tokens_in INTEGER,
+  tokens_out INTEGER,
+  outcome TEXT DEFAULT 'pending',
+    -- pending | ignored | followup_same_topic | misunderstood | handed_off
+    -- | converted_to_lead | booked | closed_won | ghosted | rage_quit
+  outcome_at INTEGER,                   -- timestamp khi outcome được classify
+  outcome_evidence TEXT,                -- JSON: cái gì làm classifier quyết định (vd: next_msg, delay)
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_outcomes_hotel_created ON bot_reply_outcomes(hotel_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_outcomes_sender ON bot_reply_outcomes(sender_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_outcomes_pending ON bot_reply_outcomes(outcome, created_at) WHERE outcome = 'pending';
+CREATE INDEX IF NOT EXISTS idx_outcomes_source ON bot_reply_outcomes(reply_source, outcome);
+
+-- Log mọi chuyển stage của FSM → phân tích drop-off funnel
+CREATE TABLE IF NOT EXISTS funnel_stage_transitions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  sender_id TEXT NOT NULL,
+  from_stage TEXT,                      -- NULL nếu là INIT (turn đầu)
+  to_stage TEXT NOT NULL,
+  trigger_intent TEXT,                  -- intent làm stage chuyển
+  trigger_msg TEXT,                     -- message của user (truncate 200)
+  slots_snapshot TEXT,                  -- JSON: slots lúc chuyển stage
+  same_stage_count INTEGER DEFAULT 0,   -- nếu >0 nghĩa là stuck ở stage cũ
+  transition_type TEXT,                 -- 'forward' | 'backward' | 'same' | 'reset' | 'handoff'
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_transitions_hotel_created ON funnel_stage_transitions(hotel_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_transitions_sender ON funnel_stage_transitions(sender_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_transitions_stage ON funnel_stage_transitions(from_stage, to_stage);
+
+-- Daily aggregation — sẵn sàng cho dashboard, update bởi cron
+CREATE TABLE IF NOT EXISTS funnel_daily_metrics (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  date TEXT NOT NULL,                   -- 'YYYY-MM-DD' VN time
+  stage TEXT NOT NULL,
+  entered_count INTEGER DEFAULT 0,       -- số conversations vào stage
+  exited_forward INTEGER DEFAULT 0,      -- vào stage tiếp theo
+  exited_dropoff INTEGER DEFAULT 0,      -- không trả lời / bỏ dở
+  exited_handoff INTEGER DEFAULT 0,      -- chuyển human
+  avg_time_in_stage_sec INTEGER DEFAULT 0,
+  UNIQUE(hotel_id, date, stage)
+);
+CREATE INDEX IF NOT EXISTS idx_funnel_daily ON funnel_daily_metrics(hotel_id, date DESC);
+
+-- Human review labels (admin flag replies tốt/xấu cho supervised learning)
+CREATE TABLE IF NOT EXISTS conversation_labels (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  outcome_id INTEGER,                   -- link bot_reply_outcomes.id
+  label TEXT NOT NULL,                  -- 'good', 'bad', 'wrong_info', 'off_topic', 'needs_rewrite'
+  corrected_reply TEXT,                 -- admin viết lại cho đúng
+  notes TEXT,
+  labeled_by INTEGER,                   -- mkt_users.id
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (outcome_id) REFERENCES bot_reply_outcomes(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_labels_hotel ON conversation_labels(hotel_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_labels_outcome ON conversation_labels(outcome_id);
+`);
+
 // 1.1 Migration: thêm hotel_id vào các bảng hiện tại (safe — chỉ ADD COLUMN nếu chưa có)
 function safeAddColumn(table: string, column: string, type: string, defaultVal?: string) {
   try {
