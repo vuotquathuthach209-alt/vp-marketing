@@ -78,14 +78,62 @@ function getKnowledgeSummary(): string {
   }
 }
 
+/** Load recent conversation history (3 user + 3 bot messages) cho multi-turn context. */
+function getConversationHistory(senderId?: string): string {
+  if (!senderId) return '';
+  try {
+    const rows = db.prepare(
+      `SELECT role, substr(message, 1, 150) as msg
+       FROM conversation_memory
+       WHERE sender_id = ?
+       ORDER BY id DESC LIMIT 6`
+    ).all(senderId) as any[];
+    if (rows.length === 0) return '';
+    // Reverse để oldest first
+    rows.reverse();
+    const lines = rows.map(r => {
+      const label = r.role === 'user' ? 'Khách' : 'Bot';
+      return `${label}: ${r.msg}`;
+    });
+    return lines.join('\n');
+  } catch { return ''; }
+}
+
+/** Load current FSM state (stage + key slots) để Gemini biết context. */
+function getCurrentStageContext(senderId?: string): string {
+  if (!senderId) return '';
+  try {
+    const s = db.prepare(
+      `SELECT stage, slots FROM bot_conversation_state WHERE sender_id = ?`
+    ).get(senderId) as any;
+    if (!s) return '';
+    let slots: any = {};
+    try { slots = JSON.parse(s.slots || '{}'); } catch {}
+    const slotParts: string[] = [];
+    if (slots.property_type) slotParts.push(`loại=${slots.property_type}`);
+    if (slots.checkin_date) slotParts.push(`ngày=${slots.checkin_date}`);
+    if (slots.guests_adults) slotParts.push(`khách=${slots.guests_adults}`);
+    if (slots.area_normalized) slotParts.push(`khu=${slots.area_normalized}`);
+    if (slots.budget_max) slotParts.push(`budget=${slots.budget_max}đ`);
+    if (slots.shown_property_ids?.length) slotParts.push(`đã show ${slots.shown_property_ids.length} phòng`);
+    return `FSM stage: ${s.stage}` + (slotParts.length ? ` | Slots: ${slotParts.join(', ')}` : '');
+  } catch { return ''; }
+}
+
 /**
  * Call Gemini to analyze intent.
  */
-export async function analyzeIntent(msg: string, opts: { hasPrevContext?: boolean } = {}): Promise<IntentAnalysis | null> {
+export async function analyzeIntent(
+  msg: string,
+  opts: { hasPrevContext?: boolean; senderId?: string } = {},
+): Promise<IntentAnalysis | null> {
   // Fast-path: nếu msg rất ngắn, không cần Gemini
   if (msg.trim().length < 3) return null;
 
   const knowledge = getKnowledgeSummary();
+  // v20: multi-turn context
+  const history = opts.senderId ? getConversationHistory(opts.senderId) : '';
+  const stageCtx = opts.senderId ? getCurrentStageContext(opts.senderId) : '';
 
   const system = `Bạn là AI phân tích ý định khách Việt Nam nhắn tin đặt phòng. Output JSON chính xác.
 
@@ -125,7 +173,19 @@ CHỈ output JSON, không prose.`;
     .slice(0, 500)
     .trim();
 
-  const userPrompt = `Knowledge base snapshot:\n${knowledge}\n\nPrevious context: ${opts.hasPrevContext ? 'YES (tiếp theo convo)' : 'NO (tin đầu)'}\n\nKhách nhắn (JSON-escaped): ${JSON.stringify(safeMsg)}\n\nOutput JSON:`;
+  const sections: string[] = [`Knowledge base snapshot:\n${knowledge}`];
+  if (stageCtx) sections.push(`Current ${stageCtx}`);
+  if (history) {
+    sections.push(`Recent conversation (last 6 messages):\n${history}`);
+  } else if (opts.hasPrevContext) {
+    sections.push(`Previous context: YES (tiếp theo convo)`);
+  } else {
+    sections.push(`Previous context: NO (tin đầu)`);
+  }
+  sections.push(`Khách nhắn MỚI (JSON-escaped): ${JSON.stringify(safeMsg)}`);
+  sections.push(`Note: Nếu FSM đang ở SHOW_RESULTS/PROPERTY_PICKED/SHOW_ROOMS và msg ngắn như "chọn 1", "ok", "đúng rồi" → đó là selection, KHÔNG phải unclear. Classify là booking.`);
+  sections.push(`Output JSON:`);
+  const userPrompt = sections.join('\n\n');
 
   try {
     const { smartCascade } = require('./smart-cascade');

@@ -366,7 +366,33 @@ export async function processFunnelMessage(
   try {
     const { analyzeIntent, geminiSlotsToExtracted } = require('./gemini-intent-classifier');
     const prevState = getState(senderId);
-    geminiIntent = await analyzeIntent(msg, { hasPrevContext: !!prevState });
+    geminiIntent = await analyzeIntent(msg, { hasPrevContext: !!prevState, senderId });
+
+    // v20: Detect correction signals — user đang đính chính slot cũ
+    const isCorrection = /\b(không phải|đính chính|sửa lại|đổi lại|không đúng|sai rồi|nhầm|actually|thay đổi)\b/i.test(msg);
+    if (isCorrection && prevState) {
+      console.log(`[funnel] correction detected for ${senderId}: "${msg.slice(0, 60)}"`);
+      // Slot extractor + mergeSlots sẽ tự overwrite với giá trị mới.
+      // Ở đây chỉ log + acknowledge trong reply sau.
+      (prevState as any)._correction_detected = true;
+    }
+
+    // v20: Detect explicit CLEAR signals — khách muốn bỏ constraint
+    if (prevState) {
+      // "không giới hạn budget" / "bỏ budget" / "không quan tâm budget"
+      if (/\b(không giới hạn|bỏ|không quan tâm)\s*(budget|giá|tiền|ngân sách)\b/i.test(msg)) {
+        prevState.slots.budget_min = undefined;
+        prevState.slots.budget_max = undefined;
+        prevState.slots.budget_no_filter = true;
+        console.log(`[funnel] explicit clear budget for ${senderId}`);
+      }
+      // "bất kỳ khu nào" / "không quan tâm khu"
+      if (/\b(bất kỳ|khu nào cũng|không quan tâm)\s*(khu|quận|district|location)\b/i.test(msg)) {
+        (prevState.slots as any).area_type = 'city';
+        prevState.slots.area_normalized = 'Ho Chi Minh';
+        console.log(`[funnel] explicit any area for ${senderId}`);
+      }
+    }
     if (geminiIntent) {
       console.log(`[gemini-intent] ${geminiIntent.primary_intent}/${geminiIntent.sub_category || '-'} conf=${geminiIntent.confidence} kb=${geminiIntent.in_knowledge_base} clarify=${geminiIntent.needs_clarification}`);
     }
@@ -563,7 +589,17 @@ export async function processFunnelMessage(
   }
 
   // ROUTE 3: Clarification (chỉ khi thực sự mơ hồ, sub_category không xác định)
-  if (geminiIntent?.needs_clarification && geminiIntent.clarification_question && !geminiIntent.sub_category) {
+  // v20 FIX: Skip clarify khi user đang ở contextual stage (SHOW_RESULTS, PROPERTY_PICKED,
+  // SHOW_ROOMS, CONFIRMATION_BEFORE_CLOSE) và msg ngắn (< 50 chars) — 90% là selection
+  // keyword ("chọn 1", "ok", "đúng rồi", "có") → để FSM dispatcher handle, đừng clarify.
+  const isContextualStage = (() => {
+    try {
+      const cur = getState(senderId);
+      return cur && ['SHOW_RESULTS', 'PROPERTY_PICKED', 'SHOW_ROOMS', 'CONFIRMATION_BEFORE_CLOSE', 'CLOSING_CONTACT'].includes(cur.stage);
+    } catch { return false; }
+  })();
+  if (geminiIntent?.needs_clarification && geminiIntent.clarification_question &&
+      !geminiIntent.sub_category && !isContextualStage) {
     return {
       reply: geminiIntent.clarification_question,
       intent: `gemini_clarify_${geminiIntent.sub_category || 'unclear'}`,
@@ -1010,6 +1046,11 @@ export async function processFunnelMessage(
   // 7. Run handler
   const result: HandlerResult = dispatchHandler(state);
   state.stage = result.next_stage;
+
+  // v20: Prepend correction acknowledgment
+  if ((state as any)._correction_detected && result.reply) {
+    result.reply = `Dạ em đã cập nhật lại rồi ạ 👍\n\n` + result.reply;
+  }
 
   // Returning customer: prepend greeting vào reply đầu tiên
   if (isNewConversation && (state as any)._customer_profile) {
