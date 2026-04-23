@@ -75,6 +75,15 @@ router.post('/:id/publish-now', async (req: AuthRequest, res) => {
     db.prepare(
       `UPDATE posts SET status = 'published', published_at = ?, fb_post_id = ?, error_message = NULL WHERE id = ?`
     ).run(Date.now(), result.fbPostId, id);
+
+    // v24: Cross-post FB → IG + Zalo OA (non-blocking)
+    try {
+      const { crossPostFromPostId } = require('../services/cross-post-sync');
+      crossPostFromPostId(id, 'manual').catch((e: any) =>
+        console.warn('[publish-now] cross-post fail:', e?.message)
+      );
+    } catch {}
+
     res.json({ ok: true, fb_post_id: result.fbPostId });
   } catch (e: any) {
     const fbErr = e?.response?.data?.error;
@@ -96,6 +105,59 @@ router.delete('/:id', (req: AuthRequest, res) => {
   const id = parseInt(req.params.id as string, 10);
   db.prepare(`DELETE FROM posts WHERE id = ? AND hotel_id = ?`).run(id, hotelId);
   res.json({ ok: true });
+});
+
+// v24: Cross-post existing FB post → IG + Zalo (manual trigger cho bài đã publish)
+router.post('/:id/cross-post', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const id = parseInt(req.params.id as string, 10);
+    if (isNaN(id) || id <= 0) return res.status(400).json({ error: 'invalid id' });
+
+    const post = db.prepare(
+      `SELECT id, hotel_id, fb_post_id, status FROM posts WHERE id = ? AND hotel_id = ?`
+    ).get(id, hotelId) as any;
+    if (!post) return res.status(404).json({ error: 'not found' });
+    if (post.status !== 'published' || !post.fb_post_id) {
+      return res.status(400).json({ error: 'post chưa publish lên FB — không thể cross-post' });
+    }
+
+    const { crossPostFromPostId } = require('../services/cross-post-sync');
+    const result = await crossPostFromPostId(id, 'manual');
+    res.json(result || { error: 'cross-post failed' });
+  } catch (e: any) {
+    console.error('[cross-post route] fail:', e);
+    res.status(500).json({ error: 'cross-post error' });
+  }
+});
+
+// v24: List cross-post log cho 1 post
+router.get('/:id/cross-post-log', (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const id = parseInt(req.params.id as string, 10);
+    const post = db.prepare(
+      `SELECT fb_post_id FROM posts WHERE id = ? AND hotel_id = ?`
+    ).get(id, hotelId) as any;
+    if (!post?.fb_post_id) return res.json({ items: [] });
+
+    const items = db.prepare(
+      `SELECT platform, target_id, result, external_id, error, created_at
+       FROM cross_post_log WHERE fb_post_id = ? ORDER BY created_at DESC`
+    ).all(post.fb_post_id);
+    res.json({ items });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// v24: Cross-post stats dashboard
+router.get('/cross-post/stats', (req: AuthRequest, res) => {
+  try {
+    const hotelId = getHotelId(req);
+    const days = Math.min(30, Math.max(1, parseInt(String(req.query.days || '7'), 10)));
+    const { getCrossPostStats } = require('../services/cross-post-sync');
+    const stats = getCrossPostStats(hotelId, days * 24 * 3600_000);
+    res.json({ days, stats });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 export default router;

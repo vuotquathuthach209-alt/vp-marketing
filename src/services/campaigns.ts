@@ -72,6 +72,14 @@ export async function runCampaigns() {
         `UPDATE posts SET status = 'published', published_at = ?, fb_post_id = ? WHERE id = ?`
       ).run(Date.now(), pubResult.fbPostId, postId);
 
+      // v24: Cross-post FB → IG + Zalo OA (non-blocking)
+      try {
+        const { crossPostFromPostId } = require('./cross-post-sync');
+        crossPostFromPostId(postId, 'campaign').catch((e: any) =>
+          console.warn('[campaigns] cross-post fail:', e?.message)
+        );
+      } catch {}
+
       console.log(`[campaigns] ✅ Đã đăng "${c.name}" → ${pubResult.fbPostId}`);
     } catch (err: any) {
       const msg = err?.response?.data?.error?.message || err?.message || String(err);

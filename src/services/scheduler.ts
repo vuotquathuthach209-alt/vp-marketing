@@ -87,6 +87,14 @@ async function processDuePosts() {
       db.prepare(
         `UPDATE posts SET status = 'published', published_at = ?, fb_post_id = ?, error_message = NULL WHERE id = ?`
       ).run(Date.now(), result.fbPostId, post.id);
+
+      // v24: Cross-post FB → IG + Zalo OA (non-blocking fire-and-forget)
+      try {
+        const { crossPostFromPostId } = require('./cross-post-sync');
+        crossPostFromPostId(post.id, 'scheduler').catch((e: any) =>
+          console.warn('[scheduler] cross-post fail:', e?.message)
+        );
+      } catch {}
       console.log(`[scheduler] Đăng thành công post #${post.id} → ${result.fbPostId}`);
       notifyAll(`✅ *Đăng thành công* post #${post.id}\n\`${result.fbPostId}\`\n\n${post.caption.slice(0, 200)}`).catch(() => {});
     } catch (err: any) {

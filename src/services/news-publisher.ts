@@ -154,6 +154,23 @@ export async function publishDraft(draftId: number): Promise<{ ok: boolean; fb_p
       `UPDATE news_articles SET status='published', last_state_change_at=? WHERE id=?`
     ).run(now, draft.article_id);
     console.log(`[news-publish] OK draft #${draftId} → fb ${fbPostId} on page ${page.name}`);
+
+    // v24: Cross-post news FB → IG + Zalo (non-blocking)
+    try {
+      const { crossPostToAllPlatforms } = require('./cross-post-sync');
+      // Only cross-post if image is external HTTPS URL (IG + Zalo need public image)
+      const crossPostImageUrl = (draft.image_url && /^https?:\/\//.test(draft.image_url))
+        ? draft.image_url : undefined;
+      crossPostToAllPlatforms({
+        fb_post_id: fbPostId,
+        hotel_id: draft.hotel_id || 1,
+        page_id: page.id,
+        caption: message,
+        image_url: crossPostImageUrl,
+        source_type: 'news',
+      }).catch((e: any) => console.warn('[news-publish] cross-post fail:', e?.message));
+    } catch {}
+
     return { ok: true, fb_post_id: fbPostId };
   } catch (e: any) {
     const msg = e?.response?.data?.error?.message || e?.message || 'unknown';
