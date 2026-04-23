@@ -960,6 +960,79 @@ CREATE INDEX IF NOT EXISTS idx_ltv_total ON customer_ltv(total_revenue_vnd DESC)
 `);
 
 // ═══════════════════════════════════════════════════════════
+// v21 Multi-platform Publishing
+// instagram_accounts: IG Business linked with FB Page (access_token reuse)
+// page_crosspost_links: FB Page → FB Page crosspost rules
+// share_packages: content package push to Telegram cho admin manual share
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+-- Instagram Business accounts per hotel
+CREATE TABLE IF NOT EXISTS instagram_accounts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  ig_business_id TEXT NOT NULL UNIQUE,        -- Instagram Business Account ID
+  ig_username TEXT,
+  linked_fb_page_id INTEGER,                  -- pages.id — reuse access_token
+  access_token TEXT,                          -- override nếu có token riêng
+  active INTEGER DEFAULT 1,
+  last_published_at INTEGER,
+  total_posts INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (linked_fb_page_id) REFERENCES pages(id)
+);
+CREATE INDEX IF NOT EXISTS idx_ig_hotel ON instagram_accounts(hotel_id, active);
+
+-- FB Page → Page crosspost configuration
+CREATE TABLE IF NOT EXISTS page_crosspost_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_page_id INTEGER NOT NULL,            -- Primary page (source of truth)
+  target_page_id INTEGER NOT NULL,            -- Also publish here
+  delay_minutes INTEGER DEFAULT 10,           -- Không crosspost ngay tránh spam-detect
+  modify_caption TEXT,                        -- Optional: prefix/suffix modification
+  active INTEGER DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  UNIQUE(source_page_id, target_page_id),
+  FOREIGN KEY (source_page_id) REFERENCES pages(id),
+  FOREIGN KEY (target_page_id) REFERENCES pages(id)
+);
+CREATE INDEX IF NOT EXISTS idx_xpost_source ON page_crosspost_links(source_page_id, active);
+
+-- Share packages — bot gen content → admin manual share vào groups
+CREATE TABLE IF NOT EXISTS share_packages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  source_post_id INTEGER,                     -- posts.id hoặc news_post_drafts.id
+  source_type TEXT,                           -- 'fb_post' | 'ci_remix' | 'news_draft' | 'manual'
+  caption TEXT NOT NULL,
+  image_url TEXT,                             -- Direct link hoặc /media/ path
+  hashtags TEXT,                              -- JSON array
+  suggested_groups TEXT,                      -- JSON: [{name, url, category}]
+  shared_to_groups TEXT,                      -- JSON: admin đã share vào group nào
+  status TEXT DEFAULT 'pending',              -- 'pending' | 'shared' | 'dismissed'
+  pushed_to_telegram_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_share_status ON share_packages(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_share_hotel ON share_packages(hotel_id, created_at DESC);
+
+-- Suggested FB groups database (admin manually curate)
+CREATE TABLE IF NOT EXISTS suggested_fb_groups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL DEFAULT 0,
+  name TEXT NOT NULL,
+  url TEXT,
+  category TEXT,                              -- 'hotel_enthusiasts' | 'du_lich' | 'digital_nomad' | 'homestay_vn' | 'business_travel'
+  member_count INTEGER,
+  notes TEXT,
+  active INTEGER DEFAULT 1,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sug_groups_cat ON suggested_fb_groups(active, category);
+`);
+
+// ═══════════════════════════════════════════════════════════
 // v14 Sync Hub — Event broker giữa OTA Web team & VP MKT Bot
 // Mục đích: OTA push availability updates + Bot push bookings → PMS
 // HMAC-signed, audit logged, rate limited.

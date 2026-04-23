@@ -381,20 +381,66 @@ export async function runWeeklyAutoPost(hotelId: number = 1): Promise<WeeklyRunR
       `UPDATE remix_drafts SET status='published', fb_post_id=?, published_at=? WHERE id=?`
     ).run(fbPostId, Date.now(), remixDraftId);
 
-    console.log(`[ci-weekly] ✅ Published: fb=${fbPostId} draft=${remixDraftId}`);
+    console.log(`[ci-weekly] ✅ Published FB: fb=${fbPostId} draft=${remixDraftId}`);
 
-    // Notify admin
+    // v21: Instagram publish (if IG account linked for this hotel)
+    let igResults: any[] = [];
+    if (imageUrl) {
+      try {
+        const { publishToHotel } = require('./instagram-publisher');
+        igResults = await publishToHotel(hotelId, imageUrl, remix.remix_text);
+        igResults.forEach((r: any) => {
+          if (r.ok) console.log(`[ci-weekly] ✅ Published IG: ${r.ig_business_id} media=${r.ig_media_id}`);
+          else console.log(`[ci-weekly] IG fail ${r.ig_business_id}: ${r.error}`);
+        });
+      } catch (e: any) { console.warn('[ci-weekly] IG publish fail:', e?.message); }
+    }
+
+    // v21: Schedule FB page-to-page crosspost
+    let xpostScheduled: any[] = [];
     try {
+      const { scheduleCrossPost } = require('./fb-crosspost');
+      xpostScheduled = scheduleCrossPost(page.id, {
+        caption: remix.remix_text,
+        image_url: imageUrl,
+      });
+      if (xpostScheduled.length > 0) {
+        console.log(`[ci-weekly] ✅ Scheduled ${xpostScheduled.length} crossposts (delayed 10min)`);
+      }
+    } catch (e: any) { console.warn('[ci-weekly] crosspost fail:', e?.message); }
+
+    // v21: Create share package + push Telegram
+    try {
+      const { createSharePackage, pushPackageToTelegram } = require('./share-helper');
+      const pkg = createSharePackage({
+        hotel_id: hotelId,
+        source_post_id: remixDraftId,
+        source_type: 'ci_remix',
+        caption: remix.remix_text,
+        image_url: imageUrl,
+      });
+      await pushPackageToTelegram(pkg.id);
+      console.log(`[ci-weekly] ✅ Share package #${pkg.id} pushed to Telegram`);
+    } catch (e: any) { console.warn('[ci-weekly] share helper fail:', e?.message); }
+
+    // Notify admin — summary tất cả platforms
+    try {
+      const igCount = igResults.filter(r => r.ok).length;
+      const xpostCount = xpostScheduled.length;
       notifyAll(
-        `🤖 *CI Auto Weekly Post*\n` +
+        `🤖 *CI Auto Weekly Post — Multi-platform*\n` +
         `• Hotel: ${hotelName}\n` +
         `• Page: ${page.name}\n` +
         `• Inspiration: ${source.source_name}\n` +
-        `• Originality: ${remix.originality_score}\n` +
-        `• FB Post: \`${fbPostId}\`\n` +
-        `• Preview: ${remix.remix_text.slice(0, 200)}...`
-      ).catch(() => {});
-    } catch {}
+        `• Originality: ${remix.originality_score}\n\n` +
+        `📊 *Published:*\n` +
+        `  ✅ FB: \`${fbPostId}\`\n` +
+        (igCount > 0 ? `  ✅ IG: ${igCount}/${igResults.length} accounts\n` : '') +
+        (xpostCount > 0 ? `  ⏱ FB crosspost: ${xpostCount} pages (delayed 10min)\n` : '') +
+        `  📦 Share package → Telegram (manual groups)\n\n` +
+        `Preview: ${remix.remix_text.slice(0, 150)}...`
+      ).catch((e: any) => console.warn('[ci-weekly] tg notify fail:', e?.message));
+    } catch (e: any) { console.warn('[ci-weekly] telegram require fail:', e?.message); }
 
     return {
       ok: true,
