@@ -259,6 +259,14 @@ export function confirmBooking(bookingId: number, opts: { deposit_proof_url?: st
     decrementAvailability(booking.hotel_id, booking.room_type_code, dateStr, 1);
   }
 
+  // v18: Mark outreach conversion + v16 broadcast conversion
+  try {
+    const { markOutreachConverted } = require('./proactive-outreach');
+    if (booking.sender_id) markOutreachConverted(booking.sender_id, bookingId);
+    const { recordConversion } = require('./broadcast-sender');
+    recordConversion({ sender_id: booking.sender_id, customer_phone: booking.customer_phone, booking_id: bookingId });
+  } catch {}
+
   return true;
 }
 

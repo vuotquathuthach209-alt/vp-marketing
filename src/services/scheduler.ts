@@ -392,6 +392,34 @@ export function startScheduler() {
     }
   });
 
+  // ── v18 Proactive Outreach: daily scan 9h VN + send every 30min ──
+  // Scan daily at 2h UTC (9h VN) for opportunities
+  cron.schedule('0 2 * * *', () => {
+    try {
+      const { scanAndQueueOutreach } = require('./proactive-outreach');
+      const results = scanAndQueueOutreach(1);
+      const totalQueued = results.reduce((s: number, r: any) => s + r.queued, 0);
+      if (totalQueued > 0) {
+        console.log(`[scheduler] outreach-scan: queued ${totalQueued} messages`);
+      }
+    } catch (e: any) {
+      console.error('[scheduler] outreach-scan error:', e?.message);
+    }
+  });
+
+  // Send queued outreach every 30 minutes (respect scheduled_at)
+  cron.schedule('*/30 * * * *', async () => {
+    try {
+      const { sendQueuedOutreach } = require('./proactive-outreach');
+      const result = await sendQueuedOutreach({ limit: 20 });
+      if (result.processed > 0) {
+        console.log(`[scheduler] outreach-send: ${JSON.stringify(result)}`);
+      }
+    } catch (e: any) {
+      console.error('[scheduler] outreach-send error:', e?.message);
+    }
+  });
+
   // ── v17 Self-improvement: weekly winner selection + report ──
   // Chủ Nhật 9h sáng VN time = 2h UTC Sunday
   cron.schedule('0 2 * * 0', async () => {

@@ -1247,7 +1247,14 @@ export async function smartReplyWithSender(
   const hid = hotelId || 1;
   const pid = pageId || 0;
 
-  if (senderId) saveMessage(senderId, pid, 'user', msg);
+  if (senderId) {
+    saveMessage(senderId, pid, 'user', msg);
+    // v18: Detect reply to proactive outreach
+    try {
+      const { markOutreachReplied } = require('./proactive-outreach');
+      markOutreachReplied(senderId);
+    } catch {}
+  }
 
   // ─── Kill switch check ───
   try {

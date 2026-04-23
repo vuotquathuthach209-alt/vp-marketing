@@ -855,6 +855,48 @@ CREATE INDEX IF NOT EXISTS idx_lessons_context ON prompt_lessons(context, active
 `);
 
 // ═══════════════════════════════════════════════════════════
+// v18 Proactive Outreach — bot tự chủ động nhắn khách
+// Triggers: pre_checkin_1d, post_checkout_3d, birthday_month,
+//           abandoned_cart_2h, funnel_stuck_24h, vip_winback_30d
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+-- Queue + history of proactive outreach attempts
+CREATE TABLE IF NOT EXISTS scheduled_outreach (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL DEFAULT 1,
+  trigger_type TEXT NOT NULL,                    -- 'pre_checkin_1d' | 'post_checkout_3d' | 'birthday_month' | 'abandoned_cart' | 'funnel_stuck' | 'vip_winback'
+  sender_id TEXT,
+  customer_phone TEXT,
+  customer_name TEXT,
+  channel TEXT NOT NULL,                         -- 'zalo_message' | 'zalo_zns' | 'fb_message' | 'telegram'
+  template_key TEXT,                             -- Reference reply_templates (optional)
+  message_content TEXT,                          -- Final rendered message
+  context_json TEXT,                             -- JSON: {booking_id, checkin_date, promo_code, ...}
+  status TEXT DEFAULT 'queued',                  -- 'queued' | 'sent' | 'delivered' | 'replied' | 'converted' | 'failed' | 'skipped'
+  scheduled_at INTEGER NOT NULL,                 -- When to send
+  sent_at INTEGER,
+  replied_at INTEGER,
+  converted_at INTEGER,
+  converted_booking_id INTEGER,
+  error TEXT,
+  created_at INTEGER NOT NULL,
+  UNIQUE(hotel_id, sender_id, trigger_type, scheduled_at)
+);
+CREATE INDEX IF NOT EXISTS idx_outreach_queue ON scheduled_outreach(status, scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_outreach_sender ON scheduled_outreach(sender_id, trigger_type);
+CREATE INDEX IF NOT EXISTS idx_outreach_status_sent ON scheduled_outreach(status, sent_at DESC);
+
+-- Rate limit guard: tối đa N outreach/sender/day (chống spam)
+CREATE TABLE IF NOT EXISTS outreach_rate_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sender_id TEXT NOT NULL,
+  date_str TEXT NOT NULL,                        -- 'YYYY-MM-DD' VN time
+  sent_count INTEGER DEFAULT 1,
+  UNIQUE(sender_id, date_str)
+);
+`);
+
+// ═══════════════════════════════════════════════════════════
 // v14 Sync Hub — Event broker giữa OTA Web team & VP MKT Bot
 // Mục đích: OTA push availability updates + Bot push bookings → PMS
 // HMAC-signed, audit logged, rate limited.
