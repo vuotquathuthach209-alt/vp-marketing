@@ -21,13 +21,15 @@ const USER_AGENT = 'SonderBot/1.0 (+https://app.sondervn.com)';
    ═══════════════════════════════════════════ */
 
 export const TRAVEL_BLOG_SOURCES: Array<{ name: string; url: string; type: string; tier: string }> = [
-  // Travel news VN
+  // Travel news VN (verified working)
   { name: 'VnExpress Du lịch', url: 'https://vnexpress.net/rss/du-lich.rss', type: 'blog', tier: 'AAA' },
-  { name: 'Zing News Du lịch', url: 'https://news.zing.vn/du-lich/rss.html', type: 'blog', tier: 'AA' },
-  { name: 'Báo mới Du lịch', url: 'https://baomoi.com/du-lich/rss', type: 'blog', tier: 'AA' },
+  { name: 'VnExpress Kinh doanh', url: 'https://vnexpress.net/rss/kinh-doanh.rss', type: 'blog', tier: 'AAA' },
   // Travel blogs
   { name: 'iVIVU Blog', url: 'https://blog.ivivu.com/feed/', type: 'travel_blog', tier: 'A' },
-  { name: 'Sonder Blog (own)', url: 'https://sondervn.com/blog/feed/', type: 'own_blog', tier: 'AAA' },
+  // VietnamPlus (already in news_sources but RSS backup)
+  { name: 'VietnamPlus Du lịch', url: 'https://www.vietnamplus.vn/rss/du-lich.rss', type: 'blog', tier: 'AA' },
+  // Tuổi Trẻ du lịch
+  { name: 'Tuổi Trẻ Du lịch', url: 'https://tuoitre.vn/rss/du-lich.rss', type: 'blog', tier: 'AA' },
 ];
 
 /** Fetch 1 RSS source → return parsed items */
@@ -240,10 +242,13 @@ export async function ingestAllInspirationSources(hotelId: number = 1) {
     return { fetched: 0, saved: 0, analyzed: 0 };
   });
 
-  const fbRes = await ingestFbPagePosts(hotelId).catch(e => {
-    console.warn('[social-insp] fb fail:', e?.message);
-    return { fetched: 0, saved: 0, analyzed: 0 };
-  });
+  // FB ingest chỉ chạy nếu env flag FB_INGEST_ENABLED=1 (cần Pages Public Content Access approved)
+  const fbRes = process.env.FB_INGEST_ENABLED === '1'
+    ? await ingestFbPagePosts(hotelId).catch(e => {
+        console.warn('[social-insp] fb fail:', e?.message);
+        return { fetched: 0, saved: 0, analyzed: 0 };
+      })
+    : { fetched: 0, saved: 0, analyzed: 0 };
 
   return {
     blog: blogRes,
