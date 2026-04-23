@@ -204,8 +204,9 @@ router.post('/login', async (req, res) => {
         role: mktUser.role,
       });
     } catch (e: any) {
+      // v23: don't leak internal error details to client
       console.error('[auth] login error:', e);
-      return res.status(500).json({ error: 'Lỗi đăng nhập: ' + e.message });
+      return res.status(500).json({ error: 'Đăng nhập thất bại. Vui lòng thử lại.' });
     }
   }
 
@@ -304,8 +305,9 @@ router.post('/signup', async (req, res) => {
       auto_wiki_started: !!website_url,
     });
   } catch (e: any) {
+    // v23: don't leak details
     console.error('[auth] signup error:', e);
-    res.status(500).json({ error: 'Lỗi đăng ký: ' + e.message });
+    res.status(500).json({ error: 'Đăng ký thất bại. Vui lòng thử lại hoặc liên hệ support.' });
   }
 });
 
@@ -341,8 +343,9 @@ router.post('/signin', async (req, res) => {
       trial_ends_at: user.trial_ends_at, plan_expires_at: user.plan_expires_at,
     });
   } catch (e: any) {
+    // v23: don't leak details
     console.error('[auth] signin error:', e);
-    res.status(500).json({ error: 'Lỗi: ' + e.message });
+    res.status(500).json({ error: 'Đăng nhập thất bại. Vui lòng thử lại.' });
   }
 });
 

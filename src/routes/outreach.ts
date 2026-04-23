@@ -74,23 +74,40 @@ router.get('/list', (req: AuthRequest, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-/** Detail 1 outreach row */
+/** Detail 1 outreach row — v23: tenant-scoped */
 router.get('/:id', (req: AuthRequest, res) => {
   try {
+    const hotelId = getHotelId(req);
     const id = parseInt(String(req.params.id), 10);
-    const row = db.prepare(`SELECT * FROM scheduled_outreach WHERE id = ?`).get(id) as any;
+    if (isNaN(id) || id <= 0) return res.status(400).json({ error: 'invalid id' });
+    const row = db.prepare(
+      `SELECT * FROM scheduled_outreach WHERE id = ? AND hotel_id = ?`
+    ).get(id, hotelId) as any;
     if (!row) return res.status(404).json({ error: 'not found' });
     try { row.context_json = JSON.parse(row.context_json || '{}'); } catch {}
     res.json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    console.error('[outreach] detail fail:', e);
+    res.status(500).json({ error: 'internal error' });
+  }
 });
 
+/** v23: tenant-scoped cancel */
 router.post('/:id/cancel', (req: AuthRequest, res) => {
   try {
+    const hotelId = getHotelId(req);
     const id = parseInt(String(req.params.id), 10);
-    const r = db.prepare(`UPDATE scheduled_outreach SET status = 'skipped', error = 'admin_cancel' WHERE id = ? AND status = 'queued'`).run(id);
+    if (isNaN(id) || id <= 0) return res.status(400).json({ error: 'invalid id' });
+    const r = db.prepare(
+      `UPDATE scheduled_outreach
+       SET status = 'skipped', error = 'admin_cancel'
+       WHERE id = ? AND hotel_id = ? AND status = 'queued'`
+    ).run(id, hotelId);
     res.json({ ok: true, cancelled: r.changes > 0 });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    console.error('[outreach] cancel fail:', e);
+    res.status(500).json({ error: 'internal error' });
+  }
 });
 
 /** Performance metrics */

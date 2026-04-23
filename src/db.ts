@@ -1593,6 +1593,42 @@ LEFT JOIN mkt_hotels mh ON mh.ota_hotel_id = ha.hotel_id;
 
 console.log('[db] Created unified bot views: v_hotel_bot_context + v_hotel_rooms + v_hotel_amenities');
 
+// ═══════════════════════════════════════════════════════════
+// v23 — intent_logs: log mọi message qua Gemini Intent Classifier
+// Mục đích: analytics + training data cho tuning classifier + debug
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+CREATE TABLE IF NOT EXISTS intent_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER NOT NULL,
+  sender_id TEXT NOT NULL,
+  channel TEXT,                         -- 'fb' | 'zalo' | 'web' | 'api'
+  user_message TEXT NOT NULL,           -- tin gốc của khách (truncate 500)
+  msg_length INTEGER,                   -- length cho analytics
+  fsm_stage TEXT,                       -- FSM stage khi classify
+  primary_intent TEXT,                  -- booking | info_question | greeting | ...
+  sub_category TEXT,                    -- price | amenity | wifi | ...
+  confidence REAL,                      -- 0-1
+  in_knowledge_base INTEGER,            -- 1/0
+  needs_clarification INTEGER,          -- 1/0
+  is_faq_intent INTEGER,                -- 1/0 (v23)
+  pause_slot_filling INTEGER,           -- 1/0 (v23)
+  extracted_slots TEXT,                 -- JSON: slots detected
+  classifier_provider TEXT,             -- 'gemini_flash' | 'ollama' | 'groq'
+  classifier_latency_ms INTEGER,
+  routed_to TEXT,                       -- route taken: 'rag' | 'funnel' | 'policy' | 'promo' | 'pricing' | 'generic' | ...
+  reply_fingerprint TEXT,               -- first 30 chars of bot reply để trace duplicate
+  greeting_gated INTEGER DEFAULT 0,     -- 1 nếu greeting bị gate skip
+  error TEXT,                           -- nếu classifier fail
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_intent_logs_hotel_created ON intent_logs(hotel_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_intent_logs_sender ON intent_logs(sender_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_intent_logs_intent ON intent_logs(primary_intent, sub_category);
+CREATE INDEX IF NOT EXISTS idx_intent_logs_route ON intent_logs(routed_to, created_at DESC);
+`);
+console.log('[db] intent_logs table ready (v23)');
+
 // Indexes trên hotel_id
 try {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_pages_hotel ON pages(hotel_id)`);

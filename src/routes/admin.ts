@@ -100,21 +100,49 @@ router.post('/hotels', async (req: AuthRequest, res) => {
 });
 
 // PUT /api/admin/hotels/:id — update hotel plan/status
+// v23: enum validation + bounds check
+const VALID_PLANS = new Set(['free', 'starter', 'pro', 'enterprise']);
+const VALID_HOTEL_STATUS = new Set(['active', 'paused', 'cancelled', 'trial']);
+
 router.put('/hotels/:id', (req: AuthRequest, res) => {
-  const id = parseInt(req.params.id as string);
-  const { plan, status, features, max_posts_per_day, max_pages } = req.body;
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id) || id <= 0) return res.status(400).json({ error: 'invalid id' });
+
+  const { plan, status, features, max_posts_per_day, max_pages } = req.body || {};
   const now = Date.now();
+
+  // v23: whitelist enums
+  if (plan !== undefined && !VALID_PLANS.has(String(plan))) {
+    return res.status(400).json({ error: `invalid plan (allowed: ${[...VALID_PLANS].join(', ')})` });
+  }
+  if (status !== undefined && !VALID_HOTEL_STATUS.has(String(status))) {
+    return res.status(400).json({ error: `invalid status (allowed: ${[...VALID_HOTEL_STATUS].join(', ')})` });
+  }
 
   const sets: string[] = ['updated_at = ?'];
   const vals: any[] = [now];
 
-  if (plan) { sets.push('plan = ?'); vals.push(plan); }
-  if (status) { sets.push('status = ?'); vals.push(status); }
-  if (features) { sets.push('features = ?'); vals.push(JSON.stringify(features)); }
-  if (max_posts_per_day !== undefined) { sets.push('max_posts_per_day = ?'); vals.push(max_posts_per_day); }
-  if (max_pages !== undefined) { sets.push('max_pages = ?'); vals.push(max_pages); }
+  if (plan) { sets.push('plan = ?'); vals.push(String(plan)); }
+  if (status) { sets.push('status = ?'); vals.push(String(status)); }
+  if (features) {
+    // v23: strip obviously invalid feature payloads
+    if (typeof features !== 'object' || Array.isArray(features)) {
+      return res.status(400).json({ error: 'features must be object' });
+    }
+    sets.push('features = ?'); vals.push(JSON.stringify(features).slice(0, 4000));
+  }
+  if (max_posts_per_day !== undefined) {
+    const n = Math.max(0, Math.min(100, parseInt(String(max_posts_per_day), 10) || 0));
+    sets.push('max_posts_per_day = ?'); vals.push(n);
+  }
+  if (max_pages !== undefined) {
+    const n = Math.max(0, Math.min(50, parseInt(String(max_pages), 10) || 0));
+    sets.push('max_pages = ?'); vals.push(n);
+  }
 
   vals.push(id);
+  // Note: `sets` contains only hardcoded column names from the if-branches above
+  // → no user input is interpolated into SQL. Parameters are all `?`.
   db.prepare(`UPDATE mkt_hotels SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
   res.json({ ok: true });
 });

@@ -66,13 +66,38 @@ export async function extractText(imageBuffer: Buffer, opts: { min_confidence?: 
   }
 }
 
-/** Extract from URL (fetch first, then OCR). */
+/** Extract from URL (fetch first, then OCR).
+ *  v23: SSRF protection — block private IPs + non-http schemes.  */
 export async function extractFromUrl(url: string, opts: { min_confidence?: number } = {}): Promise<OcrResult> {
+  // v23: SSRF guard — reuse isSafeUrl from news-ingest
+  try {
+    const { isSafeUrl } = require('./news-ingest');
+    const check = isSafeUrl(url);
+    if (!check.safe) {
+      console.warn(`[ocr] extractFromUrl blocked SSRF: ${check.reason} url=${url.slice(0, 80)}`);
+      return {
+        ok: false,
+        lines: [],
+        raw_text: '',
+        width: 0,
+        height: 0,
+        latency_ms: 0,
+        error: `url blocked: ${check.reason}`,
+      };
+    }
+  } catch (e: any) {
+    console.warn('[ocr] SSRF guard load fail:', e?.message);
+  }
+
   try {
     const resp = await axios.get<ArrayBuffer>(url, {
       responseType: 'arraybuffer',
       timeout: 20_000,
       maxContentLength: 10 * 1024 * 1024,
+      // v23: also validate via redirect — axios default allows 5 redirects,
+      //      but we're already on safe host; disable redirects to avoid
+      //      redirect-to-private-IP bypass.
+      maxRedirects: 0,
     });
     return extractText(Buffer.from(resp.data), opts);
   } catch (e: any) {

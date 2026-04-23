@@ -362,15 +362,84 @@ export async function processFunnelMessage(
 
   // 0. Gemini Intent Classifier — smart analyze ý định khách TRƯỚC khi enter FSM.
   //    Replaces regex detectContentQuestion với AI classification.
+  //    v23: log every message để phân tích + training data.
   let geminiIntent: any = null;
+  let classifierLatency = 0;
+  let intentLogId: number | null = null;
+  const tClassifier = Date.now();
   try {
-    const { analyzeIntent, geminiSlotsToExtracted } = require('./gemini-intent-classifier');
+    const { analyzeIntent } = require('./gemini-intent-classifier');
     const prevState = getState(senderId);
     geminiIntent = await analyzeIntent(msg, { hasPrevContext: !!prevState, senderId });
+    classifierLatency = Date.now() - tClassifier;
     if (geminiIntent) {
-      console.log(`[gemini-intent] ${geminiIntent.primary_intent}/${geminiIntent.sub_category || '-'} conf=${geminiIntent.confidence} kb=${geminiIntent.in_knowledge_base} clarify=${geminiIntent.needs_clarification}`);
+      console.log(`[gemini-intent] ${geminiIntent.primary_intent}/${geminiIntent.sub_category || '-'} conf=${geminiIntent.confidence} kb=${geminiIntent.in_knowledge_base} clarify=${geminiIntent.needs_clarification} faq=${geminiIntent.is_faq_intent} pause=${geminiIntent.pause_slot_filling}`);
     }
   } catch (e: any) { console.warn('[funnel] Gemini intent fail:', e?.message); }
+
+  // v23: Log intent EVERY TIME (even if classifier failed → error field set)
+  try {
+    const { logIntent } = require('./intent-logger');
+    const prevState = getState(senderId);
+    const channel = senderId.startsWith('zalo:') ? 'zalo' : senderId.startsWith('fb:') ? 'fb' : 'web';
+    intentLogId = logIntent({
+      hotel_id: hotelId,
+      sender_id: senderId,
+      channel,
+      user_message: msg,
+      fsm_stage: prevState?.stage || 'INIT',
+      classifier_result: geminiIntent,
+      classifier_provider: geminiIntent ? 'gemini_flash' : null,
+      classifier_latency_ms: classifierLatency,
+      error: geminiIntent ? null : 'classifier_null_or_fail',
+    });
+  } catch (e: any) { console.warn('[funnel] intent-logger fail:', e?.message); }
+
+  // v23 ROUTE 0.3: FAQ PRIORITY OVER SLOT-FILLING
+  //   Nếu khách đang giữa form (DATES_ASK/GUESTS_ASK/BUDGET_ASK/AREA_ASK/MONTHS_ASK)
+  //   và câu hỏi là FAQ → answer FAQ trước, rồi gently quay lại form.
+  if (geminiIntent?.pause_slot_filling && geminiIntent.is_faq_intent && geminiIntent.confidence >= 0.5) {
+    const prevState = getState(senderId);
+    const SLOT_STAGES = ['DATES_ASK', 'GUESTS_ASK', 'BUDGET_ASK', 'AREA_ASK', 'MONTHS_ASK', 'CHDV_STARTDATE_ASK', 'CHDV_EXTRAS_ASK'];
+    if (prevState && SLOT_STAGES.includes(prevState.stage)) {
+      try {
+        const { unifiedQuery } = require('./knowledge-sync');
+        const qr = await unifiedQuery(msg);
+        if (qr.tier !== 'none' && qr.confidence >= 0.4 && qr.answer_snippets?.length) {
+          // Build "return to form" message based on current stage
+          const stageCta: Record<string, string> = {
+            DATES_ASK: `Còn về ngày check-in thì anh/chị dự định bao giờ ạ?`,
+            MONTHS_ASK: `Còn về thời gian thuê bao lâu thì anh/chị định bao nhiêu tháng ạ?`,
+            CHDV_STARTDATE_ASK: `Còn về ngày dọn vào thì anh/chị dự kiến hôm nào ạ?`,
+            GUESTS_ASK: `Còn về số khách thì có mấy người sẽ ở ạ?`,
+            BUDGET_ASK: `Còn về mức giá thì budget của anh/chị tầm bao nhiêu ạ?`,
+            AREA_ASK: `Còn về khu vực thì anh/chị muốn ở gần đâu ạ?`,
+            CHDV_EXTRAS_ASK: `Anh/chị có yêu cầu gì thêm không ạ?`,
+          };
+          const faqAnswer = formatRagAnswer(qr);
+          const returnPrompt = stageCta[prevState.stage] || `Anh/chị tiếp tục cho em thông tin nhé 🙌`;
+
+          // Update intent log with route decision
+          if (intentLogId) {
+            try {
+              const { updateIntentLog } = require('./intent-logger');
+              updateIntentLog(intentLogId, {
+                routed_to: `faq_pause_${geminiIntent.sub_category || 'info'}`,
+                reply_fingerprint: faqAnswer.slice(0, 30),
+              });
+            } catch {}
+          }
+
+          return {
+            reply: `${faqAnswer}\n\n---\n${returnPrompt}`,
+            intent: `faq_interrupt_${geminiIntent.sub_category || 'info'}`,
+            stage: prevState.stage,   // KEEP current stage — chưa advance form
+            meta: { tier: qr.tier, confidence: qr.confidence, gemini: geminiIntent, faq_interrupt: true },
+          };
+        }
+      } catch (e: any) { console.warn('[funnel] FAQ-pause branch fail:', e?.message); }
+    }
+  }
 
   // ROUTE 0.5: BARE HOTEL NAME — nếu msg chỉ là tên khách sạn (hoặc gần như vậy)
   //            → show hotel overview trực tiếp, không RAG snippet.
@@ -1085,6 +1154,18 @@ export async function processFunnelMessage(
 
   // 8. Save state
   saveState(state);
+
+  // v23: Update intent log với route + fingerprint cho duplicate analysis
+  if (intentLogId) {
+    try {
+      const { updateIntentLog } = require('./intent-logger');
+      updateIntentLog(intentLogId, {
+        routed_to: `funnel_${state.stage.toLowerCase()}`,
+        reply_fingerprint: (result.reply || '').slice(0, 30),
+        greeting_gated: result.meta?.greeting_gated === 'gated',
+      });
+    } catch {}
+  }
 
   return {
     reply: result.reply,

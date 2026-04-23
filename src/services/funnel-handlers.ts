@@ -14,6 +14,7 @@
 import { db } from '../db';
 import { ConversationState, Stage, BookingSlots, decideNextStage } from './conversation-fsm';
 import { searchByArea, searchNearby } from './hotel-knowledge';
+import { shouldSendGreeting, hasRecentBotActivity } from './greeting-gate';
 
 /* ═══════════════════════════════════════════
    Types
@@ -148,17 +149,29 @@ export function handlePropertyTypeAsk(state: ConversationState): HandlerResult {
     payload: `property_type_${type}`,
   }));
 
+  // v23: Gate duplicate greeting — check last 5 bot messages.
+  //      Nếu bot ĐÃ chào gần đây → bỏ greeting, chỉ hỏi loại phòng.
+  const senderId = state.sender_id;
+  const alreadyActive = hasRecentBotActivity(senderId);
+
   // Build reply: personalized greeting TRƯỚC nếu là returning customer
   const replyParts: string[] = [];
   if (personalizedGreeting) {
-    replyParts.push(personalizedGreeting);
+    // Check dup — nếu greeting template đã gửi trong 5 turn gần nhất → skip
+    if (shouldSendGreeting(senderId, personalizedGreeting)) {
+      replyParts.push(personalizedGreeting);
+    }
     if (returningSuggestion) {
       // Nếu có suggestion, show nó TRƯỚC list types
       replyParts.push(returningSuggestion);
       replyParts.push(`Hoặc nếu muốn xem option khác:`);
       replyParts.push(lines.join('\n'));
     } else {
-      replyParts.push(`Anh/chị cần loại hình nào hôm nay ạ?`);
+      // Nếu đã skip greeting → hỏi CONTINUATION thay vì "hôm nay" (sound less robotic)
+      const cta = replyParts.length > 0
+        ? `Anh/chị cần loại hình nào hôm nay ạ?`
+        : `Anh/chị cần loại hình nào ạ?`;
+      replyParts.push(cta);
       replyParts.push(lines.join('\n'));
     }
   } else {
@@ -176,16 +189,27 @@ export function handlePropertyTypeAsk(state: ConversationState): HandlerResult {
       }
     } catch {}
 
-    if (greetingText) {
-      // Variant content có thể đã có CTA → chỉ append list types
-      replyParts.push(greetingText);
-      replyParts.push(lines.join('\n'));
+    // v23: Gate — greeting only if NOT recently sent to this sender
+    const fallbackGreeting = `Chào anh/chị! 👋 Em là trợ lý Sonder — nền tảng đặt phòng trực tuyến.`;
+    const candidateGreeting = greetingText || fallbackGreeting;
+    const okToGreet = shouldSendGreeting(senderId, candidateGreeting);
+
+    if (okToGreet) {
+      if (greetingText) {
+        replyParts.push(greetingText);
+        replyParts.push(lines.join('\n'));
+      } else {
+        // Fallback hardcoded (first-ever interaction)
+        replyParts.push(fallbackGreeting);
+        replyParts.push(`Anh/chị cần loại hình nào ạ?`);
+        replyParts.push(lines.join('\n'));
+        replyParts.push(`Cho em biết loại hình + ngày check-in + số khách, em tư vấn chỗ phù hợp nhất ạ! 🙌`);
+      }
     } else {
-      // Fallback hardcoded
-      replyParts.push(`Chào anh/chị! 👋 Em là trợ lý Sonder — nền tảng đặt phòng trực tuyến.`);
+      // Đã chào rồi — chỉ list types + CTA ngắn gọn, không lặp template
+      console.log(`[greeting-gate] skip duplicate greeting for sender=${senderId}`);
       replyParts.push(`Anh/chị cần loại hình nào ạ?`);
       replyParts.push(lines.join('\n'));
-      replyParts.push(`Cho em biết loại hình + ngày check-in + số khách, em tư vấn chỗ phù hợp nhất ạ! 🙌`);
     }
   }
 
@@ -193,6 +217,7 @@ export function handlePropertyTypeAsk(state: ConversationState): HandlerResult {
     reply: replyParts.join('\n\n'),
     next_stage: 'PROPERTY_TYPE_ASK',
     quick_replies: quickReplies,
+    meta: { greeting_gated: !hasRecentBotActivity(senderId) ? 'first_turn' : 'gated' },
   };
 }
 
