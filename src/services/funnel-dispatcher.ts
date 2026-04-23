@@ -367,32 +367,6 @@ export async function processFunnelMessage(
     const { analyzeIntent, geminiSlotsToExtracted } = require('./gemini-intent-classifier');
     const prevState = getState(senderId);
     geminiIntent = await analyzeIntent(msg, { hasPrevContext: !!prevState, senderId });
-
-    // v20: Detect correction signals — user đang đính chính slot cũ
-    const isCorrection = /\b(không phải|đính chính|sửa lại|đổi lại|không đúng|sai rồi|nhầm|actually|thay đổi)\b/i.test(msg);
-    if (isCorrection && prevState) {
-      console.log(`[funnel] correction detected for ${senderId}: "${msg.slice(0, 60)}"`);
-      // Slot extractor + mergeSlots sẽ tự overwrite với giá trị mới.
-      // Ở đây chỉ log + acknowledge trong reply sau.
-      (prevState as any)._correction_detected = true;
-    }
-
-    // v20: Detect explicit CLEAR signals — khách muốn bỏ constraint
-    if (prevState) {
-      // "không giới hạn budget" / "bỏ budget" / "không quan tâm budget"
-      if (/\b(không giới hạn|bỏ|không quan tâm)\s*(budget|giá|tiền|ngân sách)\b/i.test(msg)) {
-        prevState.slots.budget_min = undefined;
-        prevState.slots.budget_max = undefined;
-        prevState.slots.budget_no_filter = true;
-        console.log(`[funnel] explicit clear budget for ${senderId}`);
-      }
-      // "bất kỳ khu nào" / "không quan tâm khu"
-      if (/\b(bất kỳ|khu nào cũng|không quan tâm)\s*(khu|quận|district|location)\b/i.test(msg)) {
-        (prevState.slots as any).area_type = 'city';
-        prevState.slots.area_normalized = 'Ho Chi Minh';
-        console.log(`[funnel] explicit any area for ${senderId}`);
-      }
-    }
     if (geminiIntent) {
       console.log(`[gemini-intent] ${geminiIntent.primary_intent}/${geminiIntent.sub_category || '-'} conf=${geminiIntent.confidence} kb=${geminiIntent.in_knowledge_base} clarify=${geminiIntent.needs_clarification}`);
     }
@@ -730,6 +704,34 @@ export async function processFunnelMessage(
     resetFsm(senderId);
     state = initState(senderId, hotelId, opts.language || 'vi');
   }
+  // v20: Correction + explicit CLEAR signals — apply TRƯỚC khi init new state (chỉ áp dụng nếu có state cũ)
+  if (state) {
+    const isCorrection = /(không phải|đính chính|sửa lại|đổi lại|không đúng|sai rồi|nhầm|thay đổi)/i.test(msg);
+    if (isCorrection) {
+      console.log(`[funnel] correction detected for ${senderId}: "${msg.slice(0, 60)}"`);
+      (state as any)._correction_detected = true;
+    }
+
+    // Explicit CLEAR budget
+    if (/(không giới hạn|bỏ|không quan tâm)\s*(budget|giá|tiền|ngân sách)/i.test(msg)) {
+      state.slots.budget_min = undefined;
+      state.slots.budget_max = undefined;
+      state.slots.budget_no_filter = true;
+      (state as any)._correction_detected = true;
+      console.log(`[funnel] explicit clear budget for ${senderId}`);
+    }
+
+    // Explicit CLEAR area (any/everywhere)
+    if (/(bất kỳ|khu nào cũng|đâu cũng|không quan tâm)\s*(khu|quận|district|location|area)?/i.test(msg) ||
+        /^(bất kỳ|đâu cũng được)/i.test(msg.trim())) {
+      (state.slots as any).area_type = 'city';
+      state.slots.area_normalized = 'Ho Chi Minh';
+      state.slots.area = 'HCM';
+      (state as any)._correction_detected = true;
+      console.log(`[funnel] explicit any area for ${senderId}`);
+    }
+  }
+
   if (!state) {
     state = initState(senderId, hotelId, opts.language || 'vi');
 
