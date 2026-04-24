@@ -161,7 +161,10 @@ zaloWebhookRouter.post('/webhook/zalo', async (req, res) => {
 // ── v24: Zalo OAuth callback — PUBLIC (no auth, called by Zalo redirect) ────
 // Handle: GET /api/zalo/oauth/callback?code=XXX&oa_id=YYY&state=ZZZ
 // Exchange authorization code → access_token + refresh_token và lưu DB.
-zaloWebhookRouter.get('/api/zalo/oauth/callback', async (req, res) => {
+//
+// v24 fix: mounted ON zaloRouter BEFORE authMiddleware (see bottom) để tránh
+//          collision với `/api/zalo/*` auth route. Moved handler xuống dưới.
+async function zaloOAuthCallback(req: any, res: any) {
   try {
     const code = String(req.query.code || '');
     const oaId = String(req.query.oa_id || '');
@@ -238,10 +241,15 @@ zaloWebhookRouter.get('/api/zalo/oauth/callback', async (req, res) => {
     console.error('[zalo-oauth] callback fail:', e?.response?.data || e?.message);
     return res.status(500).send(`<h2>❌ Exchange error</h2><pre>${e?.response?.data ? JSON.stringify(e.response.data, null, 2) : e?.message}</pre>`);
   }
-});
+}
 
 // ── Authed CRUD ─────────────────────────────────────────────────────────
 const router = Router();
+
+// v24 FIX: PUBLIC OAuth callback — MUST be registered BEFORE authMiddleware
+//          để Zalo redirect không bị 401.
+router.get('/oauth/callback', zaloOAuthCallback);
+
 router.use(authMiddleware);
 
 router.get('/list', (req: AuthRequest, res) => {
