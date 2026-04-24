@@ -79,12 +79,14 @@ export async function processMessageAgentic(
 
     // ═══════════════════════════════════════════
     // TURN 1 FAST-PATH: pure greeting (template)
+    // turnNumber = số user msg ĐÃ CÓ trong DB. 0 = msg này là msg đầu.
     // ═══════════════════════════════════════════
-    if (turnNumber === 1 || history.length <= 1) {
+    const isFirstTurn = turnNumber === 0 || history.filter(h => h.role === 'user').length === 0;
+    if (isFirstTurn) {
       const templateId = customerName ? 'greeting_returning' : 'greeting_opening';
       const t = renderTemplate(templateId, { customerName, customerTier });
       if (t) {
-        console.log(`[agentic] turn 1 → template ${templateId} (no AI)`);
+        console.log(`[agentic] turn 1 (first-ever) → template ${templateId} (no AI)`);
         return {
           reply: t.content,
           quick_replies: t.quick_replies,

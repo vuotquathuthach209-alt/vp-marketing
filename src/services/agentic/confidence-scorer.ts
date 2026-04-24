@@ -157,12 +157,11 @@ export function matchTemplate(
 ): { id: string; score: number } | null {
   const m = msg.toLowerCase().trim();
 
-  // Turn 1 greeting
-  if (turn === 1) {
+  // Turn 0/1 greeting (first-ever msg)
+  if (turn <= 1) {
     if (/^(chào|hello|hi|hey|alo|xin chào|dạ|hi em|chào em)/.test(m)) {
       return { id: 'greeting_opening', score: 0.95 };
     }
-    // Even if not pure greeting, turn 1 → always greet
     return { id: 'greeting_opening', score: 0.85 };
   }
 
