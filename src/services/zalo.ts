@@ -509,7 +509,89 @@ export async function zaloBroadcastRichMessage(
   return { sent, failed, errors, attachment_id: attId, recipient_count: targets.length };
 }
 
-/** Backwards compat: legacy name used in routes */
+/** v24: Tạo Article trên TIMELINE OA (không gửi tin nhắn tới follower).
+ *
+ *  Differences:
+ *    - zaloBroadcastRichMessage   → push inbox tới từng follower (gửi tin nhắn)
+ *    - zaloCreateTimelineArticle  → đăng lên feed của OA (followers thấy khi vào OA page, KHÔNG push)
+ *
+ *  Endpoint: POST https://openapi.zalo.me/v2.0/article/create
+ *  Cần scope: oa.article.create (OA verified business có sẵn)
+ *
+ *  Response: {data: {id: "<article_id>", url: "..."}, error: 0}
+ */
+export async function zaloCreateTimelineArticle(
+  oa: ZaloOA,
+  opts: {
+    title: string;
+    description?: string;
+    cover: string;                                          // URL or attachment_id
+    bodyBlocks: Array<{ type: 'text' | 'image'; content: string; desc?: string }>;
+    author?: string;
+    status?: 'show' | 'hide';
+    comment?: 'enable' | 'disable';
+  },
+): Promise<{ article_id?: string; url?: string; raw: any }> {
+  try {
+    // Step 1: Ensure cover is an upload attachment (Zalo needs attachment_id, not URL)
+    let coverAttId = opts.cover;
+    if (/^https?:\/\//.test(opts.cover)) {
+      const id = await zaloUploadImageFromUrl(oa, opts.cover);
+      if (!id) throw new Error('Cannot upload cover image');
+      coverAttId = id;
+    }
+
+    // Step 2: Upload inline images in body (nếu có)
+    const processedBody: any[] = [];
+    for (const block of opts.bodyBlocks) {
+      if (block.type === 'image' && /^https?:\/\//.test(block.content)) {
+        const id = await zaloUploadImageFromUrl(oa, block.content);
+        if (id) processedBody.push({ type: 'image', content: id, desc: block.desc || '' });
+      } else if (block.type === 'text') {
+        processedBody.push({ type: 'text', content: block.content });
+      }
+    }
+
+    // Step 3: POST article
+    const payload = {
+      title: opts.title.slice(0, 100),
+      description: (opts.description || '').slice(0, 200),
+      cover: coverAttId,
+      body: processedBody,
+      author: opts.author || 'Sonder',
+      status: opts.status || 'show',
+      comment: opts.comment || 'enable',
+    };
+
+    const r = await axios.post(
+      'https://openapi.zalo.me/v2.0/article/create',
+      payload,
+      {
+        headers: { access_token: oa.access_token, 'Content-Type': 'application/json' },
+        timeout: 30000,
+      }
+    );
+
+    if (r.data?.error !== 0) {
+      throw new Error(`Zalo article ${r.data.error}: ${r.data.message}`);
+    }
+
+    return {
+      article_id: r.data?.data?.id,
+      url: r.data?.data?.url,
+      raw: r.data,
+    };
+  } catch (e: any) {
+    const msg = e?.response?.data || e?.message;
+    console.error('[zalo] create article fail:', msg);
+    throw e;
+  }
+}
+
+/** Legacy name — HIỆN TẠI GỌI TIMELINE ARTICLE (không broadcast).
+ *  Dùng cho cross-post tự động để KHÔNG spam inbox follower.
+ *  Nếu muốn broadcast cũ → dùng zaloBroadcastRichMessage trực tiếp.
+ */
 export async function zaloCreateArticle(
   oa: ZaloOA,
   opts: {
@@ -522,23 +604,8 @@ export async function zaloCreateArticle(
     comment?: 'enable' | 'disable';
   },
 ): Promise<{ article_id?: string; url?: string; raw: any }> {
-  // Convert article format → broadcast format
-  const caption = [
-    opts.title,
-    opts.description || '',
-    opts.bodyBlocks.filter(b => b.type === 'text').map(b => b.content.replace(/<[^>]+>/g, '')).join('\n\n'),
-  ].filter(Boolean).join('\n\n').slice(0, 2000);
-
-  const result = await zaloBroadcastRichMessage(oa, { caption, imageUrl: opts.cover });
-
-  if (result.sent === 0) {
-    throw new Error(`Zalo broadcast: 0 sent, ${result.failed} failed${result.errors[0] ? ' (first: ' + result.errors[0].error + ')' : ''}`);
-  }
-  return {
-    article_id: result.attachment_id,
-    url: `broadcast:${result.sent}/${result.recipient_count}`,
-    raw: result,
-  };
+  // v24: Default to timeline article (không gửi tin nhắn tới follower)
+  return zaloCreateTimelineArticle(oa, opts);
 }
 
 /** Convert plain text → body blocks (giữ để compat với legacy code) */
