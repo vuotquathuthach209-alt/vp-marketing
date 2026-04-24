@@ -1849,14 +1849,24 @@ CREATE INDEX IF NOT EXISTS idx_variant_template ON agentic_template_variants(tem
 `);
 console.log('[db] v27 agentic_templates + suggestions + selections + variants tables ready (DB-driven template engine)');
 
-// v27 Phase 5: Safe additive columns for existing rows
+// v27 Phase 5: Safe additive columns for existing tables (CREATE IF NOT EXISTS skips new columns on existing tables)
 try {
-  const hasClicks = db.prepare(`PRAGMA table_info(agentic_templates)`).all().some((r: any) => r.name === 'clicks');
-  if (!hasClicks) {
+  const tplCols = db.prepare(`PRAGMA table_info(agentic_templates)`).all() as any[];
+  if (!tplCols.some(r => r.name === 'clicks')) {
     db.exec(`ALTER TABLE agentic_templates ADD COLUMN clicks INTEGER DEFAULT 0`);
     console.log('[db] added clicks column to agentic_templates');
   }
-} catch {}
+
+  const trackCols = db.prepare(`PRAGMA table_info(agentic_template_tracking)`).all() as any[];
+  if (!trackCols.some(r => r.name === 'last_template_variant')) {
+    db.exec(`ALTER TABLE agentic_template_tracking ADD COLUMN last_template_variant TEXT`);
+    console.log('[db] added last_template_variant column to agentic_template_tracking');
+  }
+  if (!trackCols.some(r => r.name === 'click_tracked')) {
+    db.exec(`ALTER TABLE agentic_template_tracking ADD COLUMN click_tracked INTEGER DEFAULT 0`);
+    console.log('[db] added click_tracked column to agentic_template_tracking');
+  }
+} catch (e: any) { console.warn('[db] v27 Phase 5 migration fail:', e?.message); }
 
 // ═══════════════════════════════════════════════════════════
 // v23 — intent_logs: log mọi message qua Gemini Intent Classifier
