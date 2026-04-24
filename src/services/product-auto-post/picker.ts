@@ -175,17 +175,21 @@ function scoreHotel(h: any, networkAvg: number): HotelCandidate {
 
 /**
  * Apply reject rules. Returns null if passes, reason string if rejected.
+ *
+ * v25 FIX: missing data (null) → assume OK thay vì reject.
+ *          Chỉ reject khi có EVIDENCE của vấn đề.
  */
 function checkRejectRules(h: any, networkAvg: number): string | null {
-  // 1. Verified + low rating → reject (anh/chị rule)
-  if (h.verified && h.review_avg > 0 && h.review_avg < (networkAvg - RATING_THRESHOLD_DELTA)) {
+  // 1. Verified + rating data present + low rating → reject (anh/chị rule)
+  if (h.verified && h.review_avg != null && h.review_avg > 0 && h.review_avg < (networkAvg - RATING_THRESHOLD_DELTA)) {
     return `verified_low_rating:${h.review_avg.toFixed(1)}<${(networkAvg - RATING_THRESHOLD_DELTA).toFixed(1)}`;
   }
-  // 2. Too few reviews
-  if (h.review_count < MIN_REVIEWS) {
+  // 2. Too few reviews — CHỈ reject khi có data AND < threshold
+  //    (null = "data chưa sync" không phải "hotel tệ")
+  if (h.review_count != null && h.review_count > 0 && h.review_count < MIN_REVIEWS) {
     return `too_few_reviews:${h.review_count}<${MIN_REVIEWS}`;
   }
-  // 3. Not enough images
+  // 3. Not enough images (đây là data thật, không null)
   if (h.image_count < MIN_IMAGES) {
     return `too_few_images:${h.image_count}<${MIN_IMAGES}`;
   }
