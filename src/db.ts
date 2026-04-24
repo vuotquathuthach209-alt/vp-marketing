@@ -1887,8 +1887,23 @@ CREATE TABLE IF NOT EXISTS agentic_opening_cache (
 );
 CREATE INDEX IF NOT EXISTS idx_cao_cached ON agentic_opening_cache(cached_at DESC);
 CREATE INDEX IF NOT EXISTS idx_cao_action ON agentic_opening_cache(action, was_effective);
+
+-- v27 Auto-Promote: daily log of winner analysis (cần 7-day streak để auto-promote)
+CREATE TABLE IF NOT EXISTS agentic_variant_winner_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  template_id TEXT NOT NULL,
+  winner_key TEXT,
+  winner_conv_rate REAL,
+  runner_up_key TEXT,
+  runner_up_conv_rate REAL,
+  confidence TEXT,                            -- low | medium | high
+  total_impressions INTEGER,
+  logged_at INTEGER NOT NULL,
+  auto_promoted INTEGER DEFAULT 0             -- 1 nếu day này trigger auto-promote
+);
+CREATE INDEX IF NOT EXISTS idx_winner_log ON agentic_variant_winner_log(template_id, logged_at DESC);
 `);
-console.log('[db] v27 CAO opening cache table ready');
+console.log('[db] v27 CAO + auto-promote log tables ready');
 
 // ═══════════════════════════════════════════════════════════
 // v23 — intent_logs: log mọi message qua Gemini Intent Classifier

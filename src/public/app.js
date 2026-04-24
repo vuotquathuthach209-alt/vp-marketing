@@ -7290,6 +7290,114 @@ async function loadTplChart(days) {
   } catch (e) { console.warn('[chart] fail', e); }
 }
 
+// ═══════════════════════════════════════════════════════════
+// AUTO-PROMOTE A/B WINNER (v27 Phase 6)
+// ═══════════════════════════════════════════════════════════
+
+async function loadAutoPromoteStatus() {
+  try {
+    const r = await api('/agentic-templates/auto-promote/status');
+    if (!r?.success) return;
+
+    document.getElementById('tpl-autopromote-toggle').checked = !!r.enabled;
+    document.getElementById('autopromote-enabled-badge').classList.toggle('hidden', !r.enabled);
+
+    const eligible = r.eligible || [];
+    const out = document.getElementById('tpl-autopromote-eligible');
+    if (eligible.length === 0) {
+      out.innerHTML = '<span class="text-slate-500">Chưa có template nào đủ điều kiện auto-promote (cần 7 ngày confidence=high liên tục).</span>';
+    } else {
+      out.innerHTML = `<div class="bg-white rounded p-2 border border-emerald-300">
+        <div class="font-semibold text-emerald-800 mb-1">🎯 ${eligible.length} template đủ điều kiện promote</div>
+        ${eligible.map(e => `
+          <div class="text-xs text-slate-700 py-1 border-t border-slate-100">
+            <code class="bg-slate-100 px-1 rounded">${e.templateId}</code>
+            → winner <strong>${e.consistentWinner}</strong>
+            (streak ${e.streak} ngày, conv rate ${((e.latestAnalysis?.winner_conv_rate || 0) * 100).toFixed(1)}%)
+          </div>
+        `).join('')}
+      </div>`;
+    }
+  } catch (e) { console.warn('[auto-promote] status fail', e); }
+}
+
+async function toggleAutoPromote(e) {
+  try {
+    const enabled = e.target.checked;
+    const r = await api('/agentic-templates/auto-promote/toggle', {
+      method: 'POST', body: JSON.stringify({ enabled }),
+    });
+    if (r?.success) {
+      document.getElementById('autopromote-enabled-badge').classList.toggle('hidden', !enabled);
+    }
+  } catch (err) { alert('Lỗi: ' + err.message); }
+}
+
+async function runAutoPromoteNow() {
+  if (!confirm('Chạy auto-promote cron NGAY? Nếu có template đủ điều kiện sẽ được promote ngay.')) return;
+  try {
+    const btn = document.getElementById('tpl-btn-autopromote-run');
+    btn.textContent = '⏳ Đang chạy...';
+    btn.disabled = true;
+
+    const r = await api('/agentic-templates/auto-promote/run-now', { method: 'POST' });
+    btn.textContent = '▶️ Chạy ngay';
+    btn.disabled = false;
+
+    if (r?.success) {
+      const promoted = r.eligible?.filter(e => e.promoted) || [];
+      alert(`✅ Cron chạy xong!
+Templates checked: ${r.checked}
+Logged today: ${r.logged}
+Eligible: ${r.eligible.length}
+Auto-promoted: ${promoted.length}
+${promoted.length > 0 ? '\n' + promoted.map(e => `  🏆 ${e.templateId} → ${e.consistentWinner}`).join('\n') : ''}`);
+      await loadAgenticTemplates();
+    } else {
+      alert('Lỗi: ' + (r?.error || 'unknown'));
+    }
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function showAutoPromoteLog() {
+  try {
+    const r = await api('/agentic-templates/auto-promote/history?limit=50');
+    if (!r?.success) return;
+
+    const html = (r.data || []).map(row => {
+      const confBadge = { high: 'emerald', medium: 'amber', low: 'slate' }[row.confidence] || 'slate';
+      const promoted = row.auto_promoted ? '🏆 <strong>PROMOTED</strong>' : '📊 log only';
+      return `
+        <div class="border-b py-2">
+          <div class="flex items-center gap-2 mb-1">
+            <code class="text-xs bg-slate-100 px-1.5 py-0.5 rounded">${row.template_id}</code>
+            <span class="text-xs bg-${confBadge}-100 text-${confBadge}-700 px-1.5 py-0.5 rounded font-semibold uppercase">${row.confidence}</span>
+            ${row.auto_promoted ? `<span class="text-xs bg-emerald-500 text-white px-1.5 py-0.5 rounded font-bold">${promoted}</span>` : `<span class="text-xs text-slate-500">${promoted}</span>`}
+          </div>
+          <div class="text-xs text-slate-600">
+            Winner: <strong>${row.winner_key || '—'}</strong> (${((row.winner_conv_rate || 0) * 100).toFixed(1)}%)
+            · Runner-up: ${row.runner_up_key || '—'} (${((row.runner_up_conv_rate || 0) * 100).toFixed(1)}%)
+            · ${row.total_impressions} impressions
+          </div>
+          <div class="text-[10px] text-slate-400">${new Date(row.logged_at).toLocaleString('vi-VN')}</div>
+        </div>
+      `;
+    }).join('');
+
+    const w = window.open('', '_blank', 'width=900,height=700');
+    w.document.write(`
+      <html><head><title>Auto-Promote Log</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <style>body{font-family:sans-serif;padding:10px}</style>
+      </head><body>
+        <h3 class="font-bold text-lg mb-3">🏆 Auto-Promote Log (last 50)</h3>
+        <p class="text-xs text-slate-500 mb-3">Mỗi ngày 3h sáng cron ghi 1 row/template. auto_promoted=1 khi winner được auto-promote (sau 7-day streak high confidence).</p>
+        ${html || '<p>Chưa có data — cron cần chạy ít nhất 1 lần.</p>'}
+      </body></html>
+    `);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
 async function loadCAOStats() {
   try {
     const r = await api('/agentic-templates/cao/stats?days=7');
@@ -7370,8 +7478,8 @@ async function showCAORecent() {
 
 async function loadAgenticTemplates() {
   try {
-    // Load CAO stats first
-    await loadCAOStats();
+    // Load auto-promote status + CAO stats
+    await Promise.all([loadAutoPromoteStatus(), loadCAOStats()]);
 
     // Load pending suggestions count first (badge)
     try {
@@ -7942,6 +8050,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   if (byId('tpl-btn-cao-recent')) {
     byId('tpl-btn-cao-recent').addEventListener('click', showCAORecent);
+  }
+  if (byId('tpl-autopromote-toggle')) {
+    byId('tpl-autopromote-toggle').addEventListener('change', toggleAutoPromote);
+    byId('tpl-btn-autopromote-run').addEventListener('click', runAutoPromoteNow);
+    byId('tpl-btn-autopromote-log').addEventListener('click', showAutoPromoteLog);
   }
 });
 

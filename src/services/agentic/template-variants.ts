@@ -219,3 +219,321 @@ export function promoteWinner(templateId: string, winnerKey: string, adminId: st
 function safeParse(s: string): any {
   try { return JSON.parse(s); } catch { return null; }
 }
+
+// ═══════════════════════════════════════════════════════════
+// AUTO-PROMOTE (Phase 6) — daily cron tự động promote A/B winner
+// ═══════════════════════════════════════════════════════════
+
+const REQUIRED_STREAK_DAYS = 7;           // phải high confidence liên tục 7 ngày
+const MIN_IMPRESSIONS_AUTO = 100;          // min impressions total trước khi auto-promote
+const MIN_WINNER_RATE_MARGIN = 1.5;        // winner phải conv_rate ≥ 1.5× runner_up
+const MAX_PROMOTES_PER_WEEK = 1;           // max 1 auto-promote per template per 7 ngày
+
+function isAutoPromoteEnabled(): boolean {
+  try {
+    const { getSetting } = require('../../db');
+    const v = getSetting('auto_promote_variants');
+    return v === 'true' || v === true || v === '1';
+  } catch { return false; }
+}
+
+/**
+ * Log daily winner analysis for a template.
+ */
+export function logDailyWinnerAnalysis(templateId: string): { logged: boolean; reason?: string } {
+  const analysis = analyzeWinner(templateId);
+  if (!analysis.has_variants) return { logged: false, reason: 'no_variants' };
+
+  const totalImpressions = analysis.variants.reduce((s, v) => s + v.impressions, 0);
+
+  try {
+    db.prepare(`
+      INSERT INTO agentic_variant_winner_log
+        (template_id, winner_key, winner_conv_rate, runner_up_key, runner_up_conv_rate,
+         confidence, total_impressions, logged_at, auto_promoted)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `).run(
+      templateId,
+      analysis.winner || null,
+      analysis.winner_conv_rate || 0,
+      analysis.runner_up || null,
+      analysis.runner_up_conv_rate || 0,
+      analysis.confidence || 'low',
+      totalImpressions,
+      Date.now(),
+    );
+    return { logged: true };
+  } catch (e: any) {
+    return { logged: false, reason: e?.message };
+  }
+}
+
+/**
+ * Check if template has N consecutive days of high confidence.
+ * Return { streak: number, winnerKey: string | null, reason: string }
+ */
+export interface StreakResult {
+  templateId: string;
+  streak: number;               // consecutive days of high confidence
+  consistentWinner: string | null;  // winner_key if same across all streak days
+  latestAnalysis?: WinnerAnalysis;
+  reason: string;
+  eligible: boolean;
+}
+
+export function checkStreak(templateId: string, requiredDays: number = REQUIRED_STREAK_DAYS): StreakResult {
+  try {
+    // Get last N days of winner logs (1 per day)
+    const sinceMs = Date.now() - requiredDays * 24 * 3600 * 1000;
+    const logs = db.prepare(`
+      SELECT winner_key, confidence, winner_conv_rate, runner_up_conv_rate, total_impressions, logged_at
+      FROM agentic_variant_winner_log
+      WHERE template_id = ? AND logged_at > ?
+      ORDER BY logged_at DESC
+    `).all(templateId, sinceMs) as any[];
+
+    if (logs.length < requiredDays) {
+      return {
+        templateId,
+        streak: logs.filter(l => l.confidence === 'high').length,
+        consistentWinner: null,
+        reason: `not_enough_days (need ${requiredDays}, have ${logs.length})`,
+        eligible: false,
+      };
+    }
+
+    // Check all N days are 'high' and same winner
+    let streak = 0;
+    let consistentWinner: string | null = logs[0].winner_key;
+    for (const log of logs) {
+      if (log.confidence === 'high' && log.winner_key === consistentWinner) {
+        streak++;
+      } else {
+        break;
+      }
+    }
+
+    if (streak < requiredDays) {
+      return {
+        templateId,
+        streak,
+        consistentWinner: null,
+        reason: `streak_too_short (${streak}/${requiredDays})`,
+        eligible: false,
+      };
+    }
+
+    // Additional check: impressions minimum
+    const avgImpressions = logs.slice(0, requiredDays).reduce((s, l) => s + l.total_impressions, 0) / requiredDays;
+    if (avgImpressions < MIN_IMPRESSIONS_AUTO) {
+      return {
+        templateId,
+        streak,
+        consistentWinner,
+        reason: `low_impressions (avg ${avgImpressions.toFixed(0)} < ${MIN_IMPRESSIONS_AUTO})`,
+        eligible: false,
+      };
+    }
+
+    // Check: rate margin
+    const latest = analyzeWinner(templateId);
+    if (latest.winner_conv_rate && latest.runner_up_conv_rate) {
+      const margin = latest.winner_conv_rate / Math.max(latest.runner_up_conv_rate, 0.001);
+      if (margin < MIN_WINNER_RATE_MARGIN) {
+        return {
+          templateId,
+          streak,
+          consistentWinner,
+          latestAnalysis: latest,
+          reason: `margin_too_small (${margin.toFixed(2)}× < ${MIN_WINNER_RATE_MARGIN}×)`,
+          eligible: false,
+        };
+      }
+    }
+
+    // Check: no recent auto-promote (max 1/week per template)
+    const recentPromote = db.prepare(`
+      SELECT logged_at FROM agentic_variant_winner_log
+      WHERE template_id = ? AND auto_promoted = 1 AND logged_at > ?
+      LIMIT 1
+    `).get(templateId, Date.now() - 7 * 24 * 3600 * 1000);
+    if (recentPromote) {
+      return {
+        templateId,
+        streak,
+        consistentWinner,
+        latestAnalysis: latest,
+        reason: 'already_promoted_this_week',
+        eligible: false,
+      };
+    }
+
+    return {
+      templateId,
+      streak,
+      consistentWinner,
+      latestAnalysis: latest,
+      reason: 'eligible',
+      eligible: true,
+    };
+  } catch (e: any) {
+    return {
+      templateId,
+      streak: 0,
+      consistentWinner: null,
+      reason: `error: ${e?.message}`,
+      eligible: false,
+    };
+  }
+}
+
+/**
+ * Run daily auto-promote cron.
+ * For each template with variants:
+ *   1. Log today's winner analysis
+ *   2. Check 7-day streak
+ *   3. If eligible + setting enabled → promote automatically
+ *   4. Send Telegram notification to admin
+ */
+export interface AutoPromoteRunResult {
+  checked: number;
+  logged: number;
+  eligible: Array<StreakResult & { promoted: boolean; error?: string }>;
+  enabled: boolean;
+  ts: number;
+}
+
+export async function runDailyAutoPromote(): Promise<AutoPromoteRunResult> {
+  const enabled = isAutoPromoteEnabled();
+  console.log(`[auto-promote] daily run (enabled=${enabled})`);
+
+  // Get all templates that HAVE variants
+  const templates = db.prepare(`
+    SELECT DISTINCT template_id
+    FROM agentic_template_variants
+    WHERE active = 1
+  `).all() as any[];
+
+  let logged = 0;
+  const eligible: Array<StreakResult & { promoted: boolean; error?: string }> = [];
+
+  for (const t of templates) {
+    const templateId = t.template_id;
+
+    // 1. Log today's analysis
+    const logResult = logDailyWinnerAnalysis(templateId);
+    if (logResult.logged) logged++;
+
+    // 2. Check streak
+    const streakCheck = checkStreak(templateId);
+
+    if (streakCheck.eligible) {
+      const entry = { ...streakCheck, promoted: false, error: undefined as string | undefined };
+
+      if (enabled && streakCheck.consistentWinner) {
+        // 3. Auto-promote
+        const promoteResult = promoteWinner(templateId, streakCheck.consistentWinner, 'auto-cron');
+        if (promoteResult.success) {
+          entry.promoted = true;
+
+          // Mark today's log as auto_promoted=1
+          try {
+            db.prepare(`
+              UPDATE agentic_variant_winner_log
+              SET auto_promoted = 1
+              WHERE id = (SELECT id FROM agentic_variant_winner_log WHERE template_id = ? ORDER BY logged_at DESC LIMIT 1)
+            `).run(templateId);
+          } catch {}
+
+          // 4. Telegram notification
+          try {
+            await sendAutoPromoteNotification(templateId, streakCheck);
+          } catch (e: any) {
+            console.warn('[auto-promote] telegram notify fail:', e?.message);
+          }
+        } else {
+          entry.error = promoteResult.error;
+        }
+      }
+
+      eligible.push(entry);
+    }
+  }
+
+  console.log(`[auto-promote] checked=${templates.length} logged=${logged} eligible=${eligible.length} promoted=${eligible.filter(e => e.promoted).length}`);
+
+  return {
+    checked: templates.length,
+    logged,
+    eligible,
+    enabled,
+    ts: Date.now(),
+  };
+}
+
+/**
+ * Telegram alert admin khi auto-promote.
+ */
+async function sendAutoPromoteNotification(templateId: string, streak: StreakResult): Promise<void> {
+  try {
+    const { notifyAll } = require('../telegram');
+    const a = streak.latestAnalysis;
+
+    const parts = [
+      `🏆 *Auto-promoted winner*`,
+      ``,
+      `Template: \`${templateId}\``,
+      `Winner: *${streak.consistentWinner}* (${((a?.winner_conv_rate || 0) * 100).toFixed(1)}% conv rate)`,
+      `vs ${a?.runner_up}: ${((a?.runner_up_conv_rate || 0) * 100).toFixed(1)}%`,
+      `Streak: ${streak.streak} ngày confidence=high liên tục`,
+      ``,
+      `Winner content đã copy vào parent template. Các variants khác archived.`,
+      `Rollback: admin panel → Templates → ${templateId} → Lịch sử`,
+    ];
+
+    await notifyAll(parts.join('\n'));
+  } catch (e: any) {
+    // notifyAll might not exist or Telegram not configured — silent fail
+    console.warn('[auto-promote] notify err:', e?.message);
+  }
+}
+
+/**
+ * Admin API: list recent auto-promote log entries.
+ */
+export function listAutoPromoteHistory(limit: number = 30): any[] {
+  return db.prepare(`
+    SELECT id, template_id, winner_key, winner_conv_rate, runner_up_key, runner_up_conv_rate,
+      confidence, total_impressions, logged_at, auto_promoted
+    FROM agentic_variant_winner_log
+    ORDER BY logged_at DESC
+    LIMIT ?
+  `).all(limit);
+}
+
+/**
+ * Admin API: preview — eligible templates (dry-run, không promote).
+ */
+export async function previewAutoPromote(): Promise<AutoPromoteRunResult> {
+  const templates = db.prepare(`
+    SELECT DISTINCT template_id
+    FROM agentic_template_variants
+    WHERE active = 1
+  `).all() as any[];
+
+  const eligible: Array<StreakResult & { promoted: boolean; error?: string }> = [];
+  for (const t of templates) {
+    const streakCheck = checkStreak(t.template_id);
+    if (streakCheck.eligible) {
+      eligible.push({ ...streakCheck, promoted: false });
+    }
+  }
+
+  return {
+    checked: templates.length,
+    logged: 0,
+    eligible,
+    enabled: isAutoPromoteEnabled(),
+    ts: Date.now(),
+  };
+}

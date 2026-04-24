@@ -592,6 +592,25 @@
           <div id="tpl-suggestions-list" class="hidden space-y-2 max-h-[400px] overflow-y-auto mt-2"></div>
         </div>
 
+        <!-- Auto-Promote Winner cron -->
+        <div id="tpl-autopromote-section" class="max-w-6xl mb-4 bg-gradient-to-r from-amber-50 to-emerald-50 border border-amber-200 rounded-lg p-3">
+          <div class="flex items-center justify-between mb-2">
+            <div>
+              <h3 class="font-bold text-sm">🏆 Auto-Promote A/B Winner <span id="autopromote-enabled-badge" class="ml-1 text-[10px] bg-emerald-500 text-white px-1.5 py-0.5 rounded hidden">ON</span></h3>
+              <p class="text-xs text-slate-600">Cron daily 3h sáng: auto promote winner sau 7 ngày confidence=high liên tục. Telegram alert khi trigger.</p>
+            </div>
+            <div class="flex gap-2 items-center">
+              <label class="flex items-center gap-1 text-xs cursor-pointer">
+                <input type="checkbox" id="tpl-autopromote-toggle" class="rounded">
+                <span class="font-semibold">Bật auto-promote</span>
+              </label>
+              <button id="tpl-btn-autopromote-run" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded text-xs font-medium">▶️ Chạy ngay</button>
+              <button id="tpl-btn-autopromote-log" class="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 rounded text-xs">🕓 Log</button>
+            </div>
+          </div>
+          <div id="tpl-autopromote-eligible" class="text-xs mt-2"></div>
+        </div>
+
         <!-- CAO (Context-Aware Opener) stats -->
         <div id="tpl-cao-section" class="max-w-6xl mb-4 bg-gradient-to-r from-sky-50 to-violet-50 border border-sky-200 rounded-lg p-3">
           <div class="flex items-center justify-between mb-2">

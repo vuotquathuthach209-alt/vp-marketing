@@ -872,5 +872,18 @@ export function startScheduler() {
     }
   });
 
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h, zalo-refresh 20h, zalo-articles 2p, template-suggest CN 2h');
+  // ── v27 Phase 6: Auto-promote A/B winner — hàng ngày 3h sáng ──
+  //        Log winner analysis today + check 7-day streak + auto-promote nếu đủ điều kiện
+  //        Chỉ active khi setting `auto_promote_variants = 'true'`
+  cron.schedule('0 3 * * *', async () => {
+    try {
+      const { runDailyAutoPromote } = require('./agentic/template-variants');
+      const r = await runDailyAutoPromote();
+      console.log(`[scheduler] auto-promote: checked=${r.checked} logged=${r.logged} eligible=${r.eligible.length} promoted=${r.eligible.filter((e: any) => e.promoted).length} enabled=${r.enabled}`);
+    } catch (e: any) {
+      console.error('[scheduler] auto-promote error:', e?.message);
+    }
+  });
+
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h, zalo-refresh 20h, zalo-articles 2p, template-suggest CN 2h, auto-promote daily 3h');
 }

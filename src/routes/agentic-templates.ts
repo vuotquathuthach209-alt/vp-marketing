@@ -26,7 +26,10 @@ import {
   approveSuggestion,
   rejectSuggestion,
 } from '../services/agentic/template-suggester';
-import { getVariants, analyzeWinner, promoteWinner } from '../services/agentic/template-variants';
+import {
+  getVariants, analyzeWinner, promoteWinner,
+  runDailyAutoPromote, previewAutoPromote, listAutoPromoteHistory, checkStreak,
+} from '../services/agentic/template-variants';
 import { getCAOStats, isCAOEnabled } from '../services/agentic/context-aware-opener';
 
 const router = Router();
@@ -711,6 +714,78 @@ router.get('/analytics/health-overview', (_req, res) => {
       new: scores.filter(s => s!.tier === 'new').length,
     };
     res.json({ success: true, data: scores, summary });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// AUTO-PROMOTE A/B WINNER (v27 Phase 6)
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * GET /api/agentic-templates/auto-promote/status
+ * Current config + preview eligibility.
+ */
+router.get('/auto-promote/status', async (_req, res) => {
+  try {
+    const preview = await previewAutoPromote();
+    res.json({ success: true, ...preview });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * POST /api/agentic-templates/auto-promote/toggle
+ * Body: { enabled: boolean }
+ */
+router.post('/auto-promote/toggle', superadminOnly, (req: AuthRequest, res) => {
+  try {
+    const { setSetting } = require('../db');
+    const enabled = Boolean(req.body?.enabled);
+    setSetting('auto_promote_variants', enabled ? 'true' : 'false');
+    res.json({ success: true, enabled });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * POST /api/agentic-templates/auto-promote/run-now
+ * Force run cron NGAY (superadmin) — for testing.
+ */
+router.post('/auto-promote/run-now', superadminOnly, async (_req, res) => {
+  try {
+    const r = await runDailyAutoPromote();
+    res.json({ success: true, ...r });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * GET /api/agentic-templates/auto-promote/history
+ * Last N winner analysis log entries.
+ */
+router.get('/auto-promote/history', (req, res) => {
+  try {
+    const limit = Math.min(100, Number(req.query.limit) || 30);
+    const rows = listAutoPromoteHistory(limit);
+    res.json({ success: true, data: rows });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * GET /api/agentic-templates/:id/auto-promote/streak
+ * Check streak for specific template.
+ */
+router.get('/:id/auto-promote/streak', (req, res) => {
+  try {
+    const r = checkStreak(req.params.id);
+    res.json({ success: true, ...r });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e?.message });
   }
