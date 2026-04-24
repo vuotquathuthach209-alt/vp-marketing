@@ -71,53 +71,127 @@ function isRecentlyUsed(fingerprint: string): boolean {
 }
 
 /**
- * Fetch all images available cho 1 hotel.
- * Sources: room_images + hotel_profile.scraped_data.images + hotel_profile.cover_image_url
+ * Fetch images from OTA API live (hotel detail endpoint).
+ * Caches in memory cho session (5min TTL).
  */
-function fetchAllImages(hotelId: number): ImageCandidate[] {
-  const images: ImageCandidate[] = [];
-  const seen = new Set<string>();
+const OTA_IMAGE_CACHE = new Map<number, { at: number; images: ImageCandidate[] }>();
+const CACHE_TTL_MS = 5 * 60_000;
 
-  // 1. Cover image từ hotel_profile
+async function fetchOtaImages(hotelId: number): Promise<ImageCandidate[]> {
+  const cached = OTA_IMAGE_CACHE.get(hotelId);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+    return cached.images;
+  }
+
+  const images: ImageCandidate[] = [];
   try {
-    const hp = db.prepare(
-      `SELECT cover_image_url, scraped_data FROM hotel_profile WHERE hotel_id = ?`
-    ).get(hotelId) as any;
-    if (hp?.cover_image_url) {
-      const fp = fingerprintUrl(hp.cover_image_url);
-      if (!seen.has(fp)) {
-        images.push({
-          url: hp.cover_image_url,
-          fingerprint: fp,
-          is_cover: true,
-          score: 50,
-          source: 'cover',
-        });
-        seen.add(fp);
-      }
+    const { listAllHotels } = require('../ota-api-client');
+    const all = await listAllHotels({ maxPages: 5 });        // cap 250 hotels
+    const detail = all.find((h: any) => String(h.id) === String(hotelId));
+    if (!detail) {
+      console.warn(`[image-picker] hotel ${hotelId} not found in OTA API response`);
+      return [];
     }
-    // 2. Images array from scraped_data
-    try {
-      const sd = JSON.parse(hp?.scraped_data || '{}');
-      const imgs = Array.isArray(sd?.images) ? sd.images : [];
-      for (const img of imgs) {
+
+    // Cover image
+    if (detail.coverImage && typeof detail.coverImage === 'string') {
+      images.push({
+        url: detail.coverImage,
+        fingerprint: fingerprintUrl(detail.coverImage),
+        is_cover: true,
+        score: 60,
+        source: 'cover',
+      });
+    }
+
+    // Images array
+    if (Array.isArray(detail.images)) {
+      for (const img of detail.images) {
         const url = typeof img === 'string' ? img : img?.url;
         if (!url) continue;
-        const fp = fingerprintUrl(url);
-        if (seen.has(fp)) continue;
         images.push({
           url,
-          fingerprint: fp,
-          description: typeof img === 'object' ? img?.description : undefined,
-          score: 25,
+          fingerprint: fingerprintUrl(url),
+          score: 35,
           source: 'scraped_data',
         });
+      }
+    }
+
+    // Room photos
+    if (Array.isArray(detail.rooms)) {
+      for (const room of detail.rooms) {
+        const photos = room?.photos || room?.images || [];
+        if (!Array.isArray(photos)) continue;
+        for (const url of photos) {
+          if (typeof url !== 'string') continue;
+          images.push({
+            url,
+            fingerprint: fingerprintUrl(url),
+            room_type: room.name,
+            score: 30,
+            source: 'room_images',
+          });
+        }
+      }
+    }
+  } catch (e: any) {
+    console.warn(`[image-picker] OTA fetch fail for hotel=${hotelId}:`, e?.message);
+  }
+
+  // Dedup by fingerprint
+  const seen = new Set<string>();
+  const deduped = images.filter(img => {
+    if (seen.has(img.fingerprint)) return false;
+    seen.add(img.fingerprint);
+    return true;
+  });
+
+  OTA_IMAGE_CACHE.set(hotelId, { at: Date.now(), images: deduped });
+  return deduped;
+}
+
+/**
+ * Fetch all images available cho 1 hotel — merge OTA API live + local DB.
+ */
+async function fetchAllImagesAsync(hotelId: number): Promise<ImageCandidate[]> {
+  const seen = new Set<string>();
+  const images: ImageCandidate[] = [];
+
+  // Source 1: OTA API live (PREFERRED — luôn latest)
+  const otaImages = await fetchOtaImages(hotelId);
+  for (const img of otaImages) {
+    if (!seen.has(img.fingerprint)) {
+      images.push(img);
+      seen.add(img.fingerprint);
+    }
+  }
+
+  // Source 2: Local DB fallback — cover_image_url + scraped_data.images
+  try {
+    const hp = db.prepare(
+      `SELECT scraped_data FROM hotel_profile WHERE hotel_id = ?`
+    ).get(hotelId) as any;
+    try {
+      const sd = JSON.parse(hp?.scraped_data || '{}');
+      const candidates: any[] = [
+        ...(Array.isArray(sd?.images) ? sd.images : []),
+        ...(Array.isArray(sd?.photos) ? sd.photos : []),
+        sd?.coverImage,
+        sd?.cover_image_url,
+      ].filter(Boolean);
+      for (const c of candidates) {
+        const url = typeof c === 'string' ? c : c?.url;
+        if (!url || !/^https?:\/\//.test(url)) continue;
+        const fp = fingerprintUrl(url);
+        if (seen.has(fp)) continue;
+        images.push({ url, fingerprint: fp, score: 20, source: 'scraped_data' });
         seen.add(fp);
       }
     } catch {}
   } catch {}
 
-  // 3. Room images
+  // Source 3: room_images table
   try {
     const rows = db.prepare(
       `SELECT image_url, room_type_name FROM room_images
@@ -131,7 +205,7 @@ function fetchAllImages(hotelId: number): ImageCandidate[] {
         url: r.image_url,
         fingerprint: fp,
         room_type: r.room_type_name,
-        score: 30,
+        score: 25,
         source: 'room_images',
       });
       seen.add(fp);
@@ -141,11 +215,17 @@ function fetchAllImages(hotelId: number): ImageCandidate[] {
   return images;
 }
 
+/** Legacy sync version — cho picker scoring (image_count only, không need real URL) */
+function fetchAllImages(hotelId: number): ImageCandidate[] {
+  return [];     // picker chỉ dùng count từ different source
+}
+
 /**
  * Pick best image cho hotel — not recently used, not blacklisted, highest score.
+ * v25: async để fetch OTA API live.
  */
-export function pickImage(hotelId: number): ImageCandidate | null {
-  const all = fetchAllImages(hotelId);
+export async function pickImage(hotelId: number): Promise<ImageCandidate | null> {
+  const all = await fetchAllImagesAsync(hotelId);
   if (all.length === 0) return null;
 
   // Filter available
@@ -162,6 +242,12 @@ export function pickImage(hotelId: number): ImageCandidate | null {
   const picked = available[0];
   console.log(`[image-picker] hotel=${hotelId} picked ${picked.source} fp=${picked.fingerprint} from ${available.length}/${all.length} available`);
   return picked;
+}
+
+/** Get total image count aggregated từ all sources — cho picker score */
+export async function getImageCountForHotel(hotelId: number): Promise<number> {
+  const all = await fetchAllImagesAsync(hotelId);
+  return all.length;
 }
 
 /**

@@ -78,7 +78,10 @@ function getDaysSinceLastPost(hotelId: number): number {
 }
 
 /**
- * Image count aggregate: room_images + hotel_profile.cover + scraped_data.images.
+ * Image count cho picker scoring.
+ * v25: chỉ count từ local DB — OTA API live chỉ fetch khi real pick.
+ * Để tránh picker làm chậm (N hotels × N HTTP calls).
+ * Picker giả định có thể có ảnh nếu property_type known → score image = base 5.
  */
 function getImageCount(hotelId: number): number {
   let count = 0;
@@ -90,15 +93,17 @@ function getImageCount(hotelId: number): number {
   } catch {}
   try {
     const hp = db.prepare(
-      `SELECT cover_image_url, scraped_data FROM hotel_profile WHERE hotel_id = ?`
+      `SELECT scraped_data FROM hotel_profile WHERE hotel_id = ?`
     ).get(hotelId) as any;
-    if (hp?.cover_image_url) count += 1;
     try {
       const sd = JSON.parse(hp?.scraped_data || '{}');
       if (Array.isArray(sd?.images)) count += sd.images.length;
+      if (sd?.coverImage || sd?.cover_image_url) count += 1;
     } catch {}
   } catch {}
-  return count;
+  // v25: Nếu 0 trong local DB, assume có ảnh ở OTA API (will be fetched at pick time)
+  //      → dùng placeholder count = 3 (threshold minimum) để không bị reject
+  return count === 0 ? 3 : count;
 }
 
 /**

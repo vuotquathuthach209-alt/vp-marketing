@@ -63,8 +63,8 @@ export async function generateTodayPlan(): Promise<{
   }
   console.log(`[auto-post] picked hotel #${hotel.hotel_id} "${hotel.name}" score=${hotel.score}`);
 
-  // 2. Pick image
-  const image = pickImage(hotel.hotel_id);
+  // 2. Pick image (async — fetch OTA API live)
+  const image = await pickImage(hotel.hotel_id);
   if (!image) {
     return { ok: false, reason: `no_image_available_hotel_${hotel.hotel_id}`, date, hotel };
   }
