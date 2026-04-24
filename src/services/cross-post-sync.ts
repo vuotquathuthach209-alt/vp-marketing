@@ -144,6 +144,35 @@ async function fanOutInstagram(src: CrossPostSource): Promise<CrossPostResult['i
    ZALO OA FAN-OUT (broadcast rich message as article)
    ═══════════════════════════════════════════ */
 
+/**
+ * v24: Zalo giới hạn 15 bài/tháng (reset ngày 21 hàng tháng).
+ * Count bài đã publish trong tháng current từ cross_post_log + 1 buffer
+ * để tránh vượt quota.
+ */
+const ZALO_MONTHLY_QUOTA = 15;
+const ZALO_QUOTA_WARN_THRESHOLD = 3;    // Còn <= 3 → alert Telegram
+
+/** Tính số bài Zalo đã publish trong chu kỳ quota hiện tại.
+ *  Chu kỳ bắt đầu ngày 21 hàng tháng (Zalo reset lúc này). */
+function zaloQuotaUsedThisCycle(oaTarget: string): number {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const d = now.getDate();
+  // Nếu trước ngày 21 → cycle bắt đầu 21 tháng trước
+  // Nếu từ ngày 21 → cycle bắt đầu 21 tháng này
+  const cycleStart = d >= 21
+    ? new Date(y, m, 21, 0, 0, 0, 0).getTime()
+    : new Date(y, m - 1, 21, 0, 0, 0, 0).getTime();
+
+  const row = db.prepare(
+    `SELECT COUNT(*) as n FROM cross_post_log
+     WHERE platform = 'zalo_oa' AND target_id = ? AND result = 'success'
+       AND created_at >= ?`
+  ).get(oaTarget, cycleStart) as any;
+  return row?.n || 0;
+}
+
 async function fanOutZalo(src: CrossPostSource): Promise<CrossPostResult['zalo']> {
   const out = { attempted: 0, success: 0, errors: [] as string[] };
 
@@ -157,9 +186,39 @@ async function fanOutZalo(src: CrossPostSource): Promise<CrossPostResult['zalo']
       return out;
     }
 
+    // v24: Quota guard — skip nếu đã dùng gần hết 15 bài/tháng
+    for (const oa of oas) {
+      const used = zaloQuotaUsedThisCycle(String(oa.oa_id));
+      const remaining = ZALO_MONTHLY_QUOTA - used;
+
+      if (remaining <= 0) {
+        console.warn(`[cross-post] Zalo OA=${oa.oa_id} quota EXHAUSTED (${used}/${ZALO_MONTHLY_QUOTA}) — skip`);
+        out.errors.push(`zalo_${oa.oa_id}:quota_exhausted_${used}/${ZALO_MONTHLY_QUOTA}`);
+        logResult(src.fb_post_id, src.hotel_id, 'zalo_oa', String(oa.oa_id), 'skipped', undefined, `quota_exhausted ${used}/${ZALO_MONTHLY_QUOTA}`);
+        continue;
+      }
+
+      // Alert Telegram khi quota thấp
+      if (remaining <= ZALO_QUOTA_WARN_THRESHOLD && remaining > 0) {
+        try {
+          const { notifyAll } = require('./telegram');
+          notifyAll(`⚠️ *Zalo quota low*: ${used}/${ZALO_MONTHLY_QUOTA} used for OA \`${oa.oa_id}\`. Remaining: ${remaining}`).catch(() => {});
+        } catch {}
+      }
+    }
+
     for (const oa of oas) {
       const targetId = String(oa.oa_id);
       if (alreadyCrossPosted(src.fb_post_id, 'zalo_oa', targetId)) continue;
+
+      // v24: Re-check quota per-OA ngay trước khi publish
+      const usedNow = zaloQuotaUsedThisCycle(targetId);
+      if (usedNow >= ZALO_MONTHLY_QUOTA) {
+        out.errors.push(`zalo_${targetId}:quota_exhausted`);
+        logResult(src.fb_post_id, src.hotel_id, 'zalo_oa', targetId, 'skipped', undefined, `quota_exhausted ${usedNow}/${ZALO_MONTHLY_QUOTA}`);
+        continue;
+      }
+
       out.attempted++;
 
       // Check token still valid
@@ -357,4 +416,47 @@ export function listCrossPostLog(hotelId: number, limit: number = 50): any[] {
   return db.prepare(
     `SELECT * FROM cross_post_log WHERE hotel_id = ? ORDER BY created_at DESC LIMIT ?`
   ).all(hotelId, limit) as any[];
+}
+
+/** v24: Get Zalo quota status cho admin dashboard. */
+export function getZaloQuotaStatus(hotelId: number): Array<{
+  oa_id: string;
+  oa_name?: string;
+  used: number;
+  quota: number;
+  remaining: number;
+  cycle_start: number;
+  cycle_next_reset: number;
+}> {
+  try {
+    const { listZaloForHotel } = require('./zalo');
+    const oas = listZaloForHotel(hotelId).filter((o: any) => o.enabled);
+
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    const d = now.getDate();
+    const cycleStart = d >= 21
+      ? new Date(y, m, 21).getTime()
+      : new Date(y, m - 1, 21).getTime();
+    const cycleNext = d >= 21
+      ? new Date(y, m + 1, 21).getTime()
+      : new Date(y, m, 21).getTime();
+
+    return oas.map((oa: any) => {
+      const used = zaloQuotaUsedThisCycle(String(oa.oa_id));
+      return {
+        oa_id: String(oa.oa_id),
+        oa_name: oa.oa_name,
+        used,
+        quota: ZALO_MONTHLY_QUOTA,
+        remaining: Math.max(0, ZALO_MONTHLY_QUOTA - used),
+        cycle_start: cycleStart,
+        cycle_next_reset: cycleNext,
+      };
+    });
+  } catch (e: any) {
+    console.warn('[cross-post] quota status fail:', e?.message);
+    return [];
+  }
 }

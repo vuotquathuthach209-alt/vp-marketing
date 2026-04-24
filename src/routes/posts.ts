@@ -154,9 +154,10 @@ router.get('/cross-post/stats', (req: AuthRequest, res) => {
   try {
     const hotelId = getHotelId(req);
     const days = Math.min(30, Math.max(1, parseInt(String(req.query.days || '7'), 10)));
-    const { getCrossPostStats } = require('../services/cross-post-sync');
+    const { getCrossPostStats, getZaloQuotaStatus } = require('../services/cross-post-sync');
     const stats = getCrossPostStats(hotelId, days * 24 * 3600_000);
-    res.json({ days, stats });
+    const zaloQuota = getZaloQuotaStatus(hotelId);
+    res.json({ days, stats, zalo_quota: zaloQuota });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
