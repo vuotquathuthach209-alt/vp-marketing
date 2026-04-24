@@ -27,6 +27,7 @@ import {
   rejectSuggestion,
 } from '../services/agentic/template-suggester';
 import { getVariants, analyzeWinner, promoteWinner } from '../services/agentic/template-variants';
+import { getCAOStats, isCAOEnabled } from '../services/agentic/context-aware-opener';
 
 const router = Router();
 router.use(authMiddleware);
@@ -710,6 +711,46 @@ router.get('/analytics/health-overview', (_req, res) => {
       new: scores.filter(s => s!.tier === 'new').length,
     };
     res.json({ success: true, data: scores, summary });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// CONTEXT-AWARE OPENER (v27 CAO) — LLM đọc context mở đầu
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * GET /api/agentic-templates/cao/stats?days=7
+ */
+router.get('/cao/stats', (req, res) => {
+  try {
+    const days = Math.min(30, Math.max(1, Number(req.query.days) || 7));
+    const stats = getCAOStats(days);
+    res.json({ success: true, enabled: isCAOEnabled(), data: stats, days });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * GET /api/agentic-templates/cao/recent
+ * Recent CAO decisions for debug.
+ */
+router.get('/cao/recent', (req, res) => {
+  try {
+    const limit = Math.min(100, Number(req.query.limit) || 20);
+    const rows = db.prepare(`
+      SELECT sender_id, action, context_relevance, summary_previous, suggested_opening,
+        confidence, llm_provider, cached_at, used_at, was_effective
+      FROM agentic_opening_cache
+      ORDER BY cached_at DESC
+      LIMIT ?
+    `).all(limit).map((r: any) => ({
+      ...r,
+      sender_id: (r.sender_id || '').substring(0, 14) + '...',
+    }));
+    res.json({ success: true, data: rows });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e?.message });
   }

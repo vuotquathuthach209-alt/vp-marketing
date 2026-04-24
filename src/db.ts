@@ -1868,6 +1868,28 @@ try {
   }
 } catch (e: any) { console.warn('[db] v27 Phase 5 migration fail:', e?.message); }
 
+// v27 CAO (Context-Aware Opener) — LLM đọc history trước khi chào
+db.exec(`
+CREATE TABLE IF NOT EXISTS agentic_opening_cache (
+  sender_id TEXT PRIMARY KEY,
+  action TEXT NOT NULL,                       -- greet_new | resume_context | acknowledge_return
+  context_relevance REAL,                     -- 0-1, LLM's relevance assessment
+  summary_previous TEXT,                      -- "Tuần trước khách hỏi..."
+  suggested_opening TEXT,                     -- Custom text (nếu resume_context)
+  personalization_json TEXT,                  -- JSON extras
+  fallback_template_id TEXT,                  -- Template ID nếu không custom
+  confidence REAL,
+  llm_provider TEXT,                          -- gemini_flash | groq | deepseek | ollama
+  llm_cost_tokens INTEGER,
+  cached_at INTEGER NOT NULL,
+  used_at INTEGER,
+  was_effective INTEGER                       -- NULL pending | 1 positive response | 0 drop
+);
+CREATE INDEX IF NOT EXISTS idx_cao_cached ON agentic_opening_cache(cached_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cao_action ON agentic_opening_cache(action, was_effective);
+`);
+console.log('[db] v27 CAO opening cache table ready');
+
 // ═══════════════════════════════════════════════════════════
 // v23 — intent_logs: log mọi message qua Gemini Intent Classifier
 // Mục đích: analytics + training data cho tuning classifier + debug

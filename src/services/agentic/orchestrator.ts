@@ -102,52 +102,162 @@ export async function processMessageAgentic(
       if (state) slots = state.slots || {};
     } catch {}
 
-    // Recent history (5 messages)
+    // Recent history (10 messages, newest last). Include timestamps for session gap detection.
     const historyRows = db.prepare(
-      `SELECT role, message FROM conversation_memory
+      `SELECT role, message, created_at FROM conversation_memory
        WHERE sender_id = ? ORDER BY id DESC LIMIT 10`
     ).all(senderId) as any[];
-    const history = historyRows.reverse().map((r: any) => ({ role: r.role, message: r.message }));
+    const history = historyRows.reverse().map((r: any) => ({
+      role: r.role,
+      message: r.message,
+      ts: r.created_at,
+    }));
 
     // ═══════════════════════════════════════════
-    // TURN 1 FAST-PATH: pure greeting (template)
-    // turnNumber = số user msg ĐÃ CÓ trong DB. 0 = msg này là msg đầu.
-    // Smart selection: thử selectTemplate() với context trước (khớp trigger_conditions
-    // như first_with_urgency / first_vague / first_with_question). Fallback greeting_opening.
+    // TURN 1 / SESSION RESUME: Context-Aware Opener
+    //
+    // Nếu là:
+    //   - First turn (chưa có user msg nào), OR
+    //   - Session gap > 30 min (inbox lại sau khi im lặng lâu)
+    //
+    // VÀ khách có profile hoặc có history ≥ 2 msgs:
+    //   → Gọi LLM (Gemini Flash) đọc 5 tin nhắn cuối + profile → quyết định mở đầu
+    //
+    // Khách mới hoàn toàn (no profile, no history) → dùng template fast-path luôn (tiết kiệm cost)
     // ═══════════════════════════════════════════
-    const isFirstTurn = turnNumber === 0 || history.filter(h => h.role === 'user').length === 0;
-    if (isFirstTurn) {
+    const userMsgCount = history.filter(h => h.role === 'user').length;
+    const isFirstTurn = turnNumber === 0 || userMsgCount === 0;
+
+    // Session gap: tin nhắn gần nhất cách đây bao lâu?
+    const lastMsgTs = history.length > 0 ? history[history.length - 1].ts : 0;
+    const sessionGapMs = lastMsgTs ? Date.now() - lastMsgTs : Number.POSITIVE_INFINITY;
+    const SESSION_GAP_THRESHOLD_MS = 30 * 60 * 1000;
+    const isSessionResume = !isFirstTurn && sessionGapMs > SESSION_GAP_THRESHOLD_MS;
+
+    const shouldTryOpener = isFirstTurn || isSessionResume;
+
+    if (shouldTryOpener) {
       const isVip = customerTier === 'vip';
+
+      // ── Thử CAO (chỉ cho returning customer hoặc có history) ──
+      let caoResult: any = null;
+      try {
+        const { runCAO } = require('./context-aware-opener');
+        const profile = {
+          name: customerName,
+          tier: customerTier,
+          total_bookings: 0,   // Will fill below if available
+          days_since_last_visit: undefined,
+          last_area: undefined,
+          last_property_type: undefined,
+          favorite_district: undefined,
+          last_budget: undefined,
+        };
+        // Enrich profile với info sâu hơn
+        try {
+          const { getCustomerProfile } = require('../customer-memory');
+          const full = getCustomerProfile(senderId);
+          if (full) Object.assign(profile, full);
+        } catch {}
+
+        caoResult = await runCAO({
+          senderId,
+          hotelId,
+          currentMessage: msg,
+          customerProfile: profile.name ? profile : null,
+          history,
+          sessionGapMinutes: Math.floor(sessionGapMs / 60000),
+        });
+      } catch (e: any) {
+        console.warn('[agentic] CAO error:', e?.message);
+      }
+
+      // ── CAO returned custom opening (resume_context) ──
+      if (caoResult && caoResult.custom_generated && caoResult.reply) {
+        console.log(`[agentic] CAO ${caoResult.decision.action} (${caoResult.decision.llm_provider}) conf=${caoResult.decision.confidence} rel=${caoResult.decision.context_relevance}`);
+
+        // Track opening usage (use special template_id "cao_custom")
+        trackTemplateUse(senderId, 'cao_custom', 'discovery');
+        logSelection(senderId, hotelId, 'cao_custom', {
+          turn_number: turnNumber + 1,
+          message: msg,
+          customer_is_returning: !!customerName,
+        }, [], caoResult.decision.confidence);
+
+        return {
+          reply: caoResult.reply,
+          intent: 'greeting',
+          confidence_score: caoResult.decision.confidence,
+          tier_used: 'template',   // Still template tier for metrics (cost=low)
+          handoff_triggered: false,
+          cost_estimate: 'low',
+          meta: {
+            template_id: 'cao_custom',
+            cao_action: caoResult.decision.action,
+            cao_summary: caoResult.decision.summary_previous,
+            cao_provider: caoResult.decision.llm_provider,
+            cao_from_cache: caoResult.decision.from_cache,
+            turn_number: turnNumber + 1,
+          },
+        };
+      }
+
+      // ── CAO decided greet_new / acknowledge_return → use template với personalization ──
       const ctx: any = {
         turn_number: 1,
         customer_is_new: !customerName,
         customer_is_returning: !!customerName,
         message: msg,
       };
-      const selResult = selectTemplateWithCandidates(ctx);
-      const selected = selResult.best;
-      const templateId = selected?.id || (customerName ? 'greeting_returning' : 'greeting_opening');
-      // Use renderTemplateById for variant attribution (template-library fallback without variant key)
-      const r2 = renderTemplateById(templateId, { customerName, customerTier, isVip });
-      const t = r2 ? { content: r2.content, quick_replies: r2.quick_replies, confidence: r2.confidence } : renderTemplate(templateId, { customerName, customerTier, isVip });
+
+      let templateId: string;
+      let smartCandidates: any[] = [];
+
+      if (caoResult && caoResult.template_id) {
+        // CAO chỉ định template
+        templateId = caoResult.template_id;
+        console.log(`[agentic] CAO ${caoResult.decision.action} → template ${templateId}`);
+      } else {
+        // CAO không apply (khách mới) → smart selection như cũ
+        const selResult = selectTemplateWithCandidates(ctx);
+        const selected = selResult.best;
+        templateId = selected?.id || (customerName ? 'returning_customer_greet' : 'first_contact_warm');
+        smartCandidates = selResult.candidates;
+      }
+
+      const vars: any = { customerName, customerTier, isVip };
+      // Thêm personalization vars từ CAO (nếu có)
+      if (caoResult?.decision?.summary_previous) {
+        vars.previousInquirySummary = caoResult.decision.summary_previous;
+      }
+
+      const r2 = renderTemplateById(templateId, vars);
+      const t = r2 ? { content: r2.content, quick_replies: r2.quick_replies, confidence: r2.confidence } : renderTemplate(templateId, vars);
       const variantKey = r2?.variant_key;
       if (t) {
-        console.log(`[agentic] turn 1 (first-ever) → template ${templateId}${variantKey ? ':' + variantKey : ''} (no AI)`);
+        console.log(`[agentic] turn 1${isSessionResume ? ' (resume)' : ''} → template ${templateId}${variantKey ? ':' + variantKey : ''}`);
 
-        // Track + log
         const tplInfo = getTemplateById(templateId);
         trackTemplateUse(senderId, templateId, tplInfo?.category || 'discovery', variantKey);
-        logSelection(senderId, hotelId, templateId, ctx, selResult.candidates, t.confidence);
+        logSelection(senderId, hotelId, templateId, ctx, smartCandidates, t.confidence);
 
         return {
           reply: t.content,
           quick_replies: t.quick_replies,
           intent: 'greeting',
-          confidence_score: 1.0,
+          confidence_score: caoResult?.decision.confidence || 1.0,
           tier_used: 'template',
           handoff_triggered: false,
-          cost_estimate: 'free',
-          meta: { template_id: templateId, variant_key: variantKey, turn_number: 1, candidates: selResult.candidates },
+          cost_estimate: caoResult ? 'low' : 'free',
+          meta: {
+            template_id: templateId,
+            variant_key: variantKey,
+            turn_number: 1,
+            session_resume: isSessionResume,
+            cao_action: caoResult?.decision?.action,
+            cao_provider: caoResult?.decision?.llm_provider,
+            candidates: smartCandidates,
+          },
         };
       }
     }

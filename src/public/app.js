@@ -7290,8 +7290,89 @@ async function loadTplChart(days) {
   } catch (e) { console.warn('[chart] fail', e); }
 }
 
+async function loadCAOStats() {
+  try {
+    const r = await api('/agentic-templates/cao/stats?days=7');
+    if (!r?.success) return;
+
+    document.getElementById('cao-enabled-badge').classList.toggle('hidden', !r.enabled);
+
+    const d = r.data || {};
+    const totals = d.totals || {};
+    const byAction = d.byAction || [];
+
+    const actionMap = Object.fromEntries(byAction.map(a => [a.action, a]));
+    const total = totals.total || 0;
+    const effectiveRate = total > 0 ? ((totals.effective_total || 0) / total * 100).toFixed(0) : '—';
+
+    document.getElementById('tpl-cao-stats').innerHTML = `
+      <div class="bg-white rounded p-2 border border-sky-200">
+        <div class="text-sky-600 font-semibold">Total openings</div>
+        <div class="text-xl font-bold text-sky-700">${total}</div>
+        <div class="text-[10px] text-slate-500">${r.days} ngày</div>
+      </div>
+      <div class="bg-white rounded p-2 border border-violet-200">
+        <div class="text-violet-600 font-semibold">Resume context</div>
+        <div class="text-xl font-bold text-violet-700">${actionMap.resume_context?.n || 0}</div>
+        <div class="text-[10px] text-slate-500">khớp mạch cũ</div>
+      </div>
+      <div class="bg-white rounded p-2 border border-emerald-200">
+        <div class="text-emerald-600 font-semibold">Acknowledge return</div>
+        <div class="text-xl font-bold text-emerald-700">${actionMap.acknowledge_return?.n || 0}</div>
+        <div class="text-[10px] text-slate-500">khách quay lại</div>
+      </div>
+      <div class="bg-white rounded p-2 border border-amber-200">
+        <div class="text-amber-600 font-semibold">Effective rate</div>
+        <div class="text-xl font-bold text-amber-700">${effectiveRate}%</div>
+        <div class="text-[10px] text-slate-500">khách respond</div>
+      </div>
+    `;
+  } catch (e) { console.warn('[cao] load stats fail', e); }
+}
+
+async function showCAORecent() {
+  try {
+    const r = await api('/agentic-templates/cao/recent?limit=30');
+    if (!r?.success) return;
+
+    const rows = r.data || [];
+    const html = rows.map(row => {
+      const actionColor = { resume_context: 'violet', greet_new: 'sky', acknowledge_return: 'emerald' }[row.action] || 'slate';
+      const effective = row.was_effective === 1 ? '<span class="text-emerald-600">✅ effective</span>' : row.was_effective === 0 ? '<span class="text-rose-600">❌ drop</span>' : '<span class="text-slate-400">⏳ pending</span>';
+      return `
+        <div class="border-b py-2">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs bg-${actionColor}-100 text-${actionColor}-700 px-1.5 py-0.5 rounded font-semibold">${row.action}</span>
+            <code class="text-xs text-slate-500">${row.sender_id}</code>
+            <span class="text-xs text-slate-500">conf=${row.confidence} rel=${row.context_relevance}</span>
+            <span class="text-xs text-slate-400">${row.llm_provider}</span>
+            ${effective}
+          </div>
+          ${row.summary_previous ? `<div class="text-xs text-slate-600 mb-1"><strong>Context:</strong> ${escapeHtml(row.summary_previous)}</div>` : ''}
+          ${row.suggested_opening ? `<div class="text-xs bg-slate-50 rounded p-1.5 font-mono">${escapeHtml(row.suggested_opening)}</div>` : ''}
+          <div class="text-[10px] text-slate-400 mt-1">${new Date(row.cached_at).toLocaleString('vi-VN')}</div>
+        </div>
+      `;
+    }).join('');
+
+    const w = window.open('', '_blank', 'width=900,height=700');
+    w.document.write(`
+      <html><head><title>CAO Recent Decisions</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <style>body{font-family:sans-serif;padding:10px}</style>
+      </head><body>
+        <h3 class="font-bold text-lg mb-3">🧠 CAO Recent Decisions (last 30)</h3>
+        ${html || '<p>Chưa có data.</p>'}
+      </body></html>
+    `);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
 async function loadAgenticTemplates() {
   try {
+    // Load CAO stats first
+    await loadCAOStats();
+
     // Load pending suggestions count first (badge)
     try {
       const sg = await api('/agentic-templates/suggestions/pending');
@@ -7858,6 +7939,9 @@ document.addEventListener('DOMContentLoaded', () => {
       _varCurrentId = null;
     });
     byId('var-btn-create').addEventListener('click', createVariant);
+  }
+  if (byId('tpl-btn-cao-recent')) {
+    byId('tpl-btn-cao-recent').addEventListener('click', showCAORecent);
   }
 });
 
