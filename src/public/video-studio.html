@@ -168,7 +168,13 @@
         </div>
         <div>
           <label class="text-sm font-semibold">ElevenLabs Voice ID (VN)</label>
-          <input type="text" id="settings-elevenlabs-voice" class="border rounded px-3 py-2 w-full" placeholder="Voice ID từ ElevenLabs library">
+          <div class="flex gap-2">
+            <input type="text" id="settings-elevenlabs-voice" class="border rounded px-3 py-2 flex-1" placeholder="Voice ID từ ElevenLabs library">
+            <button id="settings-voice-list" class="px-3 py-2 bg-slate-200 rounded text-sm whitespace-nowrap">📋 List voices</button>
+            <button id="settings-voice-preview" class="px-3 py-2 bg-indigo-500 text-white rounded text-sm whitespace-nowrap">🎧 Preview</button>
+          </div>
+          <audio id="settings-voice-audio" controls class="mt-2 hidden w-full"></audio>
+          <div id="settings-voice-list-result" class="mt-2 hidden max-h-64 overflow-y-auto text-xs"></div>
         </div>
         <button id="settings-save" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded">💾 Lưu settings</button>
       </div>

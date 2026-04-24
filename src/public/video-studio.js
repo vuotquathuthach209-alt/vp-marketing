@@ -355,9 +355,50 @@ async function openProject(id) {
     }
 
     if (p.status === 'voice_review') {
+      // Check if voice already generated (any scene has voice_segment_url)
+      const hasVoice = (p.scenes || []).some(s => s.voice_segment_url);
+      if (!hasVoice) {
+        html += `<div class="mb-4 p-3 bg-indigo-50 rounded border border-indigo-300">
+          <div class="font-semibold text-indigo-800 mb-2">🗣️ Gate 2: Generate voice</div>
+          <div class="text-sm text-slate-700">Bấm để ElevenLabs tạo giọng đọc cho mỗi scene. Cost ~$0.36/video.</div>
+          <button onclick="genVoice(${p.id})" class="mt-2 px-3 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded text-sm font-medium">🗣️ Generate voice (ElevenLabs)</button>
+        </div>`;
+      } else {
+        html += `<div class="mb-4 p-3 bg-emerald-50 rounded border border-emerald-300">
+          <div class="font-semibold text-emerald-800 mb-2">✅ Voice ready — review + approve</div>
+          <div class="text-sm text-slate-700">Nghe các audio segments trong Scenes bên dưới. Bấm Approve để compose video.</div>
+          <div class="mt-2 flex gap-2">
+            <button onclick="approveVoice(${p.id})" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm font-medium">✅ Approve voice → Compose</button>
+            <button onclick="genVoice(${p.id})" class="px-3 py-1.5 bg-slate-200 rounded text-sm">🔄 Re-generate</button>
+          </div>
+        </div>`;
+      }
+    }
+
+    if (p.status === 'composing') {
+      html += `<div class="mb-4 p-3 bg-violet-50 rounded border border-violet-300">
+        <div class="font-semibold text-violet-800 mb-2">🎬 Gate 3: Compose video (FFmpeg)</div>
+        <div class="text-sm text-slate-700">Download clips → apply LUT → concat + voice + subtitles → MP4. Mất ~30-60s.</div>
+        <button onclick="composeVideo(${p.id})" class="mt-2 px-3 py-1.5 bg-violet-500 hover:bg-violet-600 text-white rounded text-sm font-medium">🎬 Compose video</button>
+      </div>`;
+    }
+
+    if (p.status === 'qc_review' && p.draft_video_url) {
+      html += `<div class="mb-4 p-3 bg-amber-50 rounded border border-amber-300">
+        <div class="font-semibold text-amber-800 mb-2">🔍 Gate 4: Preview + Final approve</div>
+        <video src="${esc(p.draft_video_url)}" controls class="mt-2 max-w-sm rounded border" style="max-height: 600px"></video>
+        <div class="mt-2 flex gap-2">
+          <button onclick="approveFinal(${p.id})" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm font-medium">✅ Approve final → Ready to publish</button>
+          <button onclick="composeVideo(${p.id})" class="px-3 py-1.5 bg-slate-200 rounded text-sm">🔄 Re-compose</button>
+        </div>
+      </div>`;
+    }
+
+    if (p.status === 'approved' && p.final_video_url) {
       html += `<div class="mb-4 p-3 bg-emerald-50 rounded border border-emerald-300">
-        <div class="font-semibold text-emerald-800 mb-2">✅ Visuals ready</div>
-        <div class="text-sm text-slate-700">V1.5 sẽ có voice + composition. V1 hiện tại stop ở đây để test visual quality.</div>
+        <div class="font-semibold text-emerald-800 mb-2">✅ Approved — Ready to publish</div>
+        <video src="${esc(p.final_video_url)}" controls class="mt-2 max-w-sm rounded border" style="max-height: 600px"></video>
+        <div class="mt-2 text-sm text-slate-600">Publishing UI (FB/IG/Zalo) sẽ có ở V1.6.</div>
       </div>`;
     }
 
@@ -391,9 +432,14 @@ async function openProject(id) {
           <div class="text-xs text-slate-500 mt-1"><strong>Visual:</strong> ${esc(s.visual_prompt)}</div>
           ${s.visual_url ? `
             <details class="mt-2">
-              <summary class="cursor-pointer text-xs text-indigo-600">Xem clip</summary>
+              <summary class="cursor-pointer text-xs text-indigo-600">🎨 Xem clip</summary>
               <video src="${esc(s.visual_url)}" controls class="mt-2 max-w-xs rounded"></video>
             </details>
+          ` : ''}
+          ${s.voice_segment_url ? `
+            <div class="mt-2">
+              <audio src="${esc(s.voice_segment_url)}" controls class="w-full max-w-sm" style="height: 32px"></audio>
+            </div>
           ` : ''}
         </div>
       `;
@@ -431,6 +477,52 @@ async function fetchVisuals(id) {
     btn.disabled = true; btn.textContent = '⏳ Fetching...';
     const r = await api(`/projects/${id}/generate-visuals`, { method: 'POST' });
     alert(`Fetched: ${r.fetched}, Failed: ${r.failed}`);
+    await openProject(id);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function genVoice(id) {
+  if (!confirm('Generate voice cho tất cả scenes? Sẽ gọi ElevenLabs API.')) return;
+  try {
+    const btn = event.target;
+    btn.disabled = true; btn.textContent = '⏳ Generating voice...';
+    const r = await api(`/projects/${id}/generate-voice`, { method: 'POST' });
+    btn.disabled = false;
+    if (r.success) {
+      alert(`✅ Voice generated: ${r.scenes_generated} scenes`);
+    } else {
+      alert('Lỗi: ' + (r.error || 'unknown'));
+    }
+    await openProject(id);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function approveVoice(id) {
+  try {
+    await api(`/projects/${id}/approve-voice`, { method: 'POST' });
+    await openProject(id);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function composeVideo(id) {
+  if (!confirm('Compose video? FFmpeg sẽ download clips + apply LUT + merge voice. Mất 30-60s.')) return;
+  try {
+    const btn = event.target;
+    btn.disabled = true; btn.textContent = '⏳ Composing (30-60s)...';
+    const r = await api(`/projects/${id}/compose`, { method: 'POST' });
+    btn.disabled = false;
+    if (r.success) {
+      alert(`✅ Video composed!\nDuration: ${r.duration_sec?.toFixed(1)}s\nSize: ${((r.size_bytes || 0) / 1024 / 1024).toFixed(1)}MB\nSteps: ${r.steps?.length}`);
+    } else {
+      alert(`❌ Compose lỗi: ${r.error}\nSteps completed: ${r.steps?.join(' → ')}`);
+    }
+    await openProject(id);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function approveFinal(id) {
+  try {
+    await api(`/projects/${id}/approve-final`, { method: 'POST' });
     await openProject(id);
   } catch (e) { alert('Lỗi: ' + e.message); }
 }
@@ -493,6 +585,43 @@ document.getElementById('settings-enabled').addEventListener('change', async (e)
     await api('/toggle', { method: 'POST', body: JSON.stringify({ enabled: e.target.checked }) });
     await checkStatus();
   } catch (err) { alert('Lỗi: ' + err.message); e.target.checked = !e.target.checked; }
+});
+
+document.getElementById('settings-voice-list').addEventListener('click', async () => {
+  try {
+    const r = await api('/voices');
+    const panel = document.getElementById('settings-voice-list-result');
+    if (!r.success || !r.data?.length) {
+      panel.innerHTML = '<div class="text-rose-600">Không load được voices. Check API key.</div>';
+    } else {
+      panel.innerHTML = '<div class="bg-white border rounded p-2">' + r.data.map(v => `
+        <div class="flex items-center justify-between gap-2 py-1 border-b last:border-b-0">
+          <div>
+            <div class="font-mono text-xs">${esc(v.voice_id)}</div>
+            <div class="text-sm">${esc(v.name)} <span class="text-slate-500">(${esc(v.language || 'n/a')})</span></div>
+          </div>
+          <button onclick="document.getElementById('settings-elevenlabs-voice').value='${esc(v.voice_id)}'" class="px-2 py-1 bg-emerald-500 text-white rounded text-xs">Pick</button>
+        </div>
+      `).join('') + '</div>';
+    }
+    panel.classList.remove('hidden');
+  } catch (e) { alert('Lỗi: ' + e.message); }
+});
+
+document.getElementById('settings-voice-preview').addEventListener('click', async () => {
+  const voiceId = document.getElementById('settings-elevenlabs-voice').value.trim();
+  if (!voiceId) return alert('Nhập Voice ID trước');
+  try {
+    const r = await api('/voices/preview', {
+      method: 'POST',
+      body: JSON.stringify({ voice_id: voiceId }),
+    });
+    if (!r.success) { alert('Lỗi: ' + (r.error || 'unknown')); return; }
+    const audio = document.getElementById('settings-voice-audio');
+    audio.src = 'data:audio/mpeg;base64,' + r.audio_base64;
+    audio.classList.remove('hidden');
+    audio.play();
+  } catch (e) { alert('Lỗi: ' + e.message); }
 });
 
 document.getElementById('settings-save').addEventListener('click', async () => {

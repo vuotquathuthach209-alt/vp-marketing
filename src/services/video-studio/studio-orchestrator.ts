@@ -22,6 +22,8 @@ import { generateScript, ScriptOutput, ScriptOptions } from './script-writer';
 import { fetchVisualsForScenes } from './visual-generator';
 import { getDefaultBrandKit } from './brand-kit';
 import { markIdeaUsed } from './content-discovery';
+import { synthesizeProjectVoices } from './voice-synthesizer';
+import { composeProjectVideo } from './video-composer';
 
 export type ProjectStatus =
   | 'draft'
@@ -289,6 +291,112 @@ export async function generateVisualsStep(projectId: number): Promise<{ success:
     return { success: failed === 0, fetched, failed };
   } catch (e: any) {
     return { success: false, fetched: 0, failed: 0, error: e?.message };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Step: Generate voice (ElevenLabs TTS)
+// ═══════════════════════════════════════════════════════════
+
+export async function generateVoiceStep(projectId: number): Promise<{ success: boolean; scenes_generated: number; error?: string }> {
+  try {
+    const proj = db.prepare(`SELECT status FROM video_projects WHERE id = ?`).get(projectId) as any;
+    if (!proj) return { success: false, scenes_generated: 0, error: 'Not found' };
+    if (!['voice_review', 'visuals'].includes(proj.status)) {
+      return { success: false, scenes_generated: 0, error: `Status must be voice_review or visuals, got ${proj.status}` };
+    }
+
+    const r = await synthesizeProjectVoices(projectId);
+
+    if (r.success) {
+      // Move to composing status (awaiting admin gate 2 approve → then compose)
+      db.prepare(`UPDATE video_projects SET updated_at = ? WHERE id = ?`).run(Date.now(), projectId);
+    }
+
+    return { success: r.success, scenes_generated: r.scenes_generated, error: r.error };
+  } catch (e: any) {
+    return { success: false, scenes_generated: 0, error: e?.message };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Step: Approve voice (gate 2) → start compose
+// ═══════════════════════════════════════════════════════════
+
+export function approveVoiceStep(projectId: number): { success: boolean; error?: string } {
+  try {
+    const proj = db.prepare(`SELECT status FROM video_projects WHERE id = ?`).get(projectId) as any;
+    if (!proj) return { success: false, error: 'Not found' };
+    if (proj.status !== 'voice_review') {
+      return { success: false, error: `Status must be voice_review, got ${proj.status}` };
+    }
+
+    db.prepare(`
+      UPDATE video_projects
+      SET status = 'composing', reviewed_at_gate2 = ?, updated_at = ?
+      WHERE id = ?
+    `).run(Date.now(), Date.now(), projectId);
+
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e?.message };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Step: Compose video (FFmpeg)
+// ═══════════════════════════════════════════════════════════
+
+export async function composeVideoStep(projectId: number): Promise<{ success: boolean; output_url?: string; duration_sec?: number; size_bytes?: number; steps?: string[]; error?: string }> {
+  try {
+    const proj = db.prepare(`SELECT status FROM video_projects WHERE id = ?`).get(projectId) as any;
+    if (!proj) return { success: false, error: 'Not found' };
+    if (!['composing', 'voice_review'].includes(proj.status)) {
+      return { success: false, error: `Status must be composing, got ${proj.status}` };
+    }
+
+    const r = await composeProjectVideo(projectId);
+
+    if (!r.success) {
+      db.prepare(`UPDATE video_projects SET error_log = ?, updated_at = ? WHERE id = ?`)
+        .run(r.error || 'compose failed', Date.now(), projectId);
+    }
+
+    return {
+      success: r.success,
+      output_url: r.output_url,
+      duration_sec: r.duration_sec,
+      size_bytes: r.size_bytes,
+      steps: r.steps_completed,
+      error: r.error,
+    };
+  } catch (e: any) {
+    return { success: false, error: e?.message };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Step: Final approve (gate 4) → approved status ready to publish
+// ═══════════════════════════════════════════════════════════
+
+export function approveFinalStep(projectId: number): { success: boolean; error?: string } {
+  try {
+    const proj = db.prepare(`SELECT status, draft_video_url FROM video_projects WHERE id = ?`).get(projectId) as any;
+    if (!proj) return { success: false, error: 'Not found' };
+    if (proj.status !== 'qc_review') {
+      return { success: false, error: `Status must be qc_review, got ${proj.status}` };
+    }
+    if (!proj.draft_video_url) return { success: false, error: 'No draft video yet' };
+
+    db.prepare(`
+      UPDATE video_projects
+      SET status = 'approved', reviewed_at_gate4 = ?, final_video_url = draft_video_url, updated_at = ?
+      WHERE id = ?
+    `).run(Date.now(), Date.now(), projectId);
+
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e?.message };
   }
 }
 

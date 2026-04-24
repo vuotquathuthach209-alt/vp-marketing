@@ -18,8 +18,13 @@ import {
 } from '../services/video-studio/content-discovery';
 import {
   createProject, generateScriptStep, approveScriptStep, generateVisualsStep,
+  generateVoiceStep, approveVoiceStep, composeVideoStep, approveFinalStep,
   getProject, listProjects, getProjectScenes, deleteProject,
 } from '../services/video-studio/studio-orchestrator';
+import { listAvailableVoices, previewVoice } from '../services/video-studio/voice-synthesizer';
+import { checkFFmpeg, cleanupProjectFiles } from '../services/video-studio/video-composer';
+import * as path from 'path';
+import * as fs from 'fs';
 
 const router = Router();
 router.use(authMiddleware);
@@ -290,9 +295,141 @@ router.post('/projects/:id/generate-visuals', requireEnabled, async (req: AuthRe
   }
 });
 
+router.post('/projects/:id/generate-voice', requireEnabled, async (req: AuthRequest, res) => {
+  try {
+    const r = await generateVoiceStep(Number(req.params.id));
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/projects/:id/approve-voice', requireEnabled, (req: AuthRequest, res) => {
+  try {
+    const r = approveVoiceStep(Number(req.params.id));
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/projects/:id/compose', requireEnabled, async (req: AuthRequest, res) => {
+  try {
+    const r = await composeVideoStep(Number(req.params.id));
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/projects/:id/approve-final', requireEnabled, (req: AuthRequest, res) => {
+  try {
+    const r = approveFinalStep(Number(req.params.id));
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
 router.delete('/projects/:id', requireEnabled, superadminOnly, (req, res) => {
+  try {
+    cleanupProjectFiles(Number(req.params.id));
+  } catch {}
   const r = deleteProject(Number(req.params.id));
   res.json(r);
+});
+
+// ═══════════════════════════════════════════════════════════
+// ElevenLabs voices (list + preview)
+// ═══════════════════════════════════════════════════════════
+
+router.get('/voices', requireEnabled, async (_req, res) => {
+  try {
+    const voices = await listAvailableVoices();
+    res.json({ success: true, data: voices });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/voices/preview', requireEnabled, async (req: AuthRequest, res) => {
+  try {
+    const { voice_id, text } = req.body || {};
+    if (!voice_id) return res.status(400).json({ success: false, error: 'voice_id required' });
+    const r = await previewVoice(String(voice_id), text);
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// System check
+// ═══════════════════════════════════════════════════════════
+
+router.get('/system/check', requireEnabled, async (_req, res) => {
+  try {
+    const ff = await checkFFmpeg();
+    res.json({ success: true, ffmpeg: ff });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// File serving — serve video/audio files from data/video-studio
+// ═══════════════════════════════════════════════════════════
+
+const DATA_DIR = path.resolve(process.cwd(), 'data', 'video-studio');
+
+router.get('/files/:projectId/:subdir/:filename', requireEnabled, (req: AuthRequest, res) => {
+  try {
+    const projectId = String(req.params.projectId);
+    const subdir = String(req.params.subdir);
+    const filename = String(req.params.filename);
+    // Whitelist subdirs
+    if (!['voices', 'composed', 'clips'].includes(subdir)) {
+      return res.status(400).json({ success: false, error: 'invalid subdir' });
+    }
+    // Prevent directory traversal
+    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+      return res.status(400).json({ success: false, error: 'invalid filename' });
+    }
+
+    const filePath = path.join(DATA_DIR, subdir, projectId, filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: 'file not found' });
+    }
+
+    // Content type
+    const ext = path.extname(filename).toLowerCase();
+    const contentType: Record<string, string> = {
+      '.mp4': 'video/mp4',
+      '.mp3': 'audio/mpeg',
+      '.srt': 'text/plain',
+    };
+    res.setHeader('Content-Type', contentType[ext] || 'application/octet-stream');
+
+    // Support Range requests for video streaming
+    const stat = fs.statSync(filePath);
+    const range = req.headers.range;
+    if (range && ext === '.mp4') {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+      const chunkSize = end - start + 1;
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Content-Length', String(chunkSize));
+      fs.createReadStream(filePath, { start, end }).pipe(res);
+    } else {
+      res.setHeader('Content-Length', String(stat.size));
+      fs.createReadStream(filePath).pipe(res);
+    }
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════
