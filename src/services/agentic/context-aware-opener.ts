@@ -350,23 +350,49 @@ function passesHallucinationCheck(text: string, ctx: CAOContext): boolean {
     }
   }
 
-  // Name check: nếu LLM mention SPECIFIC name (proper noun), phải match profile.name
-  // Chỉ bắt "Anh/Chị/Ông/Bà X" where X starts với CAPITAL letter (để tránh false positive
-  // với common words như "chào", "ơi", "ạ" trong lowercase form).
+  // Name check: SOFT — chỉ fail khi LLM dùng tên DIFFERENT (không phải verb/adverb).
+  //
+  // Vietnamese có nhiều verbs/adverbs mà regex không tránh được 100%:
+  //   "Anh Minh đợi em", "Anh Minh cần...", "Anh Minh muốn..." → "đợi", "cần", "muốn"
+  //   có thể bị capitalize trong LLM output do typo, nhưng không phải hallucination.
+  //
+  // Logic mới: chỉ fail nếu text contains ĐỒNG THỜI:
+  //   (a) profile name parts XUẤT HIỆN trong text (positive signal LLM biết tên)
+  //   (b) một name DIFFERENT (khác hoàn toàn profile) cũng xuất hiện → conflict thật sự
   if (ctx.customerProfile?.name) {
     const nameLower = ctx.customerProfile.name.toLowerCase();
-    // Loại bỏ "Anh" / "Chị" prefix trong profile name để get actual name parts
-    const nameParts = nameLower.replace(/^(anh|chị|ông|bà)\s+/, '').split(/\s+/).filter(Boolean);
-    // Use /g to find ALL name mentions (không chỉ first match)
-    const nameMentions = [...text.matchAll(/\b(?:Anh|Chị|Ông|Bà)\s+([A-ZÀ-Ỹ][a-zà-ỹ]{1,})/gu)];
+    const nameParts = nameLower.replace(/^(anh|chị|ông|bà)\s+/, '').split(/\s+/).filter(p => p.length >= 2);
+    const lowerText = text.toLowerCase();
+
+    // Positive signal: profile name parts có mentioned?
+    const profileMentioned = nameParts.some(p => lowerText.includes(p));
+
+    // Skip list — common VN words accidentally capitalized sau Anh/Chị/Ông/Bà
+    const SKIP_WORDS = new Set([
+      'chào', 'ơi', 'ạ', 'nhé', 'em', 'ở', 'đã',
+      'đợi', 'chờ', 'xem', 'check', 'hãy', 'cần', 'muốn', 'vui',
+      'lòng', 'tiếp', 'yêu', 'nên', 'có', 'không', 'thấy',
+      'ghé', 'đến', 'quay', 'đến', 'mình', 'đó', 'đây',
+      'được', 'nhận', 'phải', 'sẽ', 'đang',
+    ]);
+
+    const nameMentions = [...text.matchAll(/\b(?:Anh|Chị|Ông|Bà)\s+([A-ZÀ-Ỹ][a-zà-ỹ]+)/gu)];
+    const suspiciousNames: string[] = [];
     for (const m of nameMentions) {
       const usedName = m[1].toLowerCase();
-      // Skip common words accidentally matched
-      const COMMON_WORDS = new Set(['chào', 'ơi', 'ạ', 'nhé', 'em']);
-      if (COMMON_WORDS.has(usedName)) continue;
-      // Match if usedName appears anywhere in profile name parts
-      if (!nameParts.some(p => p === usedName)) {
-        console.warn(`[cao] name mismatch: LLM used "${usedName}", profile has "${nameLower}" (parts: ${nameParts.join(',')})`);
+      if (SKIP_WORDS.has(usedName)) continue;
+      if (nameParts.includes(usedName)) continue;  // OK, matches profile
+      suspiciousNames.push(usedName);
+    }
+
+    if (suspiciousNames.length > 0) {
+      if (profileMentioned) {
+        // Có profile name mentioned + tên khác → conflict THẬT
+        console.warn(`[cao] name conflict: LLM used "${suspiciousNames.join(',')}" alongside profile "${nameLower}"`);
+        return false;
+      } else {
+        // Không mention profile name, có tên khác → nghi ngờ hallucination
+        console.warn(`[cao] suspicious name: LLM used "${suspiciousNames.join(',')}", profile has "${nameLower}"`);
         return false;
       }
     }
