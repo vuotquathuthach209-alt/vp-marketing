@@ -350,17 +350,23 @@ function passesHallucinationCheck(text: string, ctx: CAOContext): boolean {
     }
   }
 
-  // Name check: nếu LLM mention name, phải match profile.name
+  // Name check: nếu LLM mention SPECIFIC name (proper noun), phải match profile.name
+  // Chỉ bắt "Anh/Chị/Ông/Bà X" where X starts với CAPITAL letter (để tránh false positive
+  // với common words như "chào", "ơi", "ạ" trong lowercase form).
   if (ctx.customerProfile?.name) {
-    const lowerText = text.toLowerCase();
     const nameLower = ctx.customerProfile.name.toLowerCase();
-    // Split name into parts (e.g., "Anh Minh" → ["anh", "minh"])
-    // If text contains "Anh/Chị X" where X not in profile name parts → hallucination
-    const customNameMatch = lowerText.match(/(?:anh|chị|em|bạn)\s+([a-zàáâãèéêìíòóôõùúăđĩũơưạảấầẩẫậắằẳẵặẹẻẽềềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]+)/i);
-    if (customNameMatch) {
-      const usedName = customNameMatch[1].toLowerCase();
-      if (!nameLower.includes(usedName) && usedName !== 'chị') {
-        console.warn(`[cao] name mismatch: LLM used "${usedName}", profile has "${nameLower}"`);
+    // Loại bỏ "Anh" / "Chị" prefix trong profile name để get actual name parts
+    const nameParts = nameLower.replace(/^(anh|chị|ông|bà)\s+/, '').split(/\s+/).filter(Boolean);
+    // Use /g to find ALL name mentions (không chỉ first match)
+    const nameMentions = [...text.matchAll(/\b(?:Anh|Chị|Ông|Bà)\s+([A-ZÀ-Ỹ][a-zà-ỹ]{1,})/gu)];
+    for (const m of nameMentions) {
+      const usedName = m[1].toLowerCase();
+      // Skip common words accidentally matched
+      const COMMON_WORDS = new Set(['chào', 'ơi', 'ạ', 'nhé', 'em']);
+      if (COMMON_WORDS.has(usedName)) continue;
+      // Match if usedName appears anywhere in profile name parts
+      if (!nameParts.some(p => p === usedName)) {
+        console.warn(`[cao] name mismatch: LLM used "${usedName}", profile has "${nameLower}" (parts: ${nameParts.join(',')})`);
         return false;
       }
     }
