@@ -139,6 +139,11 @@ function switchTab(tab) {
   if (tab === 'channels') loadChannels();
   if (tab === 'otadb') loadOtaConfig();
   if (tab === 'otapipeline') loadOtaPipeline();
+  // v26 menu audit: 3 tabs được wire handler (trước đó broken — panel hiển thị nhưng không load data)
+  if (tab === 'feedback') loadFeedbackList();
+  if (tab === 'guests') loadGuests();
+  if (tab === 'referral') loadReferral();
+  // Note: 'compose' tab không cần loader (chỉ form input, không fetch data)
 
   // v24: Auto-expand the group containing active tab (for collapsed groups)
   const activeBtn = document.querySelector(`.nav-btn[data-tab="${tab}"]`);
