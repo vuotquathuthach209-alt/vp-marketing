@@ -1279,6 +1279,47 @@ export async function smartReplyWithSender(
     }
   } catch {}
 
+  // ─── v27 AGENTIC FLOW (feature flag USE_AGENTIC_FLOW) ───
+  // OBSERVE → PLAN → REASON → ACT với safety guard + human handoff.
+  // Gates BEFORE FSM/dispatcher để agentic control template + safety first.
+  // Nếu returns null → fall through to FSM (existing behavior).
+  try {
+    const { isAgenticEnabled, processMessageAgentic } = require('./agentic/orchestrator');
+    if (isAgenticEnabled() && senderId) {
+      const agr = await processMessageAgentic(senderId, hid, msg, { imageUrl });
+      if (agr && agr.reply) {
+        const memId = saveMessage(senderId, pid, 'bot', agr.reply, agr.intent);
+        try {
+          const { logBotReply } = require('./reply-outcome-logger');
+          logBotReply({
+            hotelId: hid,
+            senderId,
+            userMessage: msg,
+            botReply: agr.reply,
+            intent: agr.intent,
+            stage: 'AGENTIC_' + agr.tier_used.toUpperCase(),
+            replySource: `agentic_${agr.tier_used}`,
+            llmProvider: agr.cost_estimate === 'free' ? 'template' : 'gemini',
+            latencyMs: Date.now() - t0,
+            conversationMemoryId: typeof memId === 'number' ? memId : undefined,
+          });
+        } catch {}
+        console.log(`[agentic] ✅ tier=${agr.tier_used} conf=${agr.confidence_score} cost=${agr.cost_estimate}`);
+        return {
+          reply: agr.reply,
+          tier: 'rules',
+          latency_ms: Date.now() - t0,
+          intent: agr.intent,
+          confidence: agr.confidence_score,
+        } as SmartReplyResult;
+      }
+      // agentic returns null → fall through to FSM
+      console.log('[agentic] delegated to FSM (tier=rag_ai or full_ai)');
+    }
+  } catch (e: any) {
+    console.warn('[agentic] error, falling back:', e?.message);
+  }
+
   // ─── NEW FUNNEL FSM (feature flag USE_NEW_FUNNEL) ───
   // Spec: docs/BOT-SALES-FUNNEL-PLAN.md (v1.1)
   // Gate before legacy dispatchV6 — nếu enabled, FSM handle full conversation
