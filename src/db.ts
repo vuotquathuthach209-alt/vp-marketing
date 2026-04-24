@@ -1657,6 +1657,61 @@ CREATE INDEX IF NOT EXISTS idx_conflicts_manual ON sync_conflicts(resolution) WH
 console.log('[db] Sync Coordinator v2 tables ready (sync_outbox + sync_webhook_inbound + sync_conflicts)');
 
 // ═══════════════════════════════════════════════════════════
+// v25 — Product-First Auto Post (daily)
+//   Mục tiêu: mỗi ngày 1 bài product spotlight về 1 property Sonder.
+//   Dedup image + hotel + caption theme để không lặp.
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+-- Lịch sử đã đăng — dedup + analytics
+CREATE TABLE IF NOT EXISTS auto_post_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scheduled_date TEXT NOT NULL,               -- YYYY-MM-DD (VN time)
+  hotel_id INTEGER NOT NULL,                  -- = ota_hotel_id
+  post_id INTEGER,                            -- FK → posts after publish
+  image_url TEXT,
+  image_fingerprint TEXT,                     -- hash của URL hoặc perceptual hash
+  angle_used TEXT,                            -- signature|comparison|testimonial|price|location
+  caption_hash TEXT,                          -- dedup caption
+  status TEXT NOT NULL DEFAULT 'planned',     -- planned|generated|published|failed|skipped
+  engagement_json TEXT,                       -- 7d cached: reactions/comments/shares
+  conversion_count INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  published_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_auto_hist_hotel_date ON auto_post_history(hotel_id, scheduled_date DESC);
+CREATE INDEX IF NOT EXISTS idx_auto_hist_fingerprint ON auto_post_history(image_fingerprint);
+CREATE INDEX IF NOT EXISTS idx_auto_hist_date ON auto_post_history(scheduled_date DESC);
+
+-- Blacklist ảnh (bị lỗi, manual skip, không phù hợp)
+CREATE TABLE IF NOT EXISTS auto_post_image_blacklist (
+  fingerprint TEXT PRIMARY KEY,
+  image_url TEXT,
+  hotel_id INTEGER,
+  reason TEXT,
+  added_by TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_blacklist_hotel ON auto_post_image_blacklist(hotel_id);
+
+-- Plan 7 ngày tới (admin preview + edit)
+CREATE TABLE IF NOT EXISTS auto_post_plan (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scheduled_date TEXT NOT NULL UNIQUE,
+  hotel_id INTEGER NOT NULL,
+  angle TEXT NOT NULL,
+  image_url TEXT,
+  image_fingerprint TEXT,
+  caption_draft TEXT,
+  admin_note TEXT,
+  status TEXT NOT NULL DEFAULT 'planned',     -- planned|approved|generated|published|skipped
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_auto_plan_status ON auto_post_plan(status, scheduled_date);
+`);
+console.log('[db] v25 Product Auto Post tables ready (history + blacklist + plan)');
+
+// ═══════════════════════════════════════════════════════════
 // v23 — intent_logs: log mọi message qua Gemini Intent Classifier
 // Mục đích: analytics + training data cho tuning classifier + debug
 // ═══════════════════════════════════════════════════════════

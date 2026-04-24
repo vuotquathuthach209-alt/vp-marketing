@@ -561,21 +561,45 @@ export function startScheduler() {
     }
   });
 
-  // ── Content Intelligence — AUTO WEEKLY POST ────────────────────────
-  // Thứ 2 lúc 9h sáng VN time (= 2h UTC): bot tự fetch inspiration + remix + publish 1 bài/tuần
-  // Cron: 0 2 * * 1 (UTC) = 9h VN time thứ 2
-  cron.schedule('0 2 * * 1', async () => {
+  // v25: DISABLED — ci-auto-weekly (VnExpress remix) thay bằng product-first daily.
+  //      Logic cũ: mỗi T2 lấy 1 bài VnExpress → remix → post.
+  //      Vấn đề: content đa chủ đề, không drive booking cho specific property.
+  //      Thay thế bằng product-auto-post-daily (dưới).
+  //
+  // cron.schedule('0 2 * * 1', async () => {
+  //   const { runWeeklyAutoPostAllHotels } = require('./ci-auto-weekly');
+  //   ...
+  // });
+
+  // ── v25: PRODUCT-FIRST AUTO POST — DAILY ──────────────────────────
+  //   Phase A: 7h sáng VN — generate plan (pick hotel + image + angle + caption)
+  //   Phase B: 9h sáng VN — publish lên FB (cross-post tự động sang IG + Zalo)
+  //   Dedup: không lặp hotel 14d, không lặp image 90d, rotate 5 angles.
+  //   Loại: verified rating < avg-0.5, <3 reviews, <3 images.
+  cron.schedule('0 7 * * *', async () => {
     try {
-      const { runWeeklyAutoPostAllHotels } = require('./ci-auto-weekly');
-      console.log('[scheduler] ci-weekly: starting...');
-      const results = await runWeeklyAutoPostAllHotels();
-      const ok = results.filter((r: any) => r.ok).length;
-      const skipped = results.filter((r: any) => r.skipped).length;
-      console.log(`[scheduler] ci-weekly: ${ok} posted, ${skipped} skipped, ${results.length} total`);
+      const { generateTodayPlan } = require('./product-auto-post/orchestrator');
+      const r = await generateTodayPlan();
+      console.log('[scheduler] product-auto-post generate:', JSON.stringify({
+        ok: r.ok, reason: r.reason, plan_id: r.plan_id,
+        hotel: r.hotel?.name, angle: r.angle,
+      }));
     } catch (e: any) {
-      console.error('[scheduler] ci-weekly error:', e?.message);
+      console.error('[scheduler] product-auto-post generate error:', e?.message);
     }
-  });
+  }, { timezone: 'Asia/Ho_Chi_Minh' });
+
+  cron.schedule('0 9 * * *', async () => {
+    try {
+      const { publishTodayPlan } = require('./product-auto-post/orchestrator');
+      const r = await publishTodayPlan();
+      console.log('[scheduler] product-auto-post publish:', JSON.stringify({
+        ok: r.ok, reason: r.reason, post_id: r.post_id, fb_post_id: r.fb_post_id,
+      }));
+    } catch (e: any) {
+      console.error('[scheduler] product-auto-post publish error:', e?.message);
+    }
+  }, { timezone: 'Asia/Ho_Chi_Minh' });
 
   // Zalo OA token refresh — v22: cron mỗi 6h (thay vì 20h) + notify admin nếu fail
   //                              Trước đó 20h nhưng nếu miss 1 cycle → 40h → token expire (~25h life).
