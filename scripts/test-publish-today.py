@@ -16,10 +16,11 @@ const db = new Database('data/db.sqlite');
 (async () => {
   const { generateTodayPlan, publishTodayPlan } = require('/opt/vp-marketing/dist/services/product-auto-post/orchestrator');
 
-  // Regenerate plan (fresh caption)
+  // Regenerate plan (fresh caption) — clean history for TEST only
   console.log('\n=== REGENERATE PLAN ===');
   db.prepare(`DELETE FROM auto_post_plan WHERE scheduled_date = date('now', '+7 hours')`).run();
-  db.prepare(`DELETE FROM auto_post_history WHERE scheduled_date = date('now', '+7 hours') AND status = 'generated'`).run();
+  db.prepare(`DELETE FROM auto_post_history WHERE scheduled_date >= date('now', '-7 days')`).run();
+  console.log('History cleaned for fresh test');
 
   const gen = await generateTodayPlan();
   console.log('Generate result:', JSON.stringify({

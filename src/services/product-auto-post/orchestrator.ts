@@ -232,13 +232,23 @@ export async function publishTodayPlan(): Promise<{
 
   let mediaId: number | null = null;
   if (localFilename) {
-    // Insert into media table
+    // Insert into media table (actual schema: filename, mime_type, size, source, prompt, created_at, hotel_id)
     const now = Date.now();
-    const r = db.prepare(
-      `INSERT INTO media (hotel_id, filename, mime_type, size_bytes, uploaded_at)
-       VALUES (?, ?, 'image/jpeg', 0, ?)`
-    ).run(page.hotel_id, localFilename, now);
-    mediaId = Number(r.lastInsertRowid);
+    try {
+      const fs = require('fs');
+      const { config } = require('../../config');
+      const path = require('path');
+      const fullPath = path.join(config.mediaDir || path.join(process.cwd(), 'data', 'media'), localFilename);
+      const stats = fs.statSync(fullPath);
+      const r = db.prepare(
+        `INSERT INTO media (filename, mime_type, size, source, created_at, hotel_id)
+         VALUES (?, 'image/jpeg', ?, 'auto-product-post', ?, ?)`
+      ).run(localFilename, stats.size, now, page.hotel_id);
+      mediaId = Number(r.lastInsertRowid);
+    } catch (e: any) {
+      console.warn('[auto-post] media insert fail:', e?.message);
+      localFilename = null;        // fallback to text-only
+    }
   }
 
   // Create post row
