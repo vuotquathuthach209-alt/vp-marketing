@@ -44,8 +44,11 @@ export const DEFAULT_TEMPLATES: SeedTemplate[] = [
   {
     id: 'first_contact_warm',
     category: 'discovery',
-    description: 'Turn 1 — khách mới, chào ấm, 3 options',
-    trigger_conditions: { turn_number: 1, customer_is_new: true },
+    description: 'Turn 1 — khách mới, chào ấm, 3 options (default fallback)',
+    // Chỉ 1 điều kiện: turn_number=1 — làm default/fallback cho first turn.
+    // Các template cụ thể hơn (first_vague, first_with_urgency, first_with_question)
+    // có NHIỀU conditions hơn nên thắng khi conditions của chúng match.
+    trigger_conditions: { turn_number: 1 },
     content: `Dạ em chào anh/chị 👋
 
 Em là trợ lý AI của **SONDER** — nền tảng hỗ trợ lưu trú trực tuyến tại TP.HCM.

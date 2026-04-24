@@ -376,7 +376,10 @@ function matchScore(cond: any, ctx: SelectionContext): number {
     else return 0;
   }
 
-  return total === 0 ? 0 : matches / total;
+  // Trả về `matches` (integer count) thay vì ratio — templates với NHIỀU conditions
+  // thỏa mãn thắng tie-break tự nhiên. VD: first_vague (2 điều kiện: turn=1, len<10)
+  // thắng first_contact_warm (1 điều kiện: turn=1) khi cả 2 đều match.
+  return total === 0 ? 0 : matches;
 }
 
 // ═══════════════════════════════════════════════════════════
