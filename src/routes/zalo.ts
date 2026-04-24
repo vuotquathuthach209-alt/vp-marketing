@@ -164,11 +164,39 @@ zaloWebhookRouter.post('/webhook/zalo', async (req, res) => {
 //
 // v24 fix: mounted ON zaloRouter BEFORE authMiddleware (see bottom) để tránh
 //          collision với `/api/zalo/*` auth route. Moved handler xuống dưới.
+// v24: Zalo domain verification IDs — update khi Zalo cấp ID mới.
+//      Khi Zalo crawler truy cập callback URL KHÔNG có ?code=, serve
+//      HTML với meta tag `zalo-platform-site-verification`.
+const ZALO_VERIFIER_IDS: string[] = [
+  'SEwnEuJyP15KshOkjlvY64EAwpol_3vXD3Wm',
+  // Thêm ID mới vào đây nếu Zalo cấp mới
+];
+
 async function zaloOAuthCallback(req: any, res: any) {
   try {
     const code = String(req.query.code || '');
     const oaId = String(req.query.oa_id || '');
     const state = String(req.query.state || '');
+
+    // v24: Domain verification mode — Zalo crawler truy cập không có code
+    if (!code && !oaId) {
+      const metaTags = ZALO_VERIFIER_IDS
+        .map(id => `<meta name="zalo-platform-site-verification" content="${id}" />`)
+        .join('\n    ');
+      return res.type('text/html').send(`<!DOCTYPE html>
+<html lang="vi"><head>
+    <meta charset="utf-8">
+    ${metaTags}
+    <title>Zalo OAuth Callback — VP Marketing</title>
+</head><body>
+    <h1>Zalo OAuth Callback Endpoint</h1>
+    <p>Domain verification page for Zalo Platform.</p>
+    <p>Endpoint này dùng cho OAuth callback khi user authorize OA.</p>
+    <hr>
+    <p><strong>Verification IDs active:</strong> ${ZALO_VERIFIER_IDS.length}</p>
+</body></html>`);
+    }
+
     if (!code || !oaId) {
       return res.status(400).send(`<h2>❌ Missing code or oa_id</h2><p>code=${code || '(empty)'}</p><p>oa_id=${oaId || '(empty)'}</p>`);
     }
@@ -249,6 +277,21 @@ const router = Router();
 // v24 FIX: PUBLIC OAuth callback — MUST be registered BEFORE authMiddleware
 //          để Zalo redirect không bị 401.
 router.get('/oauth/callback', zaloOAuthCallback);
+
+// v24: Zalo domain verification — Zalo yêu cầu serve file zalo_verifier<ID>.html
+//      với content = ID để verify domain ownership.
+//      Path: /api/zalo/oauth/callback/zalo_verifier<ID>.html
+//      Must be BEFORE authMiddleware.
+router.get('/oauth/callback/:filename', (req, res) => {
+  const filename = String(req.params.filename || '');
+  const m = /^zalo_verifier([A-Za-z0-9_\-]+)\.html$/.exec(filename);
+  if (m) {
+    const verifierId = m[1];
+    console.log(`[zalo-verify] serve verifier id=${verifierId}`);
+    return res.type('text/html').send(verifierId);
+  }
+  return res.status(404).send('Not found');
+});
 
 router.use(authMiddleware);
 
