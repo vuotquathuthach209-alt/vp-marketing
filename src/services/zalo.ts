@@ -533,34 +533,27 @@ export async function zaloCreateTimelineArticle(
   },
 ): Promise<{ article_id?: string; url?: string; raw: any }> {
   try {
-    // Step 1: Ensure cover is an upload attachment (Zalo needs attachment_id, not URL)
-    let coverAttId = opts.cover;
-    if (/^https?:\/\//.test(opts.cover)) {
-      const id = await zaloUploadImageFromUrl(oa, opts.cover);
-      if (!id) throw new Error('Cannot upload cover image');
-      coverAttId = id;
-    }
+    // Zalo article endpoint accept photo_url trực tiếp (không cần upload)
+    const coverUrl = opts.cover;
 
-    // Step 2: Upload inline images in body (nếu có)
+    // Body: convert blocks → HTML-like format hoặc array
     const processedBody: any[] = [];
     for (const block of opts.bodyBlocks) {
-      if (block.type === 'image' && /^https?:\/\//.test(block.content)) {
-        const id = await zaloUploadImageFromUrl(oa, block.content);
-        if (id) processedBody.push({ type: 'image', content: id, desc: block.desc || '' });
-      } else if (block.type === 'text') {
+      if (block.type === 'text') {
         processedBody.push({ type: 'text', content: block.content });
+      } else if (block.type === 'image' && /^https?:\/\//.test(block.content)) {
+        processedBody.push({ type: 'photo', photo_url: block.content, caption: block.desc || '' });
       }
     }
 
-    // Step 3: POST article — type 'normal' = bài viết thường (khác 'video')
-    //         cover format: object {image_id: ..., caption: ...} hoặc {image_url: ...}
+    // POST article
     const payload: any = {
       type: 'normal',
       title: opts.title.slice(0, 100),
       description: (opts.description || '').slice(0, 200),
       cover: {
         cover_type: 'photo',
-        photo_id: coverAttId,
+        photo_url: coverUrl,
         caption: opts.title.slice(0, 100),
       },
       body: processedBody,
