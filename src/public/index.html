@@ -141,7 +141,7 @@
             <span>Bán hàng &amp; Khách</span>
           </button>
           <div class="nav-group-body space-y-0.5">
-            <button data-tab="funnel" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="target"></i><span>Sales Funnel</span><span id="funnel-badge" class="ml-auto hidden text-xs bg-emerald-500 text-slate-900 px-1.5 py-0.5 rounded-full font-bold"></span></button>
+            <button data-tab="funnel" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm" title="Phễu khách hàng đặt phòng: inquiry → quote → cọc → confirmed"><i data-lucide="target"></i><span>Phễu đặt phòng</span><span id="funnel-badge" class="ml-auto hidden text-xs bg-emerald-500 text-slate-900 px-1.5 py-0.5 rounded-full font-bold"></span></button>
             <button data-tab="campaigns" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="repeat"></i><span>Chiến dịch</span></button>
             <button data-tab="guests" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="users"></i><span>Khách quen</span></button>
             <button data-tab="referral" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="gift"></i><span>Giới thiệu</span></button>
@@ -173,7 +173,7 @@
             <button data-tab="contentintel" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="sparkles"></i><span>Content Intel</span></button>
             <button data-tab="intents" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="brain-circuit"></i><span>Intent Router</span></button>
             <button data-tab="knowledge-sync" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="database"></i><span>Knowledge Sync</span></button>
-            <button data-tab="funnel-admin" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="trending-down"></i><span>Funnel (raw)</span></button>
+            <button data-tab="funnel-admin" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm" title="Phễu đăng ký subscription: pricing view → plan selected → bill submitted → approved"><i data-lucide="trending-down"></i><span>Phễu đăng ký</span></button>
           </div>
         </div>
 
@@ -1198,7 +1198,7 @@
       <section data-panel="funnel" class="panel hidden">
         <div class="mb-4 max-w-6xl flex items-center justify-between">
           <div>
-            <h2 class="text-2xl font-bold mb-1">🎯 Sales Funnel</h2>
+            <h2 class="text-2xl font-bold mb-1">🎯 Phễu đặt phòng</h2>
             <p class="text-slate-500 text-sm">Conversion funnel, booking leads, handoff tracking của bot FSM.</p>
           </div>
           <div class="flex items-center gap-2">
@@ -2454,7 +2454,7 @@
 
       <!-- FUNNEL (ADMIN) TAB — v24: renamed panel to funnel-admin to fix duplicate data-panel bug -->
       <section data-panel="funnel-admin" class="panel hidden">
-        <h2 class="text-2xl font-bold mb-2">🔻 Growth Funnel (raw)</h2>
+        <h2 class="text-2xl font-bold mb-2">🔻 Phễu đăng ký (subscription)</h2>
         <p class="text-sm text-slate-500 mb-4">Theo dõi từ pricing view → plan selected → bill submitted → approved.</p>
         <div class="flex gap-2 mb-4">
           <select id="funnel-admin-days" class="border rounded px-3 py-2 text-sm">
