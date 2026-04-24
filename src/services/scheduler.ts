@@ -615,6 +615,17 @@ export function startScheduler() {
     }
   });
 
+  // ── v26 Phase A: Vectorize hotels daily 6:30h VN (sau OTA sync, trước generate) ──
+  cron.schedule('30 6 * * *', async () => {
+    try {
+      const { vectorizeAllActiveHotels } = require('./product-auto-post/hotel-vectorizer');
+      const r = await vectorizeAllActiveHotels();
+      console.log('[scheduler] hotel-vectorize:', JSON.stringify(r));
+    } catch (e: any) {
+      console.error('[scheduler] hotel-vectorize error:', e?.message);
+    }
+  }, { timezone: 'Asia/Ho_Chi_Minh' });
+
   // Zalo OA token refresh — v22: cron mỗi 6h (thay vì 20h) + notify admin nếu fail
   //                              Trước đó 20h nhưng nếu miss 1 cycle → 40h → token expire (~25h life).
   cron.schedule('0 */6 * * *', async () => {

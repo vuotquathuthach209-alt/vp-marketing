@@ -90,13 +90,27 @@ export async function generateTodayPlan(): Promise<{
   }
   console.log(`[auto-post] picked hotel #${hotel.hotel_id} "${hotel.name}" with image ${image.source}`);
 
+  // 1.5. v26 Phase A: Vector search distinctive aspects (cho caption gen)
+  let distinctiveContext: string | undefined;
+  try {
+    const { getDistinctiveAspects } = require('./hotel-vectorizer');
+    distinctiveContext = (await getDistinctiveAspects(hotel.hotel_id)) || undefined;
+    if (distinctiveContext) {
+      console.log(`[auto-post] distinctive context: ${distinctiveContext.slice(0, 150)}`);
+    }
+  } catch (e: any) {
+    console.warn('[auto-post] vector distinctive fail (non-fatal):', e?.message);
+  }
+
   // 3. Pick angle
   const angle = pickAngleSmart(hotel.hotel_id);
   console.log(`[auto-post] angle=${angle} for hotel=${hotel.hotel_id}`);
 
-  // 4. Generate caption
+  // 4. Generate caption (với distinctive context nếu có)
+  const imageCtx = image.room_type ? `Phòng: ${image.room_type}` : undefined;
+  const ctxParts = [imageCtx, distinctiveContext].filter(Boolean);
   const gen = await generateCaption(hotel, angle, {
-    imageContext: image.room_type ? `Phòng: ${image.room_type}` : undefined,
+    imageContext: ctxParts.length ? ctxParts.join(' | ') : undefined,
   });
   if (!gen) {
     return { ok: false, reason: 'caption_gen_failed', date, hotel, image, angle };
@@ -224,15 +238,13 @@ export async function publishTodayPlan(): Promise<{
   }
 
   // Download image
-  const localFilename = await downloadImageToMedia(plan.image_url);
+  let localFilename = await downloadImageToMedia(plan.image_url);
   if (!localFilename) {
-    // Fallback: try external URL
     console.warn('[auto-post] local download failed, trying external URL publish');
   }
 
   let mediaId: number | null = null;
   if (localFilename) {
-    // Insert into media table (actual schema: filename, mime_type, size, source, prompt, created_at, hotel_id)
     const now = Date.now();
     try {
       const fs = require('fs');
@@ -247,7 +259,7 @@ export async function publishTodayPlan(): Promise<{
       mediaId = Number(r.lastInsertRowid);
     } catch (e: any) {
       console.warn('[auto-post] media insert fail:', e?.message);
-      localFilename = null;        // fallback to text-only
+      localFilename = null;
     }
   }
 

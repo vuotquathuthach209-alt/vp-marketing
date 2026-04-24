@@ -108,6 +108,7 @@
           <div class="nav-group-body space-y-0.5">
             <button data-tab="compose" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="pen-line"></i><span>Tạo bài</span></button>
             <button data-tab="autopilot" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="rocket"></i><span>Autopilot</span></button>
+            <button data-tab="auto-post" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="calendar-clock"></i><span>Auto Post Daily</span><span class="ml-auto text-[9px] bg-emerald-500 text-slate-900 px-1 py-0.5 rounded font-bold">v25</span></button>
             <button data-tab="posts" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="list"></i><span>Danh sách bài</span></button>
             <button data-tab="media" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="image"></i><span>Thư viện media</span></button>
             <button data-tab="news" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="newspaper"></i><span>News → Post</span><span id="news-badge" class="ml-auto hidden text-xs bg-indigo-500 text-white px-1.5 py-0.5 rounded-full font-bold"></span></button>
@@ -250,6 +251,48 @@
       </section>
 
       <!-- COMPOSE TAB -->
+      <!-- v25: AUTO POST DAILY (Product-First) -->
+      <section data-panel="auto-post" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-2">📅 Auto Post Daily — Product-First</h2>
+        <p class="text-sm text-slate-500 mb-6">Mỗi ngày 1 bài product spotlight. Dedup ảnh 90d, cooldown hotel 14d, rotate 5 angles.</p>
+
+        <!-- Quick actions -->
+        <div class="flex gap-2 mb-6 flex-wrap">
+          <button onclick="autoPostGenerate()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700">🎯 Generate Today</button>
+          <button onclick="autoPostPublish()" class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-emerald-700">🚀 Publish Now</button>
+          <button onclick="autoPostVectorize()" class="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-amber-600">🧠 Vectorize All</button>
+          <button onclick="loadAutoPost()" class="bg-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-300">🔄 Refresh</button>
+        </div>
+
+        <!-- Upcoming plan -->
+        <div class="bg-white rounded-xl shadow p-5 mb-6">
+          <h3 class="font-bold mb-3">📋 7-day plan</h3>
+          <div id="auto-post-plan" class="text-sm">Loading...</div>
+        </div>
+
+        <!-- Candidates with scoring -->
+        <div class="bg-white rounded-xl shadow p-5 mb-6">
+          <h3 class="font-bold mb-3">🏨 Hotel candidates (scored)</h3>
+          <div id="auto-post-candidates" class="text-sm">Loading...</div>
+        </div>
+
+        <!-- History -->
+        <div class="bg-white rounded-xl shadow p-5 mb-6">
+          <h3 class="font-bold mb-3">📜 History (last 30)</h3>
+          <div id="auto-post-history" class="text-sm">Loading...</div>
+        </div>
+
+        <!-- Semantic search -->
+        <div class="bg-white rounded-xl shadow p-5">
+          <h3 class="font-bold mb-3">🔎 Semantic Hotel Search (v26 Phase A)</h3>
+          <div class="flex gap-2 mb-3">
+            <input id="auto-post-semq" type="text" placeholder='Nhập query tự nhiên: "chỗ yên tĩnh gần sân bay"' class="flex-1 border rounded px-3 py-2 text-sm" />
+            <button onclick="autoPostSemSearch()" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm">Search</button>
+          </div>
+          <div id="auto-post-semresults" class="text-sm"></div>
+        </div>
+      </section>
+
       <!-- AUTOPILOT TAB -->
       <section data-panel="autopilot" class="panel hidden">
         <h2 class="text-2xl font-bold mb-6">🤖 Marketing Autopilot</h2>

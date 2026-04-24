@@ -125,6 +125,7 @@ function switchTab(tab) {
   if (tab === 'bot-control') loadBotStatus();
   if (tab === 'funnel') loadFunnel();
   if (tab === 'funnel-admin') loadFunnelAnalytics();    // v24: split from 'funnel'
+  if (tab === 'auto-post') loadAutoPost();               // v25 product daily
   if (tab === 'intents') loadIntents();
   if (tab === 'revenue') loadRevenue();
   if (tab === 'knowledge-sync') loadKnowledgeSync();
@@ -203,6 +204,107 @@ if (document.readyState === 'loading') {
 } else {
   initNavGroups();
 }
+
+// ====== v25 Auto Post Daily ======
+async function loadAutoPost() {
+  try {
+    const [plan, cand, hist] = await Promise.all([
+      api('/auto-post/plan?days=7'),
+      api('/auto-post/candidates'),
+      api('/auto-post/history?limit=30'),
+    ]);
+
+    // Plan
+    const planHtml = (plan.items && plan.items.length) ? `
+      <table class="w-full text-sm border-collapse">
+        <thead><tr class="border-b text-xs text-slate-500">
+          <th class="text-left py-2">Ngày</th><th class="text-left">Hotel</th>
+          <th class="text-left">Angle</th><th class="text-left">Status</th>
+          <th class="text-left">Caption preview</th>
+        </tr></thead><tbody>
+        ${plan.items.map(p => `<tr class="border-b">
+          <td class="py-2 font-mono text-xs">${p.scheduled_date}</td>
+          <td>${p.hotel_id}</td>
+          <td><span class="px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 text-xs">${p.angle}</span></td>
+          <td><span class="px-2 py-0.5 rounded ${p.status === 'published' ? 'bg-emerald-100 text-emerald-700' : p.status === 'skipped' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-700'} text-xs">${p.status}</span></td>
+          <td class="text-xs text-slate-600">${(p.caption_draft || '').slice(0, 100)}...</td>
+        </tr>`).join('')}
+      </tbody></table>
+    ` : '<p class="text-slate-400">Chưa có plan. Click "Generate Today" để tạo.</p>';
+    document.getElementById('auto-post-plan').innerHTML = planHtml;
+
+    // Candidates
+    const eligHtml = (cand.eligible || []).slice(0, 10).map(c => `
+      <div class="flex justify-between py-1 border-b border-slate-100 text-xs">
+        <span><strong>#${c.hotel_id}</strong> ${c.name}</span>
+        <span class="font-mono">
+          score=<strong class="text-emerald-600">${c.score}</strong>
+          ⭐${c.rating?.toFixed(1) || '?'} 📸${c.image_count}
+          ${c.last_posted_days_ago === Infinity ? '(chưa post)' : `(${Math.floor(c.last_posted_days_ago)}d ago)`}
+        </span>
+      </div>`).join('');
+    const rejHtml = (cand.rejected || []).map(c => `
+      <div class="text-xs text-red-500 py-1">✗ #${c.hotel_id} ${c.name}: ${c.reject_reason}</div>
+    `).join('');
+    document.getElementById('auto-post-candidates').innerHTML = `
+      <div class="mb-3"><strong>Eligible (${(cand.eligible || []).length})</strong>${eligHtml}</div>
+      <div><strong class="text-red-500">Rejected (${(cand.rejected || []).length})</strong>${rejHtml}</div>
+    `;
+
+    // History
+    const histHtml = (hist.items && hist.items.length) ? `
+      <table class="w-full text-sm border-collapse">
+        <thead><tr class="border-b text-xs text-slate-500">
+          <th class="text-left py-2">Ngày</th><th class="text-left">Hotel</th>
+          <th class="text-left">Angle</th><th class="text-left">FB Post</th><th class="text-left">Status</th>
+        </tr></thead><tbody>
+        ${hist.items.map(h => `<tr class="border-b">
+          <td class="py-2 font-mono text-xs">${h.scheduled_date}</td>
+          <td class="text-xs">${h.hotel_name || h.hotel_id}</td>
+          <td><span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 text-xs">${h.angle_used}</span></td>
+          <td class="text-xs font-mono">${h.fb_post_id ? '<a target="_blank" class="text-blue-600" href="https://facebook.com/' + h.fb_post_id + '">' + h.fb_post_id.slice(-10) + '</a>' : '-'}</td>
+          <td><span class="px-1.5 py-0.5 rounded ${h.status === 'published' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100'} text-xs">${h.status}</span></td>
+        </tr>`).join('')}
+      </tbody></table>
+    ` : '<p class="text-slate-400">Chưa có history.</p>';
+    document.getElementById('auto-post-history').innerHTML = histHtml;
+  } catch (e) {
+    console.error('loadAutoPost:', e);
+  }
+}
+
+window.autoPostGenerate = async () => {
+  if (!confirm('Generate plan cho hôm nay? Sẽ pick hotel + image + AI caption.')) return;
+  const r = await api('/auto-post/generate', { method: 'POST' });
+  alert(r.ok ? `✅ Generated plan #${r.plan_id}\nHotel: ${r.hotel?.name}\nAngle: ${r.angle}` : `❌ ${r.reason}`);
+  loadAutoPost();
+};
+
+window.autoPostPublish = async () => {
+  if (!confirm('PUBLISH plan hôm nay lên FB + IG + Zalo NGAY?')) return;
+  const r = await api('/auto-post/publish', { method: 'POST' });
+  alert(r.ok ? `✅ Published post #${r.post_id}\nFB: ${r.fb_post_id}` : `❌ ${r.reason}`);
+  loadAutoPost();
+};
+
+window.autoPostVectorize = async () => {
+  if (!confirm('Compute vector embeddings cho tất cả hotels? Mất ~30s (Gemini API).')) return;
+  const r = await api('/auto-post/vectorize', { method: 'POST' });
+  alert(`Total=${r.total} computed=${r.computed} cached=${r.cached} failed=${r.failed}`);
+};
+
+window.autoPostSemSearch = async () => {
+  const q = document.getElementById('auto-post-semq').value.trim();
+  if (!q) return;
+  const r = await api('/auto-post/semantic-search?q=' + encodeURIComponent(q));
+  const html = (r.results || []).map((x, i) => `
+    <div class="border-b py-2">
+      <strong>${i + 1}. ${x.name}</strong> (hotel #${x.hotel_id})
+      <span class="ml-2 text-xs text-slate-500">similarity: <span class="font-mono text-emerald-600">${(x.similarity * 100).toFixed(1)}%</span></span>
+    </div>
+  `).join('');
+  document.getElementById('auto-post-semresults').innerHTML = html || '<p class="text-slate-400">Không tìm thấy hotel nào match.</p>';
+};
 
 // ====== Pages (select dropdown) ======
 async function loadPages() {

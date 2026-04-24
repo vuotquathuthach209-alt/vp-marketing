@@ -132,4 +132,39 @@ router.delete('/blacklist/:fp', (req: AuthRequest, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+/* ═══════════════════════════════════════════
+   v26 Phase A: Vector endpoints
+   ═══════════════════════════════════════════ */
+
+/** POST /api/auto-post/vectorize — manual trigger vectorize all */
+router.post('/vectorize', async (_req: AuthRequest, res) => {
+  try {
+    const { vectorizeAllActiveHotels } = require('../services/product-auto-post/hotel-vectorizer');
+    const r = await vectorizeAllActiveHotels();
+    res.json(r);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/** GET /api/auto-post/semantic-search?q=... — natural language hotel search */
+router.get('/semantic-search', async (req: AuthRequest, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (!q) return res.status(400).json({ error: 'missing q' });
+    const { semanticSearchHotels } = require('../services/product-auto-post/hotel-vectorizer');
+    const results = await semanticSearchHotels(q, 10);
+    res.json({ query: q, results });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/** GET /api/auto-post/similar/:hotelId — find N similar hotels by vector */
+router.get('/similar/:hotelId', async (req: AuthRequest, res) => {
+  try {
+    const id = parseInt(String(req.params.hotelId), 10);
+    const { findSimilarHotels, getDistinctiveAspects } = require('../services/product-auto-post/hotel-vectorizer');
+    const similar = await findSimilarHotels(id, 5);
+    const distinctive = await getDistinctiveAspects(id);
+    res.json({ hotel_id: id, similar, distinctive });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 export default router;
