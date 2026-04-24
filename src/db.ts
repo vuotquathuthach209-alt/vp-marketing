@@ -1822,12 +1822,41 @@ CREATE INDEX IF NOT EXISTS idx_sel_template ON agentic_template_selections(templ
 CREATE TABLE IF NOT EXISTS agentic_template_tracking (
   sender_id TEXT PRIMARY KEY,
   last_template_id TEXT NOT NULL,
+  last_template_variant TEXT,             -- v27 Phase 5: track which A/B variant was picked
   last_template_category TEXT,
   last_sent_at INTEGER NOT NULL,
-  conversion_marked INTEGER DEFAULT 0
+  conversion_marked INTEGER DEFAULT 0,
+  click_tracked INTEGER DEFAULT 0
 );
+
+-- v27 Phase 5: A/B variants — multiple content versions per template, weighted random pick
+CREATE TABLE IF NOT EXISTS agentic_template_variants (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  template_id TEXT NOT NULL,              -- parent template
+  variant_key TEXT NOT NULL,              -- 'A' | 'B' | 'C' ...
+  content TEXT NOT NULL,
+  quick_replies TEXT,                     -- JSON array
+  weight REAL DEFAULT 0.5,                -- 0-1, weighted random
+  active INTEGER DEFAULT 1,
+  impressions INTEGER DEFAULT 0,
+  clicks INTEGER DEFAULT 0,               -- Quick-reply click count
+  conversions INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE(template_id, variant_key)
+);
+CREATE INDEX IF NOT EXISTS idx_variant_template ON agentic_template_variants(template_id, active);
 `);
-console.log('[db] v27 agentic_templates + suggestions + selections tables ready (DB-driven template engine)');
+console.log('[db] v27 agentic_templates + suggestions + selections + variants tables ready (DB-driven template engine)');
+
+// v27 Phase 5: Safe additive columns for existing rows
+try {
+  const hasClicks = db.prepare(`PRAGMA table_info(agentic_templates)`).all().some((r: any) => r.name === 'clicks');
+  if (!hasClicks) {
+    db.exec(`ALTER TABLE agentic_templates ADD COLUMN clicks INTEGER DEFAULT 0`);
+    console.log('[db] added clicks column to agentic_templates');
+  }
+} catch {}
 
 // ═══════════════════════════════════════════════════════════
 // v23 — intent_logs: log mọi message qua Gemini Intent Classifier

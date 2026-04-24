@@ -17,7 +17,7 @@
 import { Router } from 'express';
 import { authMiddleware, superadminOnly, AuthRequest } from '../middleware/auth';
 import { db } from '../db';
-import { invalidateCache, renderString, listAllTemplates, loadTemplates } from '../services/agentic/template-engine';
+import { invalidateCache, renderString, listAllTemplates, loadTemplates, computeHealthScore } from '../services/agentic/template-engine';
 import { DEFAULT_TEMPLATES, seedTemplates } from '../services/agentic/template-seeder';
 import {
   runTemplateSuggestionAnalysis,
@@ -26,6 +26,7 @@ import {
   approveSuggestion,
   rejectSuggestion,
 } from '../services/agentic/template-suggester';
+import { getVariants, analyzeWinner, promoteWinner } from '../services/agentic/template-variants';
 
 const router = Router();
 router.use(authMiddleware);
@@ -540,6 +541,175 @@ router.get('/analytics/overview', (_req, res) => {
     `).get();
 
     res.json({ success: true, data: { top_hits: topHits, totals } });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// A/B VARIANTS (v27 Phase 5)
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * GET /api/agentic-templates/:id/variants
+ * List all variants (active + inactive) for a template + winner analysis.
+ */
+router.get('/:id/variants', (req, res) => {
+  try {
+    const rows = db.prepare(`
+      SELECT id, variant_key, content, quick_replies, weight, active, impressions, clicks, conversions, created_at, updated_at
+      FROM agentic_template_variants
+      WHERE template_id = ?
+      ORDER BY variant_key ASC
+    `).all(req.params.id).map((r: any) => ({
+      ...r,
+      quick_replies: r.quick_replies ? JSON.parse(r.quick_replies) : null,
+    }));
+
+    const analysis = analyzeWinner(req.params.id);
+    res.json({ success: true, data: rows, analysis });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * POST /api/agentic-templates/:id/variants
+ * Create new variant.
+ * Body: { variant_key, content, quick_replies?, weight? }
+ */
+router.post('/:id/variants', superadminOnly, (req: AuthRequest, res) => {
+  try {
+    const { variant_key, content, quick_replies, weight } = req.body || {};
+    if (!variant_key || !content) {
+      return res.status(400).json({ success: false, error: 'variant_key + content bắt buộc' });
+    }
+    if (!/^[A-Za-z0-9_]+$/.test(variant_key)) {
+      return res.status(400).json({ success: false, error: 'variant_key chỉ chứa A-Z 0-9 _' });
+    }
+
+    // Check parent exists
+    const parent = db.prepare(`SELECT id FROM agentic_templates WHERE id = ?`).get(req.params.id);
+    if (!parent) return res.status(404).json({ success: false, error: 'Template không tồn tại' });
+
+    const existing = db.prepare(`SELECT id FROM agentic_template_variants WHERE template_id = ? AND variant_key = ?`)
+      .get(req.params.id, variant_key);
+    if (existing) return res.status(409).json({ success: false, error: 'Variant đã tồn tại' });
+
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO agentic_template_variants
+        (template_id, variant_key, content, quick_replies, weight, active, impressions, clicks, conversions, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 1, 0, 0, 0, ?, ?)
+    `).run(
+      req.params.id,
+      variant_key,
+      content,
+      quick_replies ? JSON.stringify(quick_replies) : null,
+      Number(weight) || 0.5,
+      now, now,
+    );
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * PUT /api/agentic-templates/:id/variants/:key
+ * Update variant content/weight/active.
+ */
+router.put('/:id/variants/:key', superadminOnly, (req: AuthRequest, res) => {
+  try {
+    const { content, quick_replies, weight, active } = req.body || {};
+    const now = Date.now();
+    const r = db.prepare(`
+      UPDATE agentic_template_variants
+      SET content = COALESCE(?, content),
+          quick_replies = CASE WHEN ? IS NULL THEN quick_replies ELSE ? END,
+          weight = COALESCE(?, weight),
+          active = COALESCE(?, active),
+          updated_at = ?
+      WHERE template_id = ? AND variant_key = ?
+    `).run(
+      content ?? null,
+      quick_replies === undefined ? null : 'x',
+      quick_replies === undefined ? null : JSON.stringify(quick_replies),
+      weight ?? null,
+      active ?? null,
+      now,
+      req.params.id, req.params.key,
+    );
+    if (r.changes === 0) return res.status(404).json({ success: false, error: 'Not found' });
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * DELETE /api/agentic-templates/:id/variants/:key
+ * Hard delete variant (no soft delete — để sạch DB).
+ */
+router.delete('/:id/variants/:key', superadminOnly, (req: AuthRequest, res) => {
+  try {
+    const r = db.prepare(`DELETE FROM agentic_template_variants WHERE template_id = ? AND variant_key = ?`)
+      .run(req.params.id, req.params.key);
+    if (r.changes === 0) return res.status(404).json({ success: false, error: 'Not found' });
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * POST /api/agentic-templates/:id/variants/:key/promote
+ * Promote winner → copy winner content to parent, deactivate all variants.
+ */
+router.post('/:id/variants/:key/promote', superadminOnly, (req: AuthRequest, res) => {
+  try {
+    const id = String(req.params.id);
+    const key = String(req.params.key);
+    const r = promoteWinner(id, key, req.user?.email || 'admin');
+    if (!r.success) return res.status(400).json(r);
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// HEALTH SCORE (v27 Phase 5)
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * GET /api/agentic-templates/:id/health
+ */
+router.get('/:id/health', (req, res) => {
+  try {
+    const h = computeHealthScore(req.params.id);
+    if (!h) return res.status(404).json({ success: false, error: 'Template not found' });
+    res.json({ success: true, data: h });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * GET /api/agentic-templates/analytics/health-overview
+ * Health score cho TẤT CẢ templates active → color-coded admin view.
+ */
+router.get('/analytics/health-overview', (_req, res) => {
+  try {
+    const templates = db.prepare(`SELECT id FROM agentic_templates WHERE active = 1`).all() as any[];
+    const scores = templates.map((t: any) => computeHealthScore(t.id)).filter(Boolean);
+    const summary = {
+      green: scores.filter(s => s!.tier === 'green').length,
+      yellow: scores.filter(s => s!.tier === 'yellow').length,
+      red: scores.filter(s => s!.tier === 'red').length,
+      new: scores.filter(s => s!.tier === 'new').length,
+    };
+    res.json({ success: true, data: scores, summary });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e?.message });
   }

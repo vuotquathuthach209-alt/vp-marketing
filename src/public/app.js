@@ -7002,6 +7002,155 @@ document.getElementById('fc-reset')?.addEventListener('click', async () => {
 let _tplList = [];
 let _tplEditing = null;   // current editing template id (null = create new)
 
+// ═══════════════════════════════════════════════════════════
+// A/B VARIANTS (v27 Phase 5)
+// ═══════════════════════════════════════════════════════════
+
+let _varCurrentId = null;
+
+async function openVariantsModal(templateId) {
+  _varCurrentId = templateId;
+  document.getElementById('var-template-id').textContent = templateId;
+  document.getElementById('var-new-key').value = '';
+  document.getElementById('var-new-content').value = '';
+  document.getElementById('var-new-qr').value = '';
+  document.getElementById('var-new-weight').value = '0.5';
+  document.getElementById('tpl-variants-modal').classList.remove('hidden');
+  await reloadVariants();
+}
+
+async function reloadVariants() {
+  if (!_varCurrentId) return;
+  try {
+    const r = await api('/agentic-templates/' + encodeURIComponent(_varCurrentId) + '/variants');
+    if (!r?.success) return;
+
+    const variants = r.data || [];
+    const analysis = r.analysis || {};
+
+    // Winner banner
+    const banner = document.getElementById('var-winner-banner');
+    if (analysis.enough_data && analysis.winner && analysis.confidence !== 'low') {
+      const color = analysis.confidence === 'high' ? 'emerald' : 'amber';
+      banner.className = `p-3 rounded border border-${color}-300 bg-${color}-50`;
+      banner.innerHTML = `
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <div class="font-semibold text-${color}-800">🏆 Winner: variant <strong>${analysis.winner}</strong> (confidence: ${analysis.confidence})</div>
+            <div class="text-xs text-${color}-700 mt-1">
+              ${analysis.winner}: ${((analysis.winner_conv_rate || 0) * 100).toFixed(1)}% conv rate
+              vs ${analysis.runner_up}: ${((analysis.runner_up_conv_rate || 0) * 100).toFixed(1)}%
+            </div>
+          </div>
+          <button onclick="promoteVariant('${analysis.winner}')" class="px-3 py-1.5 bg-${color}-600 hover:bg-${color}-700 text-white rounded text-sm font-medium">👑 Promote winner</button>
+        </div>`;
+      banner.classList.remove('hidden');
+    } else if (variants.length >= 2) {
+      banner.className = 'p-3 rounded border border-sky-300 bg-sky-50';
+      banner.innerHTML = `<div class="text-sm text-sky-800">
+        ⏳ Đang thu thập data — cần ít nhất 50 impressions tổng để tin cậy.
+        Hiện: ${variants.reduce((s, v) => s + v.impressions, 0)} impressions.
+      </div>`;
+      banner.classList.remove('hidden');
+    } else {
+      banner.classList.add('hidden');
+    }
+
+    // Variant list
+    document.getElementById('var-list').innerHTML = variants.length === 0
+      ? '<div class="text-center text-slate-400 text-sm p-4">Chưa có variants. Tạo B / C / D để A/B test.</div>'
+      : variants.map(v => {
+        const convRate = v.impressions > 0 ? (v.conversions / v.impressions * 100).toFixed(1) : '—';
+        const ctr = v.impressions > 0 ? (v.clicks / v.impressions * 100).toFixed(1) : '—';
+        return `
+        <div class="border border-slate-200 rounded-lg p-3 ${!v.active ? 'opacity-50' : ''}">
+          <div class="flex items-start justify-between gap-3 mb-2">
+            <div class="flex items-center gap-2">
+              <span class="text-lg font-bold bg-violet-100 text-violet-700 px-3 py-1 rounded">${v.variant_key}</span>
+              <span class="text-xs text-slate-500">weight ${v.weight}</span>
+              ${!v.active ? '<span class="text-xs bg-slate-300 text-slate-700 px-1.5 py-0.5 rounded">INACTIVE</span>' : ''}
+            </div>
+            <div class="flex gap-1">
+              <button onclick="toggleVariant('${v.variant_key}', ${v.active ? 0 : 1})" class="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-xs">${v.active ? '🚫 Tắt' : '✓ Bật'}</button>
+              <button onclick="deleteVariant('${v.variant_key}')" class="px-2 py-1 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded text-xs">🗑</button>
+            </div>
+          </div>
+          <div class="grid grid-cols-4 gap-2 text-center mb-2">
+            <div class="bg-sky-50 rounded p-2"><div class="text-xs text-sky-600">Impressions</div><div class="font-bold text-sky-700">${v.impressions}</div></div>
+            <div class="bg-violet-50 rounded p-2"><div class="text-xs text-violet-600">Clicks</div><div class="font-bold text-violet-700">${v.clicks} (${ctr}%)</div></div>
+            <div class="bg-emerald-50 rounded p-2"><div class="text-xs text-emerald-600">Conversions</div><div class="font-bold text-emerald-700">${v.conversions}</div></div>
+            <div class="bg-amber-50 rounded p-2"><div class="text-xs text-amber-600">Conv rate</div><div class="font-bold text-amber-700">${convRate}%</div></div>
+          </div>
+          <details>
+            <summary class="cursor-pointer text-xs text-slate-500">Xem content</summary>
+            <pre class="bg-slate-50 p-2 mt-1 rounded whitespace-pre-wrap text-sm font-normal">${escapeHtml(v.content)}</pre>
+          </details>
+        </div>
+      `;}).join('');
+  } catch (e) { console.error('[variants] load fail', e); }
+}
+
+async function createVariant() {
+  if (!_varCurrentId) return;
+  try {
+    const key = document.getElementById('var-new-key').value.trim().toUpperCase();
+    const content = document.getElementById('var-new-content').value;
+    const weight = Number(document.getElementById('var-new-weight').value) || 0.5;
+    if (!key || !content) return alert('Key + content bắt buộc');
+    if (!/^[A-Z0-9_]+$/.test(key)) return alert('Key chỉ chứa A-Z 0-9 _');
+
+    const body = { variant_key: key, content, weight };
+    const qrRaw = document.getElementById('var-new-qr').value.trim();
+    if (qrRaw) {
+      try { body.quick_replies = JSON.parse(qrRaw); } catch { return alert('QR JSON invalid'); }
+    }
+
+    const r = await api('/agentic-templates/' + encodeURIComponent(_varCurrentId) + '/variants', {
+      method: 'POST', body: JSON.stringify(body),
+    });
+    if (r?.success) {
+      alert('✅ Đã tạo variant ' + key);
+      document.getElementById('var-new-key').value = '';
+      document.getElementById('var-new-content').value = '';
+      document.getElementById('var-new-qr').value = '';
+      await reloadVariants();
+    } else {
+      alert('Lỗi: ' + (r?.error || 'unknown'));
+    }
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function toggleVariant(key, active) {
+  try {
+    await api(`/agentic-templates/${encodeURIComponent(_varCurrentId)}/variants/${key}`, {
+      method: 'PUT', body: JSON.stringify({ active }),
+    });
+    await reloadVariants();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function deleteVariant(key) {
+  if (!confirm('Xoá variant ' + key + '? Stats sẽ mất.')) return;
+  try {
+    await api(`/agentic-templates/${encodeURIComponent(_varCurrentId)}/variants/${key}`, { method: 'DELETE' });
+    await reloadVariants();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function promoteVariant(key) {
+  if (!confirm(`Promote variant ${key} → parent template? Content sẽ được copy vào parent, các variants khác sẽ bị archive.`)) return;
+  try {
+    const r = await api(`/agentic-templates/${encodeURIComponent(_varCurrentId)}/variants/${key}/promote`, { method: 'POST' });
+    if (r?.success) {
+      alert(`🏆 Đã promote variant ${key} → parent template`);
+      document.getElementById('tpl-variants-modal').classList.add('hidden');
+      await loadAgenticTemplates();
+    } else {
+      alert('Lỗi: ' + (r?.error || 'unknown'));
+    }
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
 async function cloneTpl(id) {
   const newId = prompt('ID mới (a-z, 0-9, _):', id + '_copy');
   if (!newId) return;
@@ -7182,6 +7331,15 @@ async function loadAgenticTemplates() {
     const daysSel = document.getElementById('tpl-chart-days');
     await loadTplChart(Number(daysSel?.value) || 7);
 
+    // Load health scores (parallel with list)
+    try {
+      const h = await api('/agentic-templates/analytics/health-overview');
+      if (h?.success) {
+        _tplHealth = {};
+        for (const s of (h.data || [])) _tplHealth[s.template_id] = s;
+      }
+    } catch {}
+
     // Load list
     const r = await api('/agentic-templates');
     if (r?.success) {
@@ -7192,6 +7350,8 @@ async function loadAgenticTemplates() {
     console.error('[templates] load fail', e);
   }
 }
+
+let _tplHealth = {};  // id → health score
 
 function renderAgenticTemplatesTable() {
   const cat = document.getElementById('tpl-filter-category').value;
@@ -7204,33 +7364,45 @@ function renderAgenticTemplatesTable() {
   if (!showInactive) rows = rows.filter(r => r.active);
 
   const catBadge = { discovery: 'sky', gathering: 'violet', info: 'emerald', objection: 'amber', decision: 'indigo', handoff: 'rose', misc: 'slate' };
+  const tierBadge = {
+    green: { color: 'emerald', icon: '🟢', label: 'Khoẻ' },
+    yellow: { color: 'amber', icon: '🟡', label: 'Cần chú ý' },
+    red: { color: 'rose', icon: '🔴', label: 'Cần review' },
+    new: { color: 'sky', icon: '🆕', label: 'Mới' },
+  };
 
   document.getElementById('tpl-table').innerHTML = rows.length === 0
     ? '<div class="p-4 text-center text-slate-400 text-sm">Không có template khớp filter.</div>'
-    : rows.map(r => `
+    : rows.map(r => {
+      const h = _tplHealth[r.id];
+      const tb = h ? tierBadge[h.tier] : null;
+      return `
       <div class="p-3 hover:bg-slate-50 flex items-start gap-3 ${!r.active ? 'opacity-50' : ''}">
         <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 mb-1">
+          <div class="flex items-center gap-2 mb-1 flex-wrap">
             <code class="text-xs font-mono bg-slate-100 px-1.5 py-0.5 rounded">${r.id}</code>
             <span class="text-[10px] bg-${catBadge[r.category] || 'slate'}-100 text-${catBadge[r.category] || 'slate'}-700 px-1.5 py-0.5 rounded font-semibold uppercase">${r.category}</span>
+            ${tb ? `<span class="text-[10px] bg-${tb.color}-100 text-${tb.color}-700 px-1.5 py-0.5 rounded font-semibold" title="Score: ${h.score}">${tb.icon} ${tb.label}</span>` : ''}
             ${!r.active ? '<span class="text-[10px] bg-slate-300 text-slate-700 px-1.5 py-0.5 rounded">INACTIVE</span>' : ''}
             ${r.hotel_id > 0 ? `<span class="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">hotel #${r.hotel_id}</span>` : ''}
           </div>
           <div class="text-sm text-slate-700 mb-1">${escapeHtml(r.description || '(no description)')}</div>
           <div class="text-xs text-slate-400 line-clamp-2 font-normal">${escapeHtml((r.content || '').substring(0, 160))}${(r.content || '').length > 160 ? '…' : ''}</div>
           <div class="text-xs text-slate-400 mt-1">
-            📊 ${r.hits || 0} hits · ${r.conversions || 0} conv
+            📊 ${r.hits || 0} hits · ${r.clicks || 0} clicks · ${r.conversions || 0} conv
+            ${h ? `· CVR ${(h.metrics.conv_rate * 100).toFixed(1)}%` : ''}
             ${r.last_used_at ? '· last: ' + new Date(r.last_used_at).toLocaleString('vi-VN') : ''}
             · v${r.version}
           </div>
         </div>
         <div class="flex gap-1">
           <button onclick="openTplEditor('${r.id}')" class="px-2 py-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded text-xs">✎ Sửa</button>
+          <button onclick="openVariantsModal('${r.id}')" class="px-2 py-1 bg-violet-100 hover:bg-violet-200 text-violet-700 rounded text-xs" title="A/B variants">🅰🅱</button>
           <button onclick="cloneTpl('${r.id}')" class="px-2 py-1 bg-sky-100 hover:bg-sky-200 text-sky-700 rounded text-xs" title="Nhân bản">🔁</button>
           <button onclick="deleteTpl('${r.id}')" class="px-2 py-1 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded text-xs">${r.active ? '🚫 Tắt' : '✓ Bật'}</button>
         </div>
       </div>
-    `).join('');
+    `;}).join('');
 }
 
 function escapeHtml(s) {
@@ -7363,6 +7535,44 @@ async function resetTplToDefault() {
     closeTplModal();
     await loadAgenticTemplates();
   } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function showTplDebugSelections() {
+  if (!_tplEditing) return;
+  try {
+    const r = await api('/agentic-templates/' + encodeURIComponent(_tplEditing) + '/selections');
+    if (!r?.success) return;
+
+    const html = (r.data || []).map(row => {
+      const candidates = (row.candidates || []).map(c =>
+        `<code class="${c.id === _tplEditing ? 'bg-emerald-100 text-emerald-700 font-bold' : 'bg-slate-100 text-slate-600'} px-1 rounded text-[10px] mr-1">${c.id}:${c.score}</code>`
+      ).join('');
+      return `
+        <div class="border-b py-2">
+          <div class="text-xs text-slate-500">👤 ${row.sender_id} · ${new Date(row.created_at).toLocaleString('vi-VN')} · intent=${row.intent} · turn=${row.turn_number}</div>
+          <div class="mt-1">Candidates: ${candidates || '(none)'}</div>
+          <div class="text-xs text-slate-400">Confidence: ${row.confidence_score}</div>
+        </div>
+      `;
+    }).join('');
+
+    const h = computeHealthLocal(_tplEditing);
+
+    const w = window.open('', '_blank', 'width=800,height=700');
+    w.document.write(`
+      <html><head><title>Debug ${_tplEditing}</title>
+        <style>body{font-family:sans-serif;padding:10px;max-width:800px}code{font-family:monospace}details{margin-bottom:10px}</style>
+      </head><body>
+        <h3>🔍 Debug: ${escapeHtml(_tplEditing)}</h3>
+        <p><strong>Last ${r.data?.length || 0} selections</strong> (lý do bot chọn template này, và candidates thay thế)</p>
+        ${html || '<p>Chưa có selection log. Template chưa fire lần nào.</p>'}
+      </body></html>
+    `);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+function computeHealthLocal(id) {
+  return _tplHealth[id] || null;
 }
 
 async function showTplHistory() {
@@ -7624,6 +7834,7 @@ document.addEventListener('DOMContentLoaded', () => {
     byId('tpl-btn-preview').addEventListener('click', previewTpl);
     byId('tpl-btn-reset').addEventListener('click', resetTplToDefault);
     byId('tpl-btn-history').addEventListener('click', showTplHistory);
+    byId('tpl-btn-debug').addEventListener('click', showTplDebugSelections);
   }
   if (byId('tpl-btn-analyze')) {
     byId('tpl-btn-analyze').addEventListener('click', analyzeTplSuggestions);
@@ -7640,6 +7851,13 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   if (byId('tpl-chart-days')) {
     byId('tpl-chart-days').addEventListener('change', (e) => loadTplChart(Number(e.target.value)));
+  }
+  if (byId('var-modal-close')) {
+    byId('var-modal-close').addEventListener('click', () => {
+      byId('tpl-variants-modal').classList.add('hidden');
+      _varCurrentId = null;
+    });
+    byId('var-btn-create').addEventListener('click', createVariant);
   }
 });
 

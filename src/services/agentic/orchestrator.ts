@@ -27,6 +27,7 @@ import {
   renderTemplateById,
   trackTemplateUse,
   detectAndMarkConversion,
+  detectAndTrackClick,
   logSelection,
   getTemplateById,
 } from './template-engine';
@@ -54,13 +55,24 @@ export async function processMessageAgentic(
 ): Promise<AgenticResult | null> {
   try {
     // ═══════════════════════════════════════════
-    // 0. CONVERSION CHECK — nếu msg này là positive signal sau template gần đây
-    //    → mark conversion cho template đó
+    // 0a. QR CLICK CHECK — nếu msg khớp title của quick_reply → count click
+    //     (phải chạy TRƯỚC conversion check vì click cũng có thể kèm positive signal)
+    // ═══════════════════════════════════════════
+    try {
+      const click = detectAndTrackClick(senderId, msg);
+      if (click.clicked) {
+        console.log(`[agentic] QR click tracked: ${click.template_id}${click.variant_key ? ':' + click.variant_key : ''} button="${click.button}"`);
+      }
+    } catch {}
+
+    // ═══════════════════════════════════════════
+    // 0b. CONVERSION CHECK — nếu msg là positive signal sau template gần đây
+    //     → mark conversion cho template đó (và variant nếu có A/B)
     // ═══════════════════════════════════════════
     try {
       const conv = detectAndMarkConversion(senderId, msg);
       if (conv.converted) {
-        console.log(`[agentic] conversion tracked: ${conv.template_id} (${conv.category})`);
+        console.log(`[agentic] conversion tracked: ${conv.template_id}${conv.variant_key ? ':' + conv.variant_key : ''} (${conv.category})`);
       }
     } catch {}
 
@@ -115,13 +127,16 @@ export async function processMessageAgentic(
       const selResult = selectTemplateWithCandidates(ctx);
       const selected = selResult.best;
       const templateId = selected?.id || (customerName ? 'greeting_returning' : 'greeting_opening');
-      const t = renderTemplate(templateId, { customerName, customerTier, isVip });
+      // Use renderTemplateById for variant attribution (template-library fallback without variant key)
+      const r2 = renderTemplateById(templateId, { customerName, customerTier, isVip });
+      const t = r2 ? { content: r2.content, quick_replies: r2.quick_replies, confidence: r2.confidence } : renderTemplate(templateId, { customerName, customerTier, isVip });
+      const variantKey = r2?.variant_key;
       if (t) {
-        console.log(`[agentic] turn 1 (first-ever) → template ${templateId} (no AI)`);
+        console.log(`[agentic] turn 1 (first-ever) → template ${templateId}${variantKey ? ':' + variantKey : ''} (no AI)`);
 
         // Track + log
         const tplInfo = getTemplateById(templateId);
-        trackTemplateUse(senderId, templateId, tplInfo?.category || 'discovery');
+        trackTemplateUse(senderId, templateId, tplInfo?.category || 'discovery', variantKey);
         logSelection(senderId, hotelId, templateId, ctx, selResult.candidates, t.confidence);
 
         return {
@@ -132,7 +147,7 @@ export async function processMessageAgentic(
           tier_used: 'template',
           handoff_triggered: false,
           cost_estimate: 'free',
-          meta: { template_id: templateId, turn_number: 1, candidates: selResult.candidates },
+          meta: { template_id: templateId, variant_key: variantKey, turn_number: 1, candidates: selResult.candidates },
         };
       }
     }
@@ -238,11 +253,14 @@ export async function processMessageAgentic(
         isVip: customerTier === 'vip',
         topic: subCategory,
       };
-      const t = renderTemplate(finalId, vars);
+      // Use renderTemplateById for variant attribution; fallback to renderTemplate if not found
+      const r2 = renderTemplateById(finalId, vars);
+      const t = r2 ? { content: r2.content, quick_replies: r2.quick_replies, confidence: r2.confidence } : renderTemplate(finalId, vars);
+      const variantKey = r2?.variant_key;
       if (t) {
         // Track + log
         const tplInfo = getTemplateById(finalId);
-        trackTemplateUse(senderId, finalId, tplInfo?.category || 'misc');
+        trackTemplateUse(senderId, finalId, tplInfo?.category || 'misc', variantKey);
         logSelection(senderId, hotelId, finalId, smartCtx, selResult.candidates, t.confidence);
 
         return {
@@ -255,6 +273,7 @@ export async function processMessageAgentic(
           cost_estimate: 'free',
           meta: {
             template_id: finalId,
+            variant_key: variantKey,
             smart_selected: !!smart,
             reasons: safety.confidence.reasons,
             candidates: selResult.candidates,

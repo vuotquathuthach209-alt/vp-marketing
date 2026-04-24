@@ -182,20 +182,40 @@ export function getTemplatesByCategory(category: string): DbTemplate[] {
 
 /**
  * Render template by ID với context.
+ * Phase 5: Nếu có A/B variants active → weighted random pick + track impression.
  * Return null nếu không tìm thấy template.
  */
 export function renderTemplateById(
   id: string,
   ctx: RenderContext = {},
-): { content: string; quick_replies?: Array<{ title: string; payload: string }>; confidence: number; template_id: string } | null {
+): { content: string; quick_replies?: Array<{ title: string; payload: string }>; confidence: number; template_id: string; variant_key?: string } | null {
   const t = getTemplateById(id);
   if (!t) return null;
 
-  // Track hit (fire-and-forget)
+  // Track hit on parent template (fire-and-forget)
   try {
     db.prepare(`UPDATE agentic_templates SET hits = hits + 1, last_used_at = ? WHERE id = ?`).run(Date.now(), id);
   } catch {}
 
+  // Phase 5: Check A/B variants
+  try {
+    const { pickVariant, trackImpression } = require('./template-variants');
+    const variant = pickVariant(id);
+    if (variant) {
+      trackImpression(variant.id);
+      return {
+        content: renderString(variant.content, ctx),
+        quick_replies: variant.quick_replies || t.quick_replies || undefined,
+        confidence: t.confidence,
+        template_id: t.id,
+        variant_key: variant.variant_key,
+      };
+    }
+  } catch (e: any) {
+    console.warn('[template-engine] variant pick err:', e?.message);
+  }
+
+  // Fallback: render parent
   return {
     content: renderString(t.content, ctx),
     quick_replies: t.quick_replies || undefined,
@@ -429,18 +449,21 @@ export function markConversion(templateId: string): void {
 
 /**
  * Track which template was sent to this sender (for later conversion attribution).
+ * Phase 5: variant_key để attribute conversion về đúng A/B variant.
  */
-export function trackTemplateUse(senderId: string, templateId: string, category: string): void {
+export function trackTemplateUse(senderId: string, templateId: string, category: string, variantKey?: string): void {
   try {
     db.prepare(`
-      INSERT INTO agentic_template_tracking (sender_id, last_template_id, last_template_category, last_sent_at, conversion_marked)
-      VALUES (?, ?, ?, ?, 0)
+      INSERT INTO agentic_template_tracking (sender_id, last_template_id, last_template_variant, last_template_category, last_sent_at, conversion_marked, click_tracked)
+      VALUES (?, ?, ?, ?, ?, 0, 0)
       ON CONFLICT(sender_id) DO UPDATE SET
         last_template_id = excluded.last_template_id,
+        last_template_variant = excluded.last_template_variant,
         last_template_category = excluded.last_template_category,
         last_sent_at = excluded.last_sent_at,
-        conversion_marked = 0
-    `).run(senderId, templateId, category, Date.now());
+        conversion_marked = 0,
+        click_tracked = 0
+    `).run(senderId, templateId, variantKey || null, category, Date.now());
   } catch (e: any) { console.warn('[template-engine] trackTemplateUse err:', e?.message); }
 }
 
@@ -454,10 +477,10 @@ export function trackTemplateUse(senderId: string, templateId: string, category:
 const POSITIVE_RE = /\b(ok|oke|okay|đặt|chốt|đúng|yes|ờ|vâng|ừ|đồng ý|xin sđt|gọi đi)\b/i;
 const PHONE_RE = /(?:\+?84|0)[0-9]{9,10}/;
 
-export function detectAndMarkConversion(senderId: string, userMsg: string): { converted: boolean; template_id?: string; category?: string } {
+export function detectAndMarkConversion(senderId: string, userMsg: string): { converted: boolean; template_id?: string; variant_key?: string; category?: string } {
   try {
     const row = db.prepare(`
-      SELECT last_template_id, last_template_category, last_sent_at, conversion_marked
+      SELECT last_template_id, last_template_variant, last_template_category, last_sent_at, conversion_marked
       FROM agentic_template_tracking WHERE sender_id = ?
     `).get(senderId) as any;
     if (!row || row.conversion_marked) return { converted: false };
@@ -474,15 +497,96 @@ export function detectAndMarkConversion(senderId: string, userMsg: string): { co
     const CONVERSION_CATS = new Set(['gathering', 'decision', 'info', 'objection']);
     if (!CONVERSION_CATS.has(row.last_template_category)) return { converted: false };
 
-    // Mark!
+    // Mark parent template
     markConversion(row.last_template_id);
+
+    // Phase 5: Mark variant if A/B test active
+    if (row.last_template_variant) {
+      try {
+        const { trackConversionForVariant } = require('./template-variants');
+        trackConversionForVariant(row.last_template_id, row.last_template_variant);
+      } catch {}
+    }
+
     db.prepare(`UPDATE agentic_template_tracking SET conversion_marked = 1 WHERE sender_id = ?`).run(senderId);
 
-    console.log(`[template-engine] conversion! sender=${senderId.substring(0, 20)} template=${row.last_template_id}`);
-    return { converted: true, template_id: row.last_template_id, category: row.last_template_category };
+    console.log(`[template-engine] conversion! sender=${senderId.substring(0, 20)} template=${row.last_template_id}${row.last_template_variant ? ':' + row.last_template_variant : ''}`);
+    return {
+      converted: true,
+      template_id: row.last_template_id,
+      variant_key: row.last_template_variant,
+      category: row.last_template_category,
+    };
   } catch (e: any) {
     console.warn('[template-engine] detectConversion err:', e?.message);
     return { converted: false };
+  }
+}
+
+/**
+ * Detect + track quick-reply click.
+ * Gọi khi bot nhận message: check nếu text khớp title hoặc payload của last template's QR.
+ *
+ * Return: { clicked: boolean, template_id, variant_key, button_title }
+ */
+export function detectAndTrackClick(senderId: string, userMsg: string): { clicked: boolean; template_id?: string; variant_key?: string; button?: string } {
+  try {
+    const row = db.prepare(`
+      SELECT last_template_id, last_template_variant, last_sent_at, click_tracked
+      FROM agentic_template_tracking WHERE sender_id = ?
+    `).get(senderId) as any;
+    if (!row || row.click_tracked) return { clicked: false };
+
+    // TTL: only within 10 min of last template
+    if (Date.now() - row.last_sent_at > 10 * 60 * 1000) return { clicked: false };
+
+    // Get QRs for last template (or variant if A/B)
+    let qrs: any[] = [];
+    if (row.last_template_variant) {
+      const vr = db.prepare(`SELECT quick_replies FROM agentic_template_variants WHERE template_id = ? AND variant_key = ?`)
+        .get(row.last_template_id, row.last_template_variant) as any;
+      if (vr?.quick_replies) qrs = safeParse(vr.quick_replies) || [];
+    }
+    if (qrs.length === 0) {
+      const t = db.prepare(`SELECT quick_replies FROM agentic_templates WHERE id = ?`).get(row.last_template_id) as any;
+      if (t?.quick_replies) qrs = safeParse(t.quick_replies) || [];
+    }
+
+    if (qrs.length === 0) return { clicked: false };
+
+    // Match user msg against QR titles (normalized comparison)
+    const nMsg = normalizeForMatch(userMsg);
+    const matched = qrs.find(q => {
+      const title = normalizeForMatch((q.title || '').replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}]/gu, '').trim());
+      return title && (nMsg === title || nMsg.includes(title) || title.includes(nMsg));
+    });
+
+    if (!matched) return { clicked: false };
+
+    // Record click on parent template
+    db.prepare(`UPDATE agentic_templates SET clicks = clicks + 1 WHERE id = ?`).run(row.last_template_id);
+
+    // Record on variant if applicable
+    if (row.last_template_variant) {
+      try {
+        const { trackClickForVariant } = require('./template-variants');
+        trackClickForVariant(row.last_template_id, row.last_template_variant);
+      } catch {}
+    }
+
+    // Mark click tracked (dedup)
+    db.prepare(`UPDATE agentic_template_tracking SET click_tracked = 1 WHERE sender_id = ?`).run(senderId);
+
+    console.log(`[template-engine] QR click! sender=${senderId.substring(0, 20)} template=${row.last_template_id} button="${matched.title}"`);
+    return {
+      clicked: true,
+      template_id: row.last_template_id,
+      variant_key: row.last_template_variant,
+      button: matched.title,
+    };
+  } catch (e: any) {
+    console.warn('[template-engine] detectClick err:', e?.message);
+    return { clicked: false };
   }
 }
 
@@ -514,6 +618,109 @@ export function logSelection(
       Date.now(),
     );
   } catch (e: any) { console.warn('[template-engine] logSelection err:', e?.message); }
+}
+
+/**
+ * Compute health score for a template (0-1).
+ * Formula (weighted):
+ *   hits       — log scale, cap at 100 hits → 0.3
+ *   conv_rate  — raw ratio → 0.4
+ *   recency    — last_used_at (decay 30 days) → 0.2
+ *   age_bonus  — new templates < 7 days get grace → 0.1
+ *
+ * Returns { score: 0-1, tier: 'green' | 'yellow' | 'red', reasons: string[] }
+ */
+export interface HealthScore {
+  template_id: string;
+  score: number;
+  tier: 'green' | 'yellow' | 'red' | 'new';
+  reasons: string[];
+  metrics: {
+    hits: number;
+    clicks: number;
+    conversions: number;
+    conv_rate: number;
+    ctr: number;
+    last_used_days_ago: number | null;
+  };
+}
+
+export function computeHealthScore(templateId: string): HealthScore | null {
+  try {
+    const t = db.prepare(`
+      SELECT id, hits, clicks, conversions, last_used_at, created_at
+      FROM agentic_templates WHERE id = ?
+    `).get(templateId) as any;
+    if (!t) return null;
+
+    const hits = t.hits || 0;
+    const clicks = t.clicks || 0;
+    const conversions = t.conversions || 0;
+    const conv_rate = hits > 0 ? conversions / hits : 0;
+    const ctr = hits > 0 ? clicks / hits : 0;
+
+    const now = Date.now();
+    const lastUsedDaysAgo = t.last_used_at ? Math.floor((now - t.last_used_at) / (24 * 3600 * 1000)) : null;
+    const ageDays = Math.floor((now - (t.created_at || now)) / (24 * 3600 * 1000));
+
+    const reasons: string[] = [];
+
+    // Hits factor (log scale)
+    const hitsFactor = Math.min(0.3, (Math.log(hits + 1) / Math.log(100)) * 0.3);
+
+    // Conv rate factor
+    const convFactor = Math.min(0.4, conv_rate * 0.4);
+
+    // Recency factor (decay 30 days)
+    let recencyFactor = 0;
+    if (lastUsedDaysAgo !== null) {
+      recencyFactor = Math.max(0, 0.2 * (1 - lastUsedDaysAgo / 30));
+    }
+
+    // Age bonus (new templates get grace for 7 days)
+    const ageBonus = ageDays < 7 ? 0.1 : 0;
+
+    const score = hitsFactor + convFactor + recencyFactor + ageBonus;
+
+    // Tier
+    let tier: HealthScore['tier'];
+    if (ageDays < 3 && hits < 5) tier = 'new';
+    else if (score >= 0.6) tier = 'green';
+    else if (score >= 0.3) tier = 'yellow';
+    else tier = 'red';
+
+    // Reasons
+    if (hits === 0 && ageDays > 7) reasons.push('Chưa có lượt dùng nào');
+    else if (hits > 20 && conversions === 0) reasons.push(`${hits} hits nhưng 0 conversions — content không hiệu quả`);
+    else if (conv_rate > 0.3) reasons.push(`Conversion rate ${(conv_rate * 100).toFixed(0)}% tốt`);
+    else if (conv_rate < 0.1 && hits > 20) reasons.push(`Conv rate thấp (${(conv_rate * 100).toFixed(0)}%) — cần review`);
+
+    if (lastUsedDaysAgo !== null) {
+      if (lastUsedDaysAgo > 30) reasons.push(`${lastUsedDaysAgo} ngày không dùng`);
+      else if (lastUsedDaysAgo < 1) reasons.push('Dùng hôm nay');
+    }
+
+    if (ageBonus > 0) reasons.push('Template mới (< 7 ngày) — đang thu thập data');
+    if (ctr > 0.2) reasons.push(`CTR ${(ctr * 100).toFixed(0)}% — QR hấp dẫn`);
+
+    return {
+      template_id: templateId,
+      score: Math.round(score * 100) / 100,
+      tier,
+      reasons,
+      metrics: {
+        hits,
+        clicks,
+        conversions,
+        conv_rate: Math.round(conv_rate * 1000) / 1000,
+        ctr: Math.round(ctr * 1000) / 1000,
+        last_used_days_ago: lastUsedDaysAgo,
+      },
+    };
+  } catch (e: any) {
+    console.warn('[template-engine] computeHealthScore err:', e?.message);
+    return null;
+  }
 }
 
 /**
