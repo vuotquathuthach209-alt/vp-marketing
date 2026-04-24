@@ -148,10 +148,9 @@ async function fanOutZalo(src: CrossPostSource): Promise<CrossPostResult['zalo']
   const out = { attempted: 0, success: 0, errors: [] as string[] };
 
   try {
-    // Get active Zalo OAs for hotel
-    const oas = db.prepare(
-      `SELECT * FROM zalo_oa WHERE hotel_id = ? AND enabled = 1`
-    ).all(src.hotel_id) as any[];
+    // v24 FIX: Dùng listZaloForHotel() để auto-decrypt token (raw SQL → encrypted)
+    const { listZaloForHotel } = require('./zalo');
+    const oas = listZaloForHotel(src.hotel_id).filter((o: any) => o.enabled);
 
     if (oas.length === 0) {
       out.errors.push('no_zalo_oa');
