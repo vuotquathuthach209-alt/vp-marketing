@@ -152,19 +152,21 @@ export async function updateEngagementFeedback(): Promise<{
  */
 export function getEngagementMultiplier(hotelId: number, angle?: string): number {
   const cutoff = Date.now() - 30 * 24 * 3600_000;
+  // v26 fix: chỉ count posts đã publish >= 48h (engagement settled)
+  const settledCutoff = Date.now() - 48 * 3600_000;
+
   try {
     const where = angle
-      ? `hotel_id = ? AND angle_used = ? AND engagement_json IS NOT NULL AND published_at > ?`
-      : `hotel_id = ? AND engagement_json IS NOT NULL AND published_at > ?`;
-    const params = angle ? [hotelId, angle, cutoff] : [hotelId, cutoff];
+      ? `hotel_id = ? AND angle_used = ? AND engagement_json IS NOT NULL AND published_at > ? AND published_at < ?`
+      : `hotel_id = ? AND engagement_json IS NOT NULL AND published_at > ? AND published_at < ?`;
+    const params = angle ? [hotelId, angle, cutoff, settledCutoff] : [hotelId, cutoff, settledCutoff];
 
     const rows = db.prepare(
       `SELECT engagement_json FROM auto_post_history WHERE ${where}`
     ).all(...params) as any[];
 
-    if (rows.length === 0) return 1.0;   // neutral — no data
+    if (rows.length === 0) return 1.0;   // neutral — chưa có data settled
 
-    // Avg score
     let totalScore = 0, count = 0;
     for (const r of rows) {
       try {
@@ -176,8 +178,7 @@ export function getEngagementMultiplier(hotelId: number, angle?: string): number
     if (count === 0) return 1.0;
     const avg = totalScore / count;
 
-    // Normalize: 0 posts score → 0.5x multiplier, 100+ score → 1.5x multiplier
-    // Formula: 0.5 + (min(avg, 100) / 100)
+    // Normalize: 0 score → 0.5x (weak), 100+ score → 1.5x (strong)
     const mult = 0.5 + Math.min(avg, 100) / 100;
     return Math.max(0.5, Math.min(1.5, mult));
   } catch {
