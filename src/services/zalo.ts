@@ -552,8 +552,9 @@ export async function zaloCreateTimelineArticle(
       }
     }
 
-    // Step 3: POST article
+    // Step 3: POST article — type 'normal' = bài viết thường (khác 'video')
     const payload = {
+      type: 'normal',
       title: opts.title.slice(0, 100),
       description: (opts.description || '').slice(0, 200),
       cover: coverAttId,
