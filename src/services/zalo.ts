@@ -559,8 +559,8 @@ export async function zaloCreateTimelineArticle(
       title: opts.title.slice(0, 100),
       description: (opts.description || '').slice(0, 200),
       cover: {
-        cover_type: 'image',
-        media: { image_id: coverAttId },
+        cover_type: 'photo',
+        photo_id: coverAttId,
         caption: opts.title.slice(0, 100),
       },
       body: processedBody,
