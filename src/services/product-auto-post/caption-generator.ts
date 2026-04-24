@@ -143,14 +143,21 @@ Kết: CTA "Anh/chị check-in ngày nào em tư vấn chỗ gần nhất ạ"
 TONE: practical, informative.
 `,
     testimonial: `
-ANGLE: Guest Voice — review từ khách thật.
+ANGLE: Guest Voice — QUOTE TỪ REVIEW THẬT của khách đã ở.
 
-Mở bài: Quote ngắn từ khách hypothetical (em sáng tạo dựa trên rating ${hotel.rating?.toFixed(1)}, nhưng KHÔNG bịa fake number)
-VD: "'Phòng sạch, nhân viên dễ thương' — review gần đây từ khách ở ${hotel.name}"
-Thân bài: 2-3 điểm khách hay khen + cam kết của Sonder (giá minh bạch, hỗ trợ 24/7)
-Kết: CTA "Đọc review full trên web hoặc inbox em để nghe thêm chia sẻ ạ"
+CRITICAL: Nếu imageContext có chứa "REAL_REVIEW:", BẮT BUỘC dùng quote đó thay vì bịa.
+Format review thật trong imageContext:
+  REAL_REVIEW: rating=X.X, name="NGUYỄN A.", stay="4/2026", text="..."
 
-TONE: authentic, social proof. KHÔNG được bịa số liệu cụ thể.
+Nếu có REAL_REVIEW trong context:
+  Mở bài: "[quote từ review text, trích 1-2 câu hay nhất]" — [masked_name], đã ở tháng [stay_month_year]
+  Thân bài: Expand lý do khách thích (dựa trên highlights trong review) + Sonder commits
+  Kết: CTA "Còn nhiều chia sẻ khác anh/chị có thể xem trên web, hoặc inbox em nghe trực tiếp ạ"
+
+Nếu KHÔNG có REAL_REVIEW (fallback): KHÔNG BỊA review. Thay vào đó dùng social proof khác như:
+  "[Hotel] đang có rating [X.X]/5 từ [N] khách đã ở" + 2-3 USP + CTA inbox
+
+TONE: authentic, social proof thật, tôn trọng khách.
 `,
     price: `
 ANGLE: Price Transparency — bảng giá minh bạch, khách yên tâm.

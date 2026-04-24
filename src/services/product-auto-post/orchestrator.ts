@@ -106,12 +106,39 @@ export async function generateTodayPlan(): Promise<{
   const angle = pickAngleSmart(hotel.hotel_id);
   console.log(`[auto-post] angle=${angle} for hotel=${hotel.hotel_id}`);
 
-  // 4. Generate caption (với distinctive context nếu có)
+  // v26 Day 1: Nếu angle=testimonial → pick real review
+  let reviewContext: string | undefined;
+  let usedReviewId: number | null = null;
+  if (angle === 'testimonial') {
+    try {
+      const { pickTestimonialReview } = require('./review-sync');
+      const review = pickTestimonialReview(hotel.hotel_id);
+      if (review) {
+        usedReviewId = review.id;
+        reviewContext = `REAL_REVIEW: rating=${review.rating.toFixed(1)}, name="${review.masked_name}", stay="${review.stay_month_year || 'gần đây'}", verified=${review.verified}, text="${review.text.slice(0, 400)}"`;
+        console.log(`[auto-post] using real review #${review.id} for hotel ${hotel.hotel_id}`);
+      } else {
+        console.log(`[auto-post] no real review available for hotel ${hotel.hotel_id} — testimonial will use fallback`);
+      }
+    } catch (e: any) {
+      console.warn('[auto-post] review pick fail:', e?.message);
+    }
+  }
+
+  // 4. Generate caption (với distinctive + review context nếu có)
   const imageCtx = image.room_type ? `Phòng: ${image.room_type}` : undefined;
-  const ctxParts = [imageCtx, distinctiveContext].filter(Boolean);
+  const ctxParts = [imageCtx, distinctiveContext, reviewContext].filter(Boolean);
   const gen = await generateCaption(hotel, angle, {
     imageContext: ctxParts.length ? ctxParts.join(' | ') : undefined,
   });
+
+  // Mark review used nếu có
+  if (usedReviewId) {
+    try {
+      const { markReviewUsed } = require('./review-sync');
+      markReviewUsed(usedReviewId);
+    } catch {}
+  }
   if (!gen) {
     return { ok: false, reason: 'caption_gen_failed', date, hotel, image, angle };
   }

@@ -567,6 +567,41 @@ requests.post('https://mkt.sondervn.com/api/sync/availability',
 }
 
 /* ═══════════════════════════════════════════
+   v26 Day 1 — REVIEWS SYNC (OTA push reviews)
+   ═══════════════════════════════════════════ */
+
+/**
+ * POST /api/sync/reviews — OTA push batch reviews.
+ * Body: { reviews: [{ review_ota_id, hotel_id, reviewer_name, rating, review_text, ... }] }
+ * Auth: HMAC via authSyncHub (write_reviews permission)
+ */
+router.post('/reviews', rawBodyMiddleware, authSyncHub('write_reviews'), (req: any, res) => {
+  try {
+    const { reviews } = req.body || {};
+    if (!Array.isArray(reviews)) {
+      return res.status(400).json({ error: 'reviews array required' });
+    }
+    if (reviews.length > 500) {
+      return res.status(400).json({ error: 'max 500 reviews per batch' });
+    }
+    const { upsertBatch } = require('../services/product-auto-post/review-sync');
+    const r = upsertBatch(reviews);
+    logEvent({
+      event_type: 'reviews_push',
+      direction: 'inbound',
+      actor: req.apiKey?.key_id,
+      payload: { count: reviews.length, result: r },
+      hmac_verified: true,
+      http_status: 200,
+    });
+    res.json({ ok: true, ...r });
+  } catch (e: any) {
+    console.error('[sync-hub] reviews push fail:', e);
+    res.status(500).json({ error: 'internal error' });
+  }
+});
+
+/* ═══════════════════════════════════════════
    v24 — WEBHOOK INBOUND (real-time from OTA)
    ═══════════════════════════════════════════ */
 

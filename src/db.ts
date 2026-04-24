@@ -1712,6 +1712,37 @@ CREATE INDEX IF NOT EXISTS idx_auto_plan_status ON auto_post_plan(status, schedu
 console.log('[db] v25 Product Auto Post tables ready (history + blacklist + plan)');
 
 // ═══════════════════════════════════════════════════════════
+// v26 Phase C Day 1 — Real Guest Reviews
+// OTA push review data qua webhook/sync → bot dùng cho testimonial angle
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+CREATE TABLE IF NOT EXISTS hotel_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  review_ota_id TEXT UNIQUE,                -- OTA-side review ID (for dedup)
+  hotel_id INTEGER NOT NULL,                -- = ota_hotel_id
+  reviewer_name TEXT,                       -- "Nguyễn Văn A"
+  reviewer_avatar_url TEXT,
+  rating REAL,                              -- 1.0 - 5.0
+  review_text TEXT,                         -- Full review content
+  review_highlights TEXT,                   -- JSON: ["sạch sẽ", "vị trí"]
+  language TEXT DEFAULT 'vi',
+  verified INTEGER DEFAULT 0,               -- verified stayed guest
+  stay_duration_nights INTEGER,
+  stay_month_year TEXT,                     -- "4/2026" (privacy: no exact dates)
+  source_channel TEXT,                      -- 'direct' | 'booking.com' | 'agoda'
+  images_json TEXT,                         -- review photos (if any)
+  used_in_posts INTEGER DEFAULT 0,          -- counter: đã dùng bao lần
+  last_used_at INTEGER,                     -- khi nào dùng lần cuối (cooldown)
+  approved_for_marketing INTEGER DEFAULT 1, -- admin có thể unmark
+  created_at INTEGER NOT NULL,
+  synced_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reviews_hotel_rating ON hotel_reviews(hotel_id, rating DESC);
+CREATE INDEX IF NOT EXISTS idx_reviews_usable ON hotel_reviews(hotel_id, approved_for_marketing, last_used_at);
+`);
+console.log('[db] v26 hotel_reviews table ready (Real Guest Reviews)');
+
+// ═══════════════════════════════════════════════════════════
 // v23 — intent_logs: log mọi message qua Gemini Intent Classifier
 // Mục đích: analytics + training data cho tuning classifier + debug
 // ═══════════════════════════════════════════════════════════

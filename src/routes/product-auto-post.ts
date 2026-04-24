@@ -189,4 +189,82 @@ router.get('/engagement/stats', (req: AuthRequest, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+/* ═══════════════════════════════════════════
+   v26 Day 1: Reviews management
+   ═══════════════════════════════════════════ */
+
+/** GET /api/auto-post/reviews/stats — overall + per hotel */
+router.get('/reviews/stats', (_req: AuthRequest, res) => {
+  try {
+    const { getReviewStats } = require('../services/product-auto-post/review-sync');
+    res.json(getReviewStats());
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/** GET /api/auto-post/reviews/:hotelId — list reviews for hotel (admin moderate) */
+router.get('/reviews/:hotelId', (req: AuthRequest, res) => {
+  try {
+    const id = parseInt(String(req.params.hotelId), 10);
+    const rows = db.prepare(
+      `SELECT id, review_ota_id, reviewer_name, rating, review_text, stay_month_year,
+              verified, approved_for_marketing, used_in_posts, last_used_at, created_at
+       FROM hotel_reviews WHERE hotel_id = ? ORDER BY rating DESC, created_at DESC LIMIT 100`
+    ).all(id) as any[];
+    res.json({ items: rows });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/** POST /api/auto-post/reviews — manual add review (for testing or manual import) */
+router.post('/reviews', (req: AuthRequest, res) => {
+  try {
+    const { upsertReview } = require('../services/product-auto-post/review-sync');
+    const outcome = upsertReview(req.body);
+    res.json({ outcome });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/** POST /api/auto-post/reviews/:id/disable — remove from marketing */
+router.post('/reviews/:id/disable', (req: AuthRequest, res) => {
+  try {
+    const { disableReviewForMarketing } = require('../services/product-auto-post/review-sync');
+    const id = parseInt(String(req.params.id), 10);
+    const { reason } = req.body || {};
+    const ok = disableReviewForMarketing(id, reason || 'admin_manual');
+    res.json({ ok });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/** POST /api/auto-post/reviews/seed-demo — seed 3 demo reviews for testing */
+router.post('/reviews/seed-demo', (req: AuthRequest, res) => {
+  try {
+    const { upsertReview } = require('../services/product-auto-post/review-sync');
+    const now = Date.now();
+    const demos = [
+      {
+        review_ota_id: `demo_${now}_1`,
+        hotel_id: 6, reviewer_name: 'Nguyễn Văn An',
+        rating: 5.0, review_text: 'Phòng sạch sẽ, vị trí cực kỳ tiện gần sân bay, nhân viên lễ tân thân thiện, check-in nhanh. Wifi mạnh, bếp đầy đủ để nấu ăn. Sẽ quay lại lần sau.',
+        stay_date: '2026-03-15', stay_duration_nights: 5, verified: true, source_channel: 'direct',
+        review_highlights: ['sạch sẽ', 'vị trí tiện', 'nhân viên thân thiện', 'wifi mạnh'],
+      },
+      {
+        review_ota_id: `demo_${now}_2`,
+        hotel_id: 6, reviewer_name: 'Trần Thị Bình',
+        rating: 4.5, review_text: 'Căn hộ rộng rãi, bếp + máy giặt đầy đủ, tiết kiệm tiền ăn ngoài. Giá thuê tháng hợp lý so với khu vực Tân Bình. Hotline hỗ trợ nhanh khi cần.',
+        stay_date: '2026-02-20', stay_duration_nights: 30, verified: true, source_channel: 'direct',
+        review_highlights: ['bếp đầy đủ', 'máy giặt', 'giá hợp lý', 'hỗ trợ nhanh'],
+      },
+      {
+        review_ota_id: `demo_${now}_3`,
+        hotel_id: 6, reviewer_name: 'Lê Minh C',
+        rating: 4.7, review_text: 'Ở đây 3 tháng cho đợt công tác, cực kỳ hài lòng. Khu vực yên tĩnh, đủ tiện nghi sống lâu dài. Điện nước bao trọn nên không lo phát sinh.',
+        stay_date: '2026-01-10', stay_duration_nights: 90, verified: true, source_channel: 'direct',
+        review_highlights: ['yên tĩnh', 'sống lâu dài', 'điện nước bao trọn'],
+      },
+    ];
+    const results = demos.map(d => upsertReview(d));
+    res.json({ seeded: results.length, outcomes: results });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 export default router;
