@@ -626,6 +626,21 @@ export function startScheduler() {
     }
   }, { timezone: 'Asia/Ho_Chi_Minh' });
 
+  // ── v26 Phase B: Engagement feedback loop mỗi 4h ──
+  //   Fetch FB metrics → update auto_post_history.engagement_json
+  //   Picker dùng data này tính multiplier cho future picks.
+  cron.schedule('15 */4 * * *', async () => {
+    try {
+      const { updateEngagementFeedback } = require('./product-auto-post/engagement-feedback');
+      const r = await updateEngagementFeedback();
+      if (r.updated > 0) {
+        console.log(`[scheduler] engagement-feedback: updated=${r.updated} high=${r.high_perform.length} low=${r.low_perform.length}`);
+      }
+    } catch (e: any) {
+      console.error('[scheduler] engagement-feedback error:', e?.message);
+    }
+  });
+
   // Zalo OA token refresh — v22: cron mỗi 6h (thay vì 20h) + notify admin nếu fail
   //                              Trước đó 20h nhưng nếu miss 1 cycle → 40h → token expire (~25h life).
   cron.schedule('0 */6 * * *', async () => {

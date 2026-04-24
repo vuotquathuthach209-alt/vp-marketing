@@ -168,6 +168,16 @@ function scoreHotel(h: any, networkAvg: number): HotelCandidate {
   breakdown.seasonal = seasonal * 5;
   score += breakdown.seasonal;
 
+  // v26 Phase B: Engagement multiplier (learned from past posts)
+  let multiplier = 1.0;
+  try {
+    const { getEngagementMultiplier } = require('./engagement-feedback');
+    multiplier = getEngagementMultiplier(h.hotel_id);
+    breakdown.engagement_multiplier = multiplier;
+  } catch {}
+
+  const finalScore = Math.round(score * multiplier);
+
   return {
     hotel_id: h.hotel_id,
     name: h.name_canonical,
@@ -181,7 +191,7 @@ function scoreHotel(h: any, networkAvg: number): HotelCandidate {
     min_nightly_price: h.min_nightly_price,
     usp_top3: h.usp_top3,
     last_posted_days_ago: daysSince,
-    score: Math.round(score),
+    score: finalScore,
     score_breakdown: Object.fromEntries(
       Object.entries(breakdown).map(([k, v]) => [k, Math.round(v * 10) / 10])
     ),

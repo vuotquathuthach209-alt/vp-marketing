@@ -167,4 +167,26 @@ router.get('/similar/:hotelId', async (req: AuthRequest, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+/* ═══════════════════════════════════════════
+   v26 Phase B: Engagement feedback endpoints
+   ═══════════════════════════════════════════ */
+
+/** POST /api/auto-post/engagement/refresh — manual trigger update engagement */
+router.post('/engagement/refresh', async (_req: AuthRequest, res) => {
+  try {
+    const { updateEngagementFeedback } = require('../services/product-auto-post/engagement-feedback');
+    const r = await updateEngagementFeedback();
+    res.json(r);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/** GET /api/auto-post/engagement/stats?days=30 — dashboard stats */
+router.get('/engagement/stats', (req: AuthRequest, res) => {
+  try {
+    const { getEngagementStats } = require('../services/product-auto-post/engagement-feedback');
+    const days = Math.min(90, Math.max(1, parseInt(String(req.query.days || '30'), 10)));
+    res.json(getEngagementStats(days));
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 export default router;

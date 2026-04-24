@@ -282,6 +282,16 @@
           <div id="auto-post-history" class="text-sm">Loading...</div>
         </div>
 
+        <!-- Engagement KPI (v26 Phase B) -->
+        <div class="bg-white rounded-xl shadow p-5 mb-6">
+          <h3 class="font-bold mb-3">📈 Engagement feedback — learn from history</h3>
+          <div class="flex gap-2 mb-3">
+            <button onclick="autoPostRefreshEngagement()" class="bg-amber-500 text-white px-3 py-1 rounded text-xs">🔄 Refresh metrics</button>
+            <span class="text-xs text-slate-500 self-center">Auto mỗi 4h; score = reactions + comments×3 + shares×5</span>
+          </div>
+          <div id="auto-post-engagement" class="text-sm">Loading...</div>
+        </div>
+
         <!-- Semantic search -->
         <div class="bg-white rounded-xl shadow p-5">
           <h3 class="font-bold mb-3">🔎 Semantic Hotel Search (v26 Phase A)</h3>

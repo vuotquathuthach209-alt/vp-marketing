@@ -34,17 +34,45 @@ export interface ImageCandidate {
 const HISTORY_LOOKBACK_DAYS = 90;
 
 /**
- * Simple URL-based fingerprint (MD5 hex 16 chars).
- * Phase 2: upgrade to perceptual hash.
+ * URL-based fingerprint (MD5 hex 16 chars).
+ * Normalize: strip query params (CDN size variants), case-insensitive host.
  */
 export function fingerprintUrl(url: string): string {
-  // Normalize URL: strip query params (CDN variants), case-insensitive host
   try {
     const u = new URL(url);
     const normalized = `${u.protocol}//${u.hostname.toLowerCase()}${u.pathname}`;
     return crypto.createHash('md5').update(normalized).digest('hex').slice(0, 16);
   } catch {
     return crypto.createHash('md5').update(url).digest('hex').slice(0, 16);
+  }
+}
+
+/**
+ * v26 Phase B: Content-based fingerprint — catch CDN variants khác URL
+ * nhưng cùng binary.
+ *
+ * Download first 16KB → SHA256 first 16 chars. 2 images cùng nguồn sẽ
+ * có cùng content hash (dù URL path/query khác).
+ *
+ * Skip nếu download fail — fall back to URL hash.
+ */
+export async function fingerprintContent(url: string): Promise<string | null> {
+  try {
+    const axios = require('axios').default;
+    const https = require('https');
+    const resp = await axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: 15_000,
+      maxContentLength: 16 * 1024,   // first 16KB only
+      headers: { 'Range': 'bytes=0-16383' },
+      httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+      validateStatus: (s: number) => s < 500,
+    });
+    const buf = Buffer.from(resp.data);
+    if (buf.length < 100) return null;
+    return crypto.createHash('sha256').update(buf).digest('hex').slice(0, 16);
+  } catch {
+    return null;
   }
 }
 

@@ -268,6 +268,9 @@ async function loadAutoPost() {
       </tbody></table>
     ` : '<p class="text-slate-400">Chưa có history.</p>';
     document.getElementById('auto-post-history').innerHTML = histHtml;
+
+    // v26 Phase B: Load engagement stats
+    loadEngagementStats();
   } catch (e) {
     console.error('loadAutoPost:', e);
   }
@@ -292,6 +295,53 @@ window.autoPostVectorize = async () => {
   const r = await api('/auto-post/vectorize', { method: 'POST' });
   alert(`Total=${r.total} computed=${r.computed} cached=${r.cached} failed=${r.failed}`);
 };
+
+window.autoPostRefreshEngagement = async () => {
+  const r = await api('/auto-post/engagement/refresh', { method: 'POST' });
+  alert(`Scanned ${r.scanned}, updated ${r.updated}. High: ${r.high_perform.length}, Low: ${r.low_perform.length}`);
+  loadEngagementStats();
+};
+
+async function loadEngagementStats() {
+  try {
+    const s = await api('/auto-post/engagement/stats?days=30');
+    const byHotel = (s.by_hotel || []).map(h => `
+      <tr class="border-b text-xs"><td class="py-1">#${h.hotel_id}</td>
+        <td class="text-right">${h.posts}</td>
+        <td class="text-right font-mono ${h.avg_score >= 30 ? 'text-emerald-600' : h.avg_score >= 10 ? 'text-amber-600' : 'text-red-500'}">${h.avg_score}</td>
+        <td><span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 text-xs">${h.best_angle}</span></td>
+      </tr>`).join('');
+    const byAngle = (s.by_angle || []).map(a => `
+      <tr class="border-b text-xs"><td class="py-1"><span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 text-xs">${a.angle}</span></td>
+        <td class="text-right">${a.posts}</td>
+        <td class="text-right font-mono ${a.avg_score >= 30 ? 'text-emerald-600' : a.avg_score >= 10 ? 'text-amber-600' : 'text-red-500'}">${a.avg_score}</td>
+        <td class="text-right">${a.avg_reactions}</td>
+        <td class="text-right">${a.avg_comments}</td>
+      </tr>`).join('');
+    const topPosts = (s.top_posts || []).map((p, i) => `
+      <div class="flex justify-between border-b py-1 text-xs">
+        <span>${i+1}. Post #${p.post_id} (hotel ${p.hotel_id}, ${p.angle})</span>
+        <span class="font-mono text-emerald-600">${p.score}</span>
+      </div>`).join('');
+
+    document.getElementById('auto-post-engagement').innerHTML = `
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div><strong class="text-xs">By Hotel</strong>
+          <table class="w-full mt-2"><thead><tr class="border-b text-xs text-slate-500">
+            <th class="text-left">Hotel</th><th class="text-right">Posts</th><th class="text-right">Avg score</th><th>Best angle</th>
+          </tr></thead><tbody>${byHotel || '<tr><td colspan="4" class="text-slate-400 py-2">Chưa có data</td></tr>'}</tbody></table>
+        </div>
+        <div><strong class="text-xs">By Angle (A/B)</strong>
+          <table class="w-full mt-2"><thead><tr class="border-b text-xs text-slate-500">
+            <th class="text-left">Angle</th><th class="text-right">Posts</th><th class="text-right">Score</th>
+            <th class="text-right">👍</th><th class="text-right">💬</th>
+          </tr></thead><tbody>${byAngle || '<tr><td colspan="5" class="text-slate-400 py-2">Chưa có data</td></tr>'}</tbody></table>
+        </div>
+      </div>
+      <div class="mt-4"><strong class="text-xs">🏆 Top 10 posts</strong><div class="mt-2">${topPosts || '<p class="text-slate-400">Chưa có</p>'}</div></div>
+    `;
+  } catch (e) { console.warn('loadEngagementStats:', e); }
+}
 
 window.autoPostSemSearch = async () => {
   const q = document.getElementById('auto-post-semq').value.trim();
