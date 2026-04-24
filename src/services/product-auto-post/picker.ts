@@ -78,17 +78,27 @@ function getDaysSinceLastPost(hotelId: number): number {
 }
 
 /**
- * Image count từ room_images + hotel_profile cover.
+ * Image count aggregate: room_images + hotel_profile.cover + scraped_data.images.
  */
 function getImageCount(hotelId: number): number {
+  let count = 0;
   try {
     const row = db.prepare(
       `SELECT COUNT(*) as n FROM room_images WHERE hotel_id = ? AND active = 1`
     ).get(hotelId) as any;
-    return row?.n || 0;
-  } catch {
-    return 0;
-  }
+    count += (row?.n || 0);
+  } catch {}
+  try {
+    const hp = db.prepare(
+      `SELECT cover_image_url, scraped_data FROM hotel_profile WHERE hotel_id = ?`
+    ).get(hotelId) as any;
+    if (hp?.cover_image_url) count += 1;
+    try {
+      const sd = JSON.parse(hp?.scraped_data || '{}');
+      if (Array.isArray(sd?.images)) count += sd.images.length;
+    } catch {}
+  } catch {}
+  return count;
 }
 
 /**
