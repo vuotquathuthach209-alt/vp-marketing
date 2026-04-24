@@ -23,7 +23,7 @@ import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
 import { db } from '../../db';
-import { pickHotelForToday, HotelCandidate } from './picker';
+import { pickHotelForToday, pickEligibleHotels, HotelCandidate } from './picker';
 import { pickImage, ImageCandidate } from './image-picker';
 import { pickAngleSmart, generateCaption, captionHash, validateCaption, Angle } from './caption-generator';
 
@@ -56,18 +56,39 @@ export async function generateTodayPlan(): Promise<{
     return { ok: false, reason: `already_${existing.status}`, plan_id: existing.id, date };
   }
 
-  // 1. Pick hotel
-  const hotel = pickHotelForToday();
-  if (!hotel) {
+  // 1. Pick top N eligible hotels (try in order until one has usable image)
+  const candidates = pickEligibleHotels({ limit: 5 });
+  if (candidates.length === 0) {
     return { ok: false, reason: 'no_eligible_hotel', date };
   }
-  console.log(`[auto-post] picked hotel #${hotel.hotel_id} "${hotel.name}" score=${hotel.score}`);
 
-  // 2. Pick image (async — fetch OTA API live)
-  const image = await pickImage(hotel.hotel_id);
-  if (!image) {
-    return { ok: false, reason: `no_image_available_hotel_${hotel.hotel_id}`, date, hotel };
+  // Shuffle top 3 for tie-break diversity, sau đó fallback qua rest
+  const top3 = candidates.slice(0, 3).sort(() => Math.random() - 0.5);
+  const ordered = [...top3, ...candidates.slice(3)];
+
+  let hotel: HotelCandidate | null = null;
+  let image: ImageCandidate | null = null;
+  const triedReasons: string[] = [];
+
+  for (const c of ordered) {
+    console.log(`[auto-post] try hotel #${c.hotel_id} "${c.name}" score=${c.score}`);
+    const img = await pickImage(c.hotel_id);
+    if (img) {
+      hotel = c;
+      image = img;
+      break;
+    }
+    triedReasons.push(`${c.hotel_id}:no_image`);
   }
+
+  if (!hotel || !image) {
+    return {
+      ok: false,
+      reason: `no_image_in_any_candidate: ${triedReasons.join(', ')}`,
+      date,
+    };
+  }
+  console.log(`[auto-post] picked hotel #${hotel.hotel_id} "${hotel.name}" with image ${image.source}`);
 
   // 3. Pick angle
   const angle = pickAngleSmart(hotel.hotel_id);

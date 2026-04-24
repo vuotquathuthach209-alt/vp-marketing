@@ -93,11 +93,21 @@ async function fetchOtaImages(hotelId: number): Promise<ImageCandidate[]> {
       return [];
     }
 
+    // Helper: convert relative URL → absolute (OTA serve static from /uploads/)
+    const OTA_BASE = process.env.OTA_API_BASE || 'https://103.153.73.97';
+    const absUrl = (u: string) => {
+      if (!u) return '';
+      if (/^https?:\/\//.test(u)) return u;
+      if (u.startsWith('/')) return OTA_BASE.replace(/\/$/, '') + u;
+      return OTA_BASE.replace(/\/$/, '') + '/' + u;
+    };
+
     // Cover image
     if (detail.coverImage && typeof detail.coverImage === 'string') {
+      const url = absUrl(detail.coverImage);
       images.push({
-        url: detail.coverImage,
-        fingerprint: fingerprintUrl(detail.coverImage),
+        url,
+        fingerprint: fingerprintUrl(url),
         is_cover: true,
         score: 60,
         source: 'cover',
@@ -107,8 +117,9 @@ async function fetchOtaImages(hotelId: number): Promise<ImageCandidate[]> {
     // Images array
     if (Array.isArray(detail.images)) {
       for (const img of detail.images) {
-        const url = typeof img === 'string' ? img : img?.url;
-        if (!url) continue;
+        const raw = typeof img === 'string' ? img : img?.url;
+        if (!raw) continue;
+        const url = absUrl(raw);
         images.push({
           url,
           fingerprint: fingerprintUrl(url),
