@@ -7004,6 +7004,21 @@ let _tplEditing = null;   // current editing template id (null = create new)
 
 async function loadAgenticTemplates() {
   try {
+    // Load pending suggestions count first (badge)
+    try {
+      const sg = await api('/agentic-templates/suggestions/pending');
+      if (sg?.success) {
+        const n = sg.data.length;
+        const badge = document.getElementById('tpl-suggest-count');
+        if (n > 0) {
+          badge.textContent = `${n} mới`;
+          badge.classList.remove('hidden');
+        } else {
+          badge.classList.add('hidden');
+        }
+      }
+    } catch {}
+
     // Load analytics
     try {
       const a = await api('/agentic-templates/analytics/overview');
@@ -7222,6 +7237,191 @@ async function showTplHistory() {
   } catch (e) { alert('Lỗi: ' + e.message); }
 }
 
+// ═══════════════════════════════════════════════════════════
+// AI SUGGESTIONS (v27B)
+// ═══════════════════════════════════════════════════════════
+
+async function toggleTplSuggestions() {
+  const list = document.getElementById('tpl-suggestions-list');
+  if (list.classList.contains('hidden')) {
+    list.classList.remove('hidden');
+    await reloadTplSuggestions();
+  } else {
+    list.classList.add('hidden');
+  }
+}
+
+async function reloadTplSuggestions() {
+  try {
+    const r = await api('/agentic-templates/suggestions/pending');
+    if (!r?.success) return;
+    const rows = r.data || [];
+    const list = document.getElementById('tpl-suggestions-list');
+
+    if (rows.length === 0) {
+      list.innerHTML = '<div class="text-center text-slate-400 text-sm p-4">Chưa có gợi ý nào. Bấm "Chạy phân tích" để AI quét hội thoại.</div>';
+      return;
+    }
+
+    list.innerHTML = rows.map(s => {
+      const evidence = s.evidence || {};
+      const sourceBadge = {
+        stuck_turns: { label: 'Stuck conversations', color: 'amber' },
+        handoff_log: { label: 'Handoff log', color: 'rose' },
+        low_hit_templates: { label: 'Low-hit templates', color: 'slate' },
+        pattern_repeat: { label: 'Pattern lặp', color: 'indigo' },
+      }[s.analysis_source] || { label: s.analysis_source, color: 'slate' };
+
+      return `
+        <div class="bg-white border border-slate-200 rounded-lg p-3" id="suggest-${s.id}">
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 mb-1">
+                <code class="text-xs font-mono bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">${s.suggested_id}</code>
+                <span class="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-semibold uppercase">${s.category}</span>
+                <span class="text-[10px] bg-${sourceBadge.color}-100 text-${sourceBadge.color}-700 px-1.5 py-0.5 rounded">📊 ${sourceBadge.label}</span>
+                <span class="text-[10px] text-slate-500">AI conf: ${(s.confidence * 100).toFixed(0)}%</span>
+              </div>
+              <div class="text-sm text-slate-700 mb-1">${escapeHtml(s.description || '')}</div>
+              <div class="text-xs text-slate-500 mb-2">💡 ${escapeHtml(evidence.reasoning || '')}</div>
+              <details class="text-xs">
+                <summary class="cursor-pointer text-indigo-600 hover:underline">Xem content + trigger</summary>
+                <pre class="bg-slate-50 p-2 mt-2 rounded whitespace-pre-wrap font-normal text-slate-700">${escapeHtml(s.content)}</pre>
+                <div class="mt-2 text-slate-600"><strong>Trigger:</strong> <code class="bg-slate-100 px-1">${escapeHtml(JSON.stringify(s.trigger_conditions))}</code></div>
+                ${s.quick_replies ? `<div class="mt-1 text-slate-600"><strong>Quick replies:</strong> ${s.quick_replies.map(q => `<span class="bg-slate-100 px-1 rounded">${escapeHtml(q.title)}</span>`).join(' ')}</div>` : ''}
+              </details>
+            </div>
+            <div class="flex flex-col gap-1 shrink-0">
+              <button onclick="approveTplSuggestion(${s.id}, false)" class="px-2 py-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-xs font-medium">✓ Duyệt</button>
+              <button onclick="editTplSuggestion(${s.id})" class="px-2 py-1 bg-indigo-500 hover:bg-indigo-600 text-white rounded text-xs">✏️ Sửa</button>
+              <button onclick="rejectTplSuggestion(${s.id})" class="px-2 py-1 bg-rose-400 hover:bg-rose-500 text-white rounded text-xs">✗ Bỏ</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) { console.error('[suggestions] load fail', e); }
+}
+
+async function analyzeTplSuggestions() {
+  if (!confirm('Chạy phân tích AI? Sẽ gọi Gemini để quét hội thoại stuck/handoff. Mất ~10-30 giây.')) return;
+  try {
+    const btn = document.getElementById('tpl-btn-analyze');
+    const orig = btn.textContent;
+    btn.textContent = '⏳ Đang phân tích...';
+    btn.disabled = true;
+
+    const r = await api('/agentic-templates/suggestions/analyze', { method: 'POST' });
+    btn.textContent = orig;
+    btn.disabled = false;
+
+    if (r?.success) {
+      const stats = r.evidence_stats || {};
+      alert(`✅ Phân tích xong!
+Evidence: ${stats.stuck || 0} stuck · ${stats.handoff || 0} handoff · ${stats.unmatched || 0} messages
+AI đề xuất: ${r.suggestions?.length || 0} templates
+Đã lưu: ${r.suggestions_created || 0} (sau dedup)`);
+
+      // Show suggestions panel + reload
+      document.getElementById('tpl-suggestions-list').classList.remove('hidden');
+      await reloadTplSuggestions();
+      await loadAgenticTemplates();  // refresh count badge
+    } else {
+      alert('Lỗi: ' + (r?.error || 'unknown'));
+    }
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function approveTplSuggestion(id, edited) {
+  if (!edited && !confirm('Duyệt nguyên bản đề xuất này? Template sẽ được thêm vào active list ngay.')) return;
+  try {
+    const r = await api('/agentic-templates/suggestions/' + id + '/approve', {
+      method: 'POST', body: JSON.stringify({}),
+    });
+    if (r?.success) {
+      alert(`✅ Đã duyệt. Template "${r.template_id}" đã active.`);
+      document.getElementById(`suggest-${id}`)?.remove();
+      await loadAgenticTemplates();
+    } else {
+      alert('Lỗi: ' + (r?.error || 'unknown'));
+    }
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function editTplSuggestion(id) {
+  // Load suggestion → populate editor modal → user edits → approve với overrides
+  try {
+    const r = await api('/agentic-templates/suggestions/pending');
+    if (!r?.success) return;
+    const s = r.data.find(x => x.id === id);
+    if (!s) return alert('Không load được suggestion');
+
+    _tplEditing = null;  // Đang create template mới
+    document.getElementById('tpl-modal-title').textContent = `Sửa & Duyệt: ${s.suggested_id}`;
+    document.getElementById('tpl-btn-reset').classList.add('hidden');
+    document.getElementById('tpl-field-id').value = s.suggested_id;
+    document.getElementById('tpl-field-id').disabled = false;
+    document.getElementById('tpl-field-category').value = s.category;
+    document.getElementById('tpl-field-description').value = (s.description || '').replace(/ \| AI: .*$/, '');
+    document.getElementById('tpl-field-content').value = s.content;
+    document.getElementById('tpl-field-trigger').value = s.trigger_conditions ? JSON.stringify(s.trigger_conditions, null, 2) : '';
+    document.getElementById('tpl-field-qr').value = s.quick_replies ? JSON.stringify(s.quick_replies, null, 2) : '';
+    document.getElementById('tpl-field-confidence').value = s.confidence;
+    document.getElementById('tpl-field-active').checked = true;
+    document.getElementById('tpl-preview-out').textContent = '';
+
+    // Override save behavior: call approve with body overrides
+    const saveBtn = document.getElementById('tpl-btn-save');
+    const origClick = saveBtn.onclick;
+    saveBtn.textContent = '✓ Duyệt template';
+    saveBtn.onclick = async () => {
+      try {
+        const body = {
+          category: document.getElementById('tpl-field-category').value,
+          description: document.getElementById('tpl-field-description').value,
+          content: document.getElementById('tpl-field-content').value,
+        };
+        const trg = document.getElementById('tpl-field-trigger').value.trim();
+        if (trg) { try { body.trigger_conditions = JSON.parse(trg); } catch { return alert('Trigger JSON invalid'); } }
+        const qr = document.getElementById('tpl-field-qr').value.trim();
+        if (qr) { try { body.quick_replies = JSON.parse(qr); } catch { return alert('QR JSON invalid'); } }
+
+        const res = await api('/agentic-templates/suggestions/' + id + '/approve', {
+          method: 'POST', body: JSON.stringify(body),
+        });
+        if (res?.success) {
+          alert(`✅ Đã duyệt template "${res.template_id}"`);
+          saveBtn.textContent = '💾 Lưu';
+          saveBtn.onclick = origClick;
+          closeTplModal();
+          document.getElementById(`suggest-${id}`)?.remove();
+          await loadAgenticTemplates();
+        } else {
+          alert('Lỗi: ' + (res?.error || 'unknown'));
+        }
+      } catch (e) { alert('Lỗi: ' + e.message); }
+    };
+
+    document.getElementById('tpl-modal').classList.remove('hidden');
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function rejectTplSuggestion(id) {
+  const note = prompt('Lý do bỏ? (optional)');
+  if (note === null) return;
+  try {
+    const r = await api('/agentic-templates/suggestions/' + id + '/reject', {
+      method: 'POST', body: JSON.stringify({ note }),
+    });
+    if (r?.success) {
+      document.getElementById(`suggest-${id}`)?.remove();
+      await loadAgenticTemplates();
+    } else {
+      alert('Lỗi: ' + (r?.error || 'unknown'));
+    }
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
 // Wire event listeners (delegated — run once)
 document.addEventListener('DOMContentLoaded', () => {
   const byId = (x) => document.getElementById(x);
@@ -7237,6 +7437,10 @@ document.addEventListener('DOMContentLoaded', () => {
     byId('tpl-btn-preview').addEventListener('click', previewTpl);
     byId('tpl-btn-reset').addEventListener('click', resetTplToDefault);
     byId('tpl-btn-history').addEventListener('click', showTplHistory);
+  }
+  if (byId('tpl-btn-analyze')) {
+    byId('tpl-btn-analyze').addEventListener('click', analyzeTplSuggestions);
+    byId('tpl-btn-toggle-suggestions').addEventListener('click', toggleTplSuggestions);
   }
 });
 

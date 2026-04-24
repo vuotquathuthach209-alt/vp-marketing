@@ -1778,8 +1778,31 @@ CREATE TABLE IF NOT EXISTS agentic_templates_history (
   changed_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_agentic_hist ON agentic_templates_history(template_id, changed_at DESC);
+
+-- v27B: AI-proposed template suggestions (admin review queue)
+CREATE TABLE IF NOT EXISTS agentic_template_suggestions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  suggested_id TEXT NOT NULL,              -- slug proposed by AI, ví dụ 'refund_inquiry'
+  category TEXT NOT NULL,
+  description TEXT,
+  content TEXT NOT NULL,                    -- Mustache-like content proposed
+  trigger_conditions TEXT,                  -- JSON
+  quick_replies TEXT,                       -- JSON array
+  confidence REAL DEFAULT 0.7,              -- AI's confidence in this suggestion
+  evidence_json TEXT,                       -- JSON: { conversations: [...], stats: {...} }
+  analysis_source TEXT,                     -- 'stuck_turns' | 'handoff_log' | 'low_hit_templates' | 'pattern_repeat'
+  status TEXT DEFAULT 'pending',            -- pending | approved | rejected | edited
+  reviewed_by TEXT,
+  reviewed_at INTEGER,
+  reviewed_note TEXT,                       -- Admin feedback khi reject/edit
+  approved_template_id TEXT,                -- Nếu approved → id của template cuối cùng
+  hotel_id INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_suggestion_status ON agentic_template_suggestions(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_suggestion_source ON agentic_template_suggestions(analysis_source);
 `);
-console.log('[db] v27 agentic_templates tables ready (DB-driven template engine)');
+console.log('[db] v27 agentic_templates + suggestions tables ready (DB-driven template engine)');
 
 // ═══════════════════════════════════════════════════════════
 // v23 — intent_logs: log mọi message qua Gemini Intent Classifier

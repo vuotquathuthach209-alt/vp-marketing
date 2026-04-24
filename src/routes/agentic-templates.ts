@@ -19,6 +19,13 @@ import { authMiddleware, superadminOnly, AuthRequest } from '../middleware/auth'
 import { db } from '../db';
 import { invalidateCache, renderString, listAllTemplates, loadTemplates } from '../services/agentic/template-engine';
 import { DEFAULT_TEMPLATES, seedTemplates } from '../services/agentic/template-seeder';
+import {
+  runTemplateSuggestionAnalysis,
+  listPendingSuggestions,
+  listAllSuggestions,
+  approveSuggestion,
+  rejectSuggestion,
+} from '../services/agentic/template-suggester';
 
 const router = Router();
 router.use(authMiddleware);
@@ -292,6 +299,84 @@ router.get('/analytics/overview', (_req, res) => {
     `).get();
 
     res.json({ success: true, data: { top_hits: topHits, totals } });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// AI-PROPOSED SUGGESTIONS (v27B) — admin duyệt
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * GET /api/agentic-templates/suggestions/pending
+ * List pending suggestions (admin review queue).
+ */
+router.get('/suggestions/pending', (_req, res) => {
+  try {
+    const rows = listPendingSuggestions(100);
+    const counts = db.prepare(`
+      SELECT status, COUNT(*) as n FROM agentic_template_suggestions GROUP BY status
+    `).all();
+    res.json({ success: true, data: rows, counts });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * GET /api/agentic-templates/suggestions/all?status=
+ */
+router.get('/suggestions/all', (req, res) => {
+  try {
+    const rows = listAllSuggestions(req.query.status as string, 200);
+    res.json({ success: true, data: rows });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * POST /api/agentic-templates/suggestions/analyze
+ * On-demand: chạy analyzer NGAY → gọi Gemini → save suggestions.
+ */
+router.post('/suggestions/analyze', superadminOnly, async (_req, res) => {
+  try {
+    const r = await runTemplateSuggestionAnalysis();
+    res.json({ success: true, ...r });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * POST /api/agentic-templates/suggestions/:id/approve
+ * Duyệt suggestion → insert vào agentic_templates.
+ * Body có thể override: { content?, trigger_conditions?, quick_replies?, description?, category? }
+ */
+router.post('/suggestions/:id/approve', superadminOnly, (req: AuthRequest, res) => {
+  try {
+    const id = Number(req.params.id);
+    const reviewedBy = req.user?.email || 'admin';
+    const r = approveSuggestion(id, reviewedBy, req.body || {});
+    if (!r.success) return res.status(400).json(r);
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * POST /api/agentic-templates/suggestions/:id/reject
+ * Body: { note?: string }
+ */
+router.post('/suggestions/:id/reject', superadminOnly, (req: AuthRequest, res) => {
+  try {
+    const id = Number(req.params.id);
+    const reviewedBy = req.user?.email || 'admin';
+    const r = rejectSuggestion(id, reviewedBy, req.body?.note || '');
+    if (!r.success) return res.status(400).json(r);
+    res.json(r);
   } catch (e: any) {
     res.status(500).json({ success: false, error: e?.message });
   }

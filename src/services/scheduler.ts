@@ -860,5 +860,17 @@ export function startScheduler() {
     }
   });
 
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h, zalo-refresh 20h, zalo-articles 2p');
+  // ── v27B: Template suggestion analyzer — mỗi Chủ nhật 2h sáng ──
+  //         Gemini phân tích stuck/handoff conversations → đề xuất template mới
+  cron.schedule('0 2 * * 0', async () => {
+    try {
+      const { runTemplateSuggestionAnalysis } = require('./agentic/template-suggester');
+      const r = await runTemplateSuggestionAnalysis();
+      console.log(`[scheduler] template-suggestions: evidence=${JSON.stringify(r.evidence_stats)} proposed=${r.suggestions?.length || 0} saved=${r.suggestions_created || 0}`);
+    } catch (e: any) {
+      console.error('[scheduler] template-suggestions error:', e?.message);
+    }
+  });
+
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h, zalo-refresh 20h, zalo-articles 2p, template-suggest CN 2h');
 }

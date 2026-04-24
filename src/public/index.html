@@ -574,6 +574,21 @@
           </div>
         </div>
 
+        <!-- AI Suggestions banner + list -->
+        <div class="max-w-6xl mb-4 bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 rounded-lg p-3">
+          <div class="flex items-center justify-between mb-2">
+            <div>
+              <h3 class="font-bold text-sm">🧠 Gợi ý template từ AI <span id="tpl-suggest-count" class="ml-2 text-xs bg-indigo-500 text-white px-2 py-0.5 rounded-full hidden"></span></h3>
+              <p class="text-xs text-slate-600">AI phân tích hội thoại stuck + handoff → đề xuất template mới. Admin duyệt/sửa/bỏ.</p>
+            </div>
+            <div class="flex gap-2">
+              <button id="tpl-btn-analyze" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-xs font-medium">🔍 Chạy phân tích</button>
+              <button id="tpl-btn-toggle-suggestions" class="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 rounded text-xs">👁 Xem gợi ý</button>
+            </div>
+          </div>
+          <div id="tpl-suggestions-list" class="hidden space-y-2 max-h-[400px] overflow-y-auto mt-2"></div>
+        </div>
+
         <!-- Analytics mini-cards -->
         <div id="tpl-analytics" class="grid grid-cols-4 gap-3 max-w-6xl mb-4"></div>
 
