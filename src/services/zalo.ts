@@ -553,11 +553,15 @@ export async function zaloCreateTimelineArticle(
     }
 
     // Step 3: POST article — type 'normal' = bài viết thường (khác 'video')
-    const payload = {
+    //         cover format: object {image_id: ..., caption: ...} hoặc {image_url: ...}
+    const payload: any = {
       type: 'normal',
       title: opts.title.slice(0, 100),
       description: (opts.description || '').slice(0, 200),
-      cover: coverAttId,
+      cover: {
+        image_id: coverAttId,
+        caption: opts.title.slice(0, 100),
+      },
       body: processedBody,
       author: opts.author || 'Sonder',
       status: opts.status || 'show',
