@@ -21,7 +21,15 @@
 import { db } from '../../db';
 import { safetyCheck } from './safety-guard';
 import { renderTemplate } from './template-library';
-import { selectTemplate, renderTemplateById } from './template-engine';
+import {
+  selectTemplate,
+  selectTemplateWithCandidates,
+  renderTemplateById,
+  trackTemplateUse,
+  detectAndMarkConversion,
+  logSelection,
+  getTemplateById,
+} from './template-engine';
 import { matchTemplate, getStuckTurns, getTurnNumber, computeSlotCompleteness } from './confidence-scorer';
 
 export interface AgenticResult {
@@ -45,6 +53,17 @@ export async function processMessageAgentic(
   opts: { language?: string; imageUrl?: string } = {},
 ): Promise<AgenticResult | null> {
   try {
+    // ═══════════════════════════════════════════
+    // 0. CONVERSION CHECK — nếu msg này là positive signal sau template gần đây
+    //    → mark conversion cho template đó
+    // ═══════════════════════════════════════════
+    try {
+      const conv = detectAndMarkConversion(senderId, msg);
+      if (conv.converted) {
+        console.log(`[agentic] conversion tracked: ${conv.template_id} (${conv.category})`);
+      }
+    } catch {}
+
     // ═══════════════════════════════════════════
     // 1. OBSERVE — gather context
     // ═══════════════════════════════════════════
@@ -93,11 +112,18 @@ export async function processMessageAgentic(
         customer_is_returning: !!customerName,
         message: msg,
       };
-      const selected = selectTemplate(ctx);
+      const selResult = selectTemplateWithCandidates(ctx);
+      const selected = selResult.best;
       const templateId = selected?.id || (customerName ? 'greeting_returning' : 'greeting_opening');
       const t = renderTemplate(templateId, { customerName, customerTier, isVip });
       if (t) {
         console.log(`[agentic] turn 1 (first-ever) → template ${templateId} (no AI)`);
+
+        // Track + log
+        const tplInfo = getTemplateById(templateId);
+        trackTemplateUse(senderId, templateId, tplInfo?.category || 'discovery');
+        logSelection(senderId, hotelId, templateId, ctx, selResult.candidates, t.confidence);
+
         return {
           reply: t.content,
           quick_replies: t.quick_replies,
@@ -106,7 +132,7 @@ export async function processMessageAgentic(
           tier_used: 'template',
           handoff_triggered: false,
           cost_estimate: 'free',
-          meta: { template_id: templateId, turn_number: 1 },
+          meta: { template_id: templateId, turn_number: 1, candidates: selResult.candidates },
         };
       }
     }
@@ -203,7 +229,8 @@ export async function processMessageAgentic(
         confidence_score: safety.confidence.score,
         hotel_id: hotelId,
       };
-      const smart = selectTemplate(smartCtx);
+      const selResult = selectTemplateWithCandidates(smartCtx);
+      const smart = selResult.best;
       const finalId = smart?.id || safety.recommended_template;
       const vars: any = {
         customerName,
@@ -213,6 +240,11 @@ export async function processMessageAgentic(
       };
       const t = renderTemplate(finalId, vars);
       if (t) {
+        // Track + log
+        const tplInfo = getTemplateById(finalId);
+        trackTemplateUse(senderId, finalId, tplInfo?.category || 'misc');
+        logSelection(senderId, hotelId, finalId, smartCtx, selResult.candidates, t.confidence);
+
         return {
           reply: t.content,
           quick_replies: t.quick_replies,
@@ -225,6 +257,7 @@ export async function processMessageAgentic(
             template_id: finalId,
             smart_selected: !!smart,
             reasons: safety.confidence.reasons,
+            candidates: selResult.candidates,
           },
         };
       }

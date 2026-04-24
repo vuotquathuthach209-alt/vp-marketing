@@ -7002,6 +7002,145 @@ document.getElementById('fc-reset')?.addEventListener('click', async () => {
 let _tplList = [];
 let _tplEditing = null;   // current editing template id (null = create new)
 
+async function cloneTpl(id) {
+  const newId = prompt('ID mới (a-z, 0-9, _):', id + '_copy');
+  if (!newId) return;
+  try {
+    const r = await api('/agentic-templates/' + encodeURIComponent(id) + '/clone', {
+      method: 'POST', body: JSON.stringify({ new_id: newId.toLowerCase().replace(/[^a-z0-9_]/g, '_') }),
+    });
+    if (r?.success) {
+      alert(`✅ Đã clone → ${r.new_id}`);
+      await loadAgenticTemplates();
+    } else {
+      alert('Lỗi: ' + (r?.error || 'unknown'));
+    }
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function exportTemplates() {
+  try {
+    const r = await fetch('/api/agentic-templates/export?include_inactive=true', {
+      headers: { 'Authorization': 'Bearer ' + (document.cookie.match(/auth=([^;]+)/)?.[1] || '') },
+      credentials: 'include',
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `agentic-templates-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) { alert('Export lỗi: ' + e.message); }
+}
+
+async function importTemplates(file) {
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const templates = Array.isArray(data) ? data : data.templates;
+    if (!Array.isArray(templates)) return alert('File JSON không đúng format');
+
+    const overwrite = confirm(`Import ${templates.length} templates?\n\n✓ OK = OVERWRITE (ghi đè, lưu history)\n✗ Cancel = SKIP existing`);
+    const r = await api('/agentic-templates/import', {
+      method: 'POST', body: JSON.stringify({ templates, overwrite }),
+    });
+    if (r?.success) {
+      alert(`✅ Import xong!\nInserted: ${r.inserted}\nUpdated: ${r.updated}\nSkipped: ${r.skipped}\nErrors: ${r.errors?.length || 0}`);
+      if (r.errors?.length > 0) console.warn('Import errors:', r.errors);
+      await loadAgenticTemplates();
+    } else {
+      alert('Lỗi: ' + (r?.error || 'unknown'));
+    }
+  } catch (e) { alert('Import lỗi: ' + e.message); }
+}
+
+async function loadTplChart(days) {
+  try {
+    const r = await api('/agentic-templates/analytics/timeseries?days=' + (days || 7));
+    if (!r?.success) return;
+    const { dates, categories, series } = r.data;
+
+    const canvas = document.getElementById('tpl-chart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    // Simple custom chart (no Chart.js dep)
+    const W = canvas.width = canvas.offsetWidth;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    // Find max value for scale
+    let maxVal = 1;
+    for (const cat of categories) {
+      for (const v of series[cat]) if (v > maxVal) maxVal = v;
+    }
+
+    const padL = 30, padR = 10, padT = 10, padB = 20;
+    const chartW = W - padL - padR;
+    const chartH = H - padT - padB;
+
+    // Axes
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padL, padT); ctx.lineTo(padL, H - padB); ctx.lineTo(W - padR, H - padB);
+    ctx.stroke();
+
+    // Y labels
+    ctx.fillStyle = '#64748b';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'right';
+    for (let i = 0; i <= 4; i++) {
+      const val = Math.round(maxVal * i / 4);
+      const y = H - padB - (chartH * i / 4);
+      ctx.fillText(val, padL - 3, y + 3);
+      if (i > 0) {
+        ctx.strokeStyle = '#f1f5f9';
+        ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+      }
+    }
+
+    // X labels (every 2nd date)
+    ctx.textAlign = 'center';
+    dates.forEach((d, i) => {
+      if (i % Math.max(1, Math.floor(dates.length / 7)) === 0) {
+        const x = padL + (chartW * i / Math.max(1, dates.length - 1));
+        ctx.fillText(d.slice(5), x, H - padB + 12);
+      }
+    });
+
+    // Draw series lines
+    const colors = {
+      discovery: '#0ea5e9',   gathering: '#8b5cf6', info: '#10b981',
+      objection: '#f59e0b',   decision: '#6366f1',  handoff: '#f43f5e', misc: '#64748b',
+    };
+
+    for (const cat of categories) {
+      const data = series[cat] || [];
+      if (data.every(v => v === 0)) continue;
+
+      ctx.strokeStyle = colors[cat] || '#64748b';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      data.forEach((v, i) => {
+        const x = padL + (chartW * i / Math.max(1, dates.length - 1));
+        const y = H - padB - (chartH * v / maxVal);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    // Legend
+    const legend = document.getElementById('tpl-chart-legend');
+    legend.innerHTML = categories.map(c => {
+      const total = (series[c] || []).reduce((a, b) => a + b, 0);
+      return `<div class="flex items-center gap-1"><span style="width:10px;height:10px;background:${colors[c]};display:inline-block;border-radius:2px"></span><span class="text-slate-600">${c}: <strong>${total}</strong></span></div>`;
+    }).join('');
+  } catch (e) { console.warn('[chart] fail', e); }
+}
+
 async function loadAgenticTemplates() {
   try {
     // Load pending suggestions count first (badge)
@@ -7038,6 +7177,10 @@ async function loadAgenticTemplates() {
         `).join('');
       }
     } catch {}
+
+    // Load 7-day chart
+    const daysSel = document.getElementById('tpl-chart-days');
+    await loadTplChart(Number(daysSel?.value) || 7);
 
     // Load list
     const r = await api('/agentic-templates');
@@ -7083,6 +7226,7 @@ function renderAgenticTemplatesTable() {
         </div>
         <div class="flex gap-1">
           <button onclick="openTplEditor('${r.id}')" class="px-2 py-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded text-xs">✎ Sửa</button>
+          <button onclick="cloneTpl('${r.id}')" class="px-2 py-1 bg-sky-100 hover:bg-sky-200 text-sky-700 rounded text-xs" title="Nhân bản">🔁</button>
           <button onclick="deleteTpl('${r.id}')" class="px-2 py-1 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded text-xs">${r.active ? '🚫 Tắt' : '✓ Bật'}</button>
         </div>
       </div>
@@ -7241,6 +7385,46 @@ async function showTplHistory() {
 // AI SUGGESTIONS (v27B)
 // ═══════════════════════════════════════════════════════════
 
+// Render evidence snippets — show conversation excerpts to back up AI's proposal
+function renderEvidenceExcerpts(evidence) {
+  if (!evidence) return '';
+  const stuck = evidence.sample_stuck || [];
+  const handoff = evidence.sample_handoff || [];
+  const unmatched = evidence.sample_unmatched || [];
+
+  if (stuck.length === 0 && handoff.length === 0 && unmatched.length === 0) return '';
+
+  const excerpt = (exchange) => (exchange || []).map(m => {
+    const icon = m.role === 'user' ? '👤' : '🤖';
+    const bg = m.role === 'user' ? 'bg-sky-50 border-sky-200' : 'bg-slate-50 border-slate-200';
+    return `<div class="text-xs ${bg} border rounded p-1 mb-0.5"><span class="font-semibold">${icon} ${m.role}:</span> ${escapeHtml(m.msg)}</div>`;
+  }).join('');
+
+  let html = '<details class="mt-2"><summary class="cursor-pointer text-xs text-slate-500 hover:text-slate-700">📋 Bằng chứng (' +
+    (stuck.length + handoff.length) + ' hội thoại, ' + unmatched.length + ' messages lặp)</summary><div class="mt-2 space-y-2">';
+
+  for (const s of stuck.slice(0, 2)) {
+    html += `<div class="border-l-2 border-amber-400 pl-2">
+      <div class="text-[10px] text-amber-700 font-semibold mb-1">⏸ STUCK (${s.stuck_turns} turns) — ${s.sender}</div>
+      ${excerpt(s.last_exchange)}
+    </div>`;
+  }
+  for (const h of handoff.slice(0, 2)) {
+    html += `<div class="border-l-2 border-rose-400 pl-2">
+      <div class="text-[10px] text-rose-700 font-semibold mb-1">📞 HANDOFF (${escapeHtml(h.reason || 'unknown')}) — ${h.sender}</div>
+      ${excerpt(h.last_exchange)}
+    </div>`;
+  }
+  if (unmatched.length > 0) {
+    html += `<div class="border-l-2 border-indigo-400 pl-2">
+      <div class="text-[10px] text-indigo-700 font-semibold mb-1">🔁 TIN NHẮN KHÔNG KHỚP TEMPLATE</div>
+      ${unmatched.slice(0, 5).map(m => `<div class="text-xs bg-indigo-50 border border-indigo-200 rounded p-1 mb-0.5">• ${escapeHtml(m)}</div>`).join('')}
+    </div>`;
+  }
+  html += '</div></details>';
+  return html;
+}
+
 async function toggleTplSuggestions() {
   const list = document.getElementById('tpl-suggestions-list');
   if (list.classList.contains('hidden')) {
@@ -7284,7 +7468,10 @@ async function reloadTplSuggestions() {
               </div>
               <div class="text-sm text-slate-700 mb-1">${escapeHtml(s.description || '')}</div>
               <div class="text-xs text-slate-500 mb-2">💡 ${escapeHtml(evidence.reasoning || '')}</div>
-              <details class="text-xs">
+
+              ${renderEvidenceExcerpts(evidence)}
+
+              <details class="text-xs mt-2">
                 <summary class="cursor-pointer text-indigo-600 hover:underline">Xem content + trigger</summary>
                 <pre class="bg-slate-50 p-2 mt-2 rounded whitespace-pre-wrap font-normal text-slate-700">${escapeHtml(s.content)}</pre>
                 <div class="mt-2 text-slate-600"><strong>Trigger:</strong> <code class="bg-slate-100 px-1">${escapeHtml(JSON.stringify(s.trigger_conditions))}</code></div>
@@ -7441,6 +7628,18 @@ document.addEventListener('DOMContentLoaded', () => {
   if (byId('tpl-btn-analyze')) {
     byId('tpl-btn-analyze').addEventListener('click', analyzeTplSuggestions);
     byId('tpl-btn-toggle-suggestions').addEventListener('click', toggleTplSuggestions);
+  }
+  if (byId('tpl-btn-export')) {
+    byId('tpl-btn-export').addEventListener('click', exportTemplates);
+    byId('tpl-btn-import').addEventListener('click', () => byId('tpl-import-file').click());
+    byId('tpl-import-file').addEventListener('change', (e) => {
+      const f = e.target.files?.[0];
+      if (f) importTemplates(f);
+      e.target.value = '';
+    });
+  }
+  if (byId('tpl-chart-days')) {
+    byId('tpl-chart-days').addEventListener('change', (e) => loadTplChart(Number(e.target.value)));
   }
 });
 

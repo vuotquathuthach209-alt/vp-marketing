@@ -264,6 +264,169 @@ router.get('/:id/history', (req, res) => {
 });
 
 /**
+ * POST /api/agentic-templates/:id/clone
+ * Clone existing template với new_id.
+ * Body: { new_id: string }
+ */
+router.post('/:id/clone', superadminOnly, (req: AuthRequest, res) => {
+  try {
+    const src = db.prepare(`SELECT * FROM agentic_templates WHERE id = ?`).get(req.params.id) as any;
+    if (!src) return res.status(404).json({ success: false, error: 'Source not found' });
+
+    const newId = (req.body?.new_id || '').toString().trim();
+    if (!newId || !/^[a-z0-9_]+$/.test(newId)) {
+      return res.status(400).json({ success: false, error: 'new_id chỉ chứa a-z 0-9 _' });
+    }
+
+    const existing = db.prepare(`SELECT id FROM agentic_templates WHERE id = ?`).get(newId);
+    if (existing) return res.status(409).json({ success: false, error: 'new_id đã tồn tại' });
+
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO agentic_templates
+        (id, category, description, trigger_conditions, content, quick_replies, confidence, active, hotel_id, version, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 1, ?, ?)
+    `).run(
+      newId,
+      src.category,
+      `${src.description} (cloned from ${src.id})`,
+      src.trigger_conditions,
+      src.content,
+      src.quick_replies,
+      src.confidence,
+      src.hotel_id,
+      now, now,
+    );
+    invalidateCache();
+    res.json({ success: true, new_id: newId });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * GET /api/agentic-templates/export
+ * Export all active templates as JSON array (backup / share).
+ */
+router.get('/export', (req, res) => {
+  try {
+    const includeInactive = req.query.include_inactive === 'true';
+    const rows = db.prepare(`
+      SELECT id, category, description, trigger_conditions, content, quick_replies, confidence, active, hotel_id
+      FROM agentic_templates
+      ${includeInactive ? '' : 'WHERE active = 1'}
+      ORDER BY category, id
+    `).all() as any[];
+
+    const exported = rows.map(r => ({
+      id: r.id,
+      category: r.category,
+      description: r.description,
+      trigger_conditions: r.trigger_conditions ? JSON.parse(r.trigger_conditions) : null,
+      content: r.content,
+      quick_replies: r.quick_replies ? JSON.parse(r.quick_replies) : null,
+      confidence: r.confidence,
+      active: !!r.active,
+      hotel_id: r.hotel_id,
+    }));
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="agentic-templates-${new Date().toISOString().slice(0, 10)}.json"`);
+    res.json({ version: '1.0', exported_at: Date.now(), templates: exported });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * POST /api/agentic-templates/import
+ * Import templates from JSON backup.
+ * Body: { templates: [...], overwrite?: boolean }
+ * - overwrite=false (default): skip templates đã tồn tại
+ * - overwrite=true: update + save history cho existing
+ */
+router.post('/import', superadminOnly, (req: AuthRequest, res) => {
+  try {
+    const templates = req.body?.templates;
+    const overwrite = req.body?.overwrite === true;
+    if (!Array.isArray(templates)) {
+      return res.status(400).json({ success: false, error: 'templates phải là array' });
+    }
+
+    const now = Date.now();
+    let inserted = 0, updated = 0, skipped = 0, errors = [];
+
+    for (const t of templates) {
+      try {
+        if (!t.id || !t.category || !t.content) {
+          errors.push({ id: t.id || '?', error: 'Missing required fields' });
+          continue;
+        }
+
+        const existing = db.prepare(`SELECT * FROM agentic_templates WHERE id = ?`).get(t.id) as any;
+
+        if (existing && !overwrite) {
+          skipped++;
+          continue;
+        }
+
+        if (existing) {
+          // Save history then update
+          db.prepare(`
+            INSERT INTO agentic_templates_history (template_id, version, content, trigger_conditions, quick_replies, changed_by, changed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run(t.id, existing.version, existing.content, existing.trigger_conditions, existing.quick_replies, `${req.user?.email || 'admin'} (IMPORT)`, now);
+
+          db.prepare(`
+            UPDATE agentic_templates
+            SET category = ?, description = ?, trigger_conditions = ?, content = ?, quick_replies = ?,
+                confidence = ?, active = ?, hotel_id = ?, version = version + 1, updated_at = ?
+            WHERE id = ?
+          `).run(
+            t.category,
+            t.description || '',
+            t.trigger_conditions ? JSON.stringify(t.trigger_conditions) : null,
+            t.content,
+            t.quick_replies ? JSON.stringify(t.quick_replies) : null,
+            Number(t.confidence) || 0.9,
+            t.active === false ? 0 : 1,
+            Number(t.hotel_id) || 0,
+            now,
+            t.id,
+          );
+          updated++;
+        } else {
+          db.prepare(`
+            INSERT INTO agentic_templates
+              (id, category, description, trigger_conditions, content, quick_replies, confidence, active, hotel_id, version, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+          `).run(
+            t.id,
+            t.category,
+            t.description || '',
+            t.trigger_conditions ? JSON.stringify(t.trigger_conditions) : null,
+            t.content,
+            t.quick_replies ? JSON.stringify(t.quick_replies) : null,
+            Number(t.confidence) || 0.9,
+            t.active === false ? 0 : 1,
+            Number(t.hotel_id) || 0,
+            now, now,
+          );
+          inserted++;
+        }
+      } catch (e: any) {
+        errors.push({ id: t.id, error: e?.message });
+      }
+    }
+
+    invalidateCache();
+    res.json({ success: true, inserted, updated, skipped, errors });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
  * POST /api/agentic-templates/cache/invalidate
  * Force refresh cache (sau khi edit trực tiếp DB).
  */
@@ -272,6 +435,84 @@ router.post('/cache/invalidate', superadminOnly, (_req, res) => {
     invalidateCache();
     loadTemplates(true);
     res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * GET /api/agentic-templates/analytics/timeseries
+ * Last N days hits + conversions grouped by category, daily buckets.
+ * Query: ?days=7
+ */
+router.get('/analytics/timeseries', (req, res) => {
+  try {
+    const days = Math.min(30, Math.max(1, Number(req.query.days) || 7));
+    const sinceTs = Date.now() - days * 24 * 3600 * 1000;
+
+    // Use agentic_template_selections for per-day hit count
+    const rows = db.prepare(`
+      SELECT
+        t.category,
+        strftime('%Y-%m-%d', datetime(s.created_at/1000, 'unixepoch')) as day,
+        COUNT(*) as hits
+      FROM agentic_template_selections s
+      JOIN agentic_templates t ON t.id = s.template_id
+      WHERE s.created_at > ?
+      GROUP BY t.category, day
+      ORDER BY day ASC, t.category ASC
+    `).all(sinceTs) as any[];
+
+    // Build ordered dates list
+    const dates: string[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 24 * 3600 * 1000);
+      dates.push(d.toISOString().slice(0, 10));
+    }
+
+    // Pivot: category → date → hits
+    const cats = ['discovery', 'gathering', 'info', 'objection', 'decision', 'handoff', 'misc'];
+    const series: Record<string, number[]> = {};
+    for (const cat of cats) series[cat] = dates.map(() => 0);
+
+    for (const r of rows) {
+      const idx = dates.indexOf(r.day);
+      if (idx >= 0 && series[r.category]) series[r.category][idx] = r.hits;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        dates,
+        categories: cats,
+        series,
+        total_hits: rows.reduce((sum, r) => sum + r.hits, 0),
+      },
+    });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * GET /api/agentic-templates/:id/selections
+ * Recent selection logs for a specific template (debug: why picked, top competitors).
+ */
+router.get('/:id/selections', (req, res) => {
+  try {
+    const rows = db.prepare(`
+      SELECT sender_id, candidates_json, confidence_score, turn_number, intent, created_at
+      FROM agentic_template_selections
+      WHERE template_id = ?
+      ORDER BY created_at DESC
+      LIMIT 20
+    `).all(req.params.id) as any[];
+    const parsed = rows.map(r => ({
+      ...r,
+      sender_id: (r.sender_id || '').substring(0, 14) + '...',
+      candidates: r.candidates_json ? JSON.parse(r.candidates_json) : [],
+    }));
+    res.json({ success: true, data: parsed });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e?.message });
   }

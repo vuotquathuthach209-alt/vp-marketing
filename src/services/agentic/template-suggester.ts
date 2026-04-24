@@ -391,9 +391,27 @@ export async function runTemplateSuggestionAnalysis(): Promise<SuggestResult> {
 
     const evidence = {
       source_stats: stats,
-      sample_stuck: stuck.slice(0, 3).map(c => ({ sender: c.sender_id.substring(0, 20), intent: c.intent })),
-      sample_handoff: handoff.slice(0, 3).map(c => ({ reason: c.handoff_reason })),
+      // Include actual conversation snippets (anonymized) as proof
+      sample_stuck: stuck.slice(0, 3).map(c => ({
+        sender: c.sender_id.substring(0, 14) + '...',
+        intent: c.intent,
+        stuck_turns: c.stuck_turns,
+        last_exchange: c.messages.slice(-4).map(m => ({
+          role: m.role,
+          msg: m.message.substring(0, 150),
+        })),
+      })),
+      sample_handoff: handoff.slice(0, 3).map(c => ({
+        sender: c.sender_id.substring(0, 14) + '...',
+        reason: c.handoff_reason,
+        last_exchange: c.messages.slice(-4).map(m => ({
+          role: m.role,
+          msg: m.message.substring(0, 150),
+        })),
+      })),
+      sample_unmatched: unmatched.slice(0, 5),
       reasoning: s.reasoning,
+      evidence_count: s.evidence_count,
     };
 
     const id = saveSuggestion(s, source, evidence);

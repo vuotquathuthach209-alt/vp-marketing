@@ -570,6 +570,9 @@
           </div>
           <div class="flex gap-2">
             <button id="tpl-btn-refresh" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-sm">🔄 Reload</button>
+            <button id="tpl-btn-export" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-sm" title="Export all templates as JSON">📤 Export</button>
+            <button id="tpl-btn-import" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-sm" title="Import JSON file">📥 Import</button>
+            <input id="tpl-import-file" type="file" accept=".json" class="hidden">
             <button id="tpl-btn-new" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm font-medium">+ Tạo mới</button>
           </div>
         </div>
@@ -591,6 +594,20 @@
 
         <!-- Analytics mini-cards -->
         <div id="tpl-analytics" class="grid grid-cols-4 gap-3 max-w-6xl mb-4"></div>
+
+        <!-- 7-day hits chart -->
+        <div class="bg-white rounded-lg border border-slate-200 p-3 max-w-6xl mb-4">
+          <div class="flex justify-between items-center mb-2">
+            <h3 class="text-sm font-semibold text-slate-700">📈 Hits 7 ngày qua theo category</h3>
+            <select id="tpl-chart-days" class="text-xs border rounded px-2 py-0.5">
+              <option value="7">7 ngày</option>
+              <option value="14">14 ngày</option>
+              <option value="30">30 ngày</option>
+            </select>
+          </div>
+          <canvas id="tpl-chart" height="60"></canvas>
+          <div id="tpl-chart-legend" class="flex flex-wrap gap-3 mt-2 text-xs"></div>
+        </div>
 
         <!-- Filter -->
         <div class="flex gap-2 mb-3 text-sm">

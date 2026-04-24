@@ -241,8 +241,16 @@ export interface SelectionContext {
  * Trả về template có score match cao nhất.
  */
 export function selectTemplate(ctx: SelectionContext): DbTemplate | null {
+  const result = selectTemplateWithCandidates(ctx);
+  return result.best;
+}
+
+/**
+ * Version mở rộng: trả về best + top candidates để log debug.
+ */
+export function selectTemplateWithCandidates(ctx: SelectionContext): { best: DbTemplate | null; candidates: Array<{ id: string; score: number }> } {
   const templates = loadTemplates();
-  let best: { t: DbTemplate; score: number } | null = null;
+  const scored: Array<{ t: DbTemplate; score: number }> = [];
 
   for (const t of templates) {
     const cond = t.trigger_conditions;
@@ -252,17 +260,20 @@ export function selectTemplate(ctx: SelectionContext): DbTemplate | null {
     if (ctx.hotel_id !== undefined && t.hotel_id !== 0 && t.hotel_id !== ctx.hotel_id) continue;
 
     const score = matchScore(cond, ctx);
-    if (score === 0) continue;  // no match
+    if (score === 0) continue;
 
     // Prefer hotel-specific over global nếu tie
     const finalScore = score + (t.hotel_id > 0 ? 0.01 : 0);
-
-    if (!best || finalScore > best.score) {
-      best = { t, score: finalScore };
-    }
+    scored.push({ t, score: finalScore });
   }
 
-  return best?.t || null;
+  // Sort descending
+  scored.sort((a, b) => b.score - a.score);
+
+  return {
+    best: scored[0]?.t || null,
+    candidates: scored.slice(0, 5).map(s => ({ id: s.t.id, score: Math.round(s.score * 100) / 100 })),
+  };
 }
 
 /**
@@ -346,11 +357,11 @@ function matchScore(cond: any, ctx: SelectionContext): number {
     else return 0;
   }
 
-  // keywords_any: ANY match
+  // keywords_any: ANY match (accent-insensitive + normalized)
   if (Array.isArray(cond.keywords_any) && cond.keywords_any.length > 0) {
     total++;
-    const m = (ctx.message || '').toLowerCase();
-    const hit = cond.keywords_any.some((kw: string) => m.includes(kw.toLowerCase()));
+    const m = normalizeForMatch(ctx.message || '');
+    const hit = cond.keywords_any.some((kw: string) => m.includes(normalizeForMatch(kw)));
     if (hit) matches++;
     else return 0;
   }
@@ -391,12 +402,118 @@ function safeParse(s: string): any {
 }
 
 /**
+ * Normalize Vietnamese text cho keyword matching:
+ *   - Lowercase
+ *   - Strip diacritics (NFD + remove combining marks)
+ *   - "thú cưng" → "thu cung", "hoàn tiền" → "hoan tien"
+ *
+ * Giúp match khi user gõ không dấu hoặc typo nhẹ.
+ */
+export function normalizeForMatch(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')  // Remove diacritic marks
+    .replace(/đ/gi, 'd')                // Handle Vietnamese 'đ' → 'd'
+    .toLowerCase()
+    .trim();
+}
+
+/**
  * Log template usage feedback (conversion tracking).
  */
 export function markConversion(templateId: string): void {
   try {
     db.prepare(`UPDATE agentic_templates SET conversions = conversions + 1 WHERE id = ?`).run(templateId);
   } catch {}
+}
+
+/**
+ * Track which template was sent to this sender (for later conversion attribution).
+ */
+export function trackTemplateUse(senderId: string, templateId: string, category: string): void {
+  try {
+    db.prepare(`
+      INSERT INTO agentic_template_tracking (sender_id, last_template_id, last_template_category, last_sent_at, conversion_marked)
+      VALUES (?, ?, ?, ?, 0)
+      ON CONFLICT(sender_id) DO UPDATE SET
+        last_template_id = excluded.last_template_id,
+        last_template_category = excluded.last_template_category,
+        last_sent_at = excluded.last_sent_at,
+        conversion_marked = 0
+    `).run(senderId, templateId, category, Date.now());
+  } catch (e: any) { console.warn('[template-engine] trackTemplateUse err:', e?.message); }
+}
+
+/**
+ * Check if user message is a positive signal → count conversion for last template.
+ * Positive signals:
+ *   - Contains phone number (10-11 digits)
+ *   - Words: "ok", "đặt", "chốt", "đúng", "yes", "đồng ý", "xin SĐT"
+ *   - Confirmation after booking_confirm_summary
+ */
+const POSITIVE_RE = /\b(ok|oke|okay|đặt|chốt|đúng|yes|ờ|vâng|ừ|đồng ý|xin sđt|gọi đi)\b/i;
+const PHONE_RE = /(?:\+?84|0)[0-9]{9,10}/;
+
+export function detectAndMarkConversion(senderId: string, userMsg: string): { converted: boolean; template_id?: string; category?: string } {
+  try {
+    const row = db.prepare(`
+      SELECT last_template_id, last_template_category, last_sent_at, conversion_marked
+      FROM agentic_template_tracking WHERE sender_id = ?
+    `).get(senderId) as any;
+    if (!row || row.conversion_marked) return { converted: false };
+
+    // TTL: only count if last template was sent within 30 minutes
+    const TTL_MS = 30 * 60 * 1000;
+    if (Date.now() - row.last_sent_at > TTL_MS) return { converted: false };
+
+    const msg = userMsg.toLowerCase();
+    const hasPositive = POSITIVE_RE.test(msg) || PHONE_RE.test(userMsg);
+    if (!hasPositive) return { converted: false };
+
+    // Only count conversions for certain categories (not smalltalk / greeting)
+    const CONVERSION_CATS = new Set(['gathering', 'decision', 'info', 'objection']);
+    if (!CONVERSION_CATS.has(row.last_template_category)) return { converted: false };
+
+    // Mark!
+    markConversion(row.last_template_id);
+    db.prepare(`UPDATE agentic_template_tracking SET conversion_marked = 1 WHERE sender_id = ?`).run(senderId);
+
+    console.log(`[template-engine] conversion! sender=${senderId.substring(0, 20)} template=${row.last_template_id}`);
+    return { converted: true, template_id: row.last_template_id, category: row.last_template_category };
+  } catch (e: any) {
+    console.warn('[template-engine] detectConversion err:', e?.message);
+    return { converted: false };
+  }
+}
+
+/**
+ * Log decision: which template was picked, from which candidates.
+ */
+export function logSelection(
+  senderId: string,
+  hotelId: number,
+  templateId: string,
+  ctx: SelectionContext,
+  candidates: Array<{ id: string; score: number }>,
+  confidence: number,
+): void {
+  try {
+    db.prepare(`
+      INSERT INTO agentic_template_selections
+        (sender_id, hotel_id, template_id, context_json, candidates_json, confidence_score, turn_number, intent, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      senderId,
+      hotelId,
+      templateId,
+      JSON.stringify(ctx),
+      JSON.stringify(candidates.slice(0, 3)),
+      confidence,
+      ctx.turn_number || 0,
+      ctx.intent || 'unknown',
+      Date.now(),
+    );
+  } catch (e: any) { console.warn('[template-engine] logSelection err:', e?.message); }
 }
 
 /**

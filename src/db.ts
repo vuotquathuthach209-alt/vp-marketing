@@ -1801,8 +1801,33 @@ CREATE TABLE IF NOT EXISTS agentic_template_suggestions (
 );
 CREATE INDEX IF NOT EXISTS idx_suggestion_status ON agentic_template_suggestions(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_suggestion_source ON agentic_template_suggestions(analysis_source);
+
+-- v27 Polish: Selection decision log (debug + analytics)
+CREATE TABLE IF NOT EXISTS agentic_template_selections (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sender_id TEXT NOT NULL,
+  hotel_id INTEGER,
+  template_id TEXT NOT NULL,
+  context_json TEXT,                        -- Full context at decision time
+  candidates_json TEXT,                     -- Top 3 candidates + scores
+  confidence_score REAL,
+  turn_number INTEGER,
+  intent TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sel_sender ON agentic_template_selections(sender_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sel_template ON agentic_template_selections(template_id, created_at DESC);
+
+-- v27 Polish: Track which template was last used per sender (for markConversion)
+CREATE TABLE IF NOT EXISTS agentic_template_tracking (
+  sender_id TEXT PRIMARY KEY,
+  last_template_id TEXT NOT NULL,
+  last_template_category TEXT,
+  last_sent_at INTEGER NOT NULL,
+  conversion_marked INTEGER DEFAULT 0
+);
 `);
-console.log('[db] v27 agentic_templates + suggestions tables ready (DB-driven template engine)');
+console.log('[db] v27 agentic_templates + suggestions + selections tables ready (DB-driven template engine)');
 
 // ═══════════════════════════════════════════════════════════
 // v23 — intent_logs: log mọi message qua Gemini Intent Classifier
