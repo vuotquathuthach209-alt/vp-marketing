@@ -8169,10 +8169,7 @@ async function vsLoadDashboard() {
   }
 }
 
-function switchTab(tab) {
-  const btn = document.querySelector(`[data-tab="${tab}"]`);
-  if (btn) btn.click();
-}
+// (Sử dụng switchTab gốc line 105 — không redefine)
 
 // ── CREATE ──
 function vsInitCreate() {
