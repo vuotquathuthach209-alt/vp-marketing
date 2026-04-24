@@ -21,6 +21,7 @@
 import { db } from '../../db';
 import { safetyCheck } from './safety-guard';
 import { renderTemplate } from './template-library';
+import { selectTemplate, renderTemplateById } from './template-engine';
 import { matchTemplate, getStuckTurns, getTurnNumber, computeSlotCompleteness } from './confidence-scorer';
 
 export interface AgenticResult {
@@ -80,11 +81,21 @@ export async function processMessageAgentic(
     // ═══════════════════════════════════════════
     // TURN 1 FAST-PATH: pure greeting (template)
     // turnNumber = số user msg ĐÃ CÓ trong DB. 0 = msg này là msg đầu.
+    // Smart selection: thử selectTemplate() với context trước (khớp trigger_conditions
+    // như first_with_urgency / first_vague / first_with_question). Fallback greeting_opening.
     // ═══════════════════════════════════════════
     const isFirstTurn = turnNumber === 0 || history.filter(h => h.role === 'user').length === 0;
     if (isFirstTurn) {
-      const templateId = customerName ? 'greeting_returning' : 'greeting_opening';
-      const t = renderTemplate(templateId, { customerName, customerTier });
+      const isVip = customerTier === 'vip';
+      const ctx: any = {
+        turn_number: 1,
+        customer_is_new: !customerName,
+        customer_is_returning: !!customerName,
+        message: msg,
+      };
+      const selected = selectTemplate(ctx);
+      const templateId = selected?.id || (customerName ? 'greeting_returning' : 'greeting_opening');
+      const t = renderTemplate(templateId, { customerName, customerTier, isVip });
       if (t) {
         console.log(`[agentic] turn 1 (first-ever) → template ${templateId} (no AI)`);
         return {
@@ -177,7 +188,30 @@ export async function processMessageAgentic(
     }
 
     if (safety.action === 'proceed_template' && safety.recommended_template) {
-      const t = renderTemplate(safety.recommended_template, { customerName, customerTier });
+      // Smart selection fallback: nếu có template khớp context hơn trong DB → ưu tiên.
+      const smartCtx: any = {
+        turn_number: turnNumber,
+        intent,
+        sub_category: subCategory,
+        rental_mode: isLongTerm ? 'long_term' : 'short_term',
+        slot_completeness: slotCompleteness,
+        stuck_turns: stuckTurns,
+        customer_is_new: !customerName,
+        customer_is_returning: !!customerName,
+        message: msg,
+        rag_match_score: ragMatchScore,
+        confidence_score: safety.confidence.score,
+        hotel_id: hotelId,
+      };
+      const smart = selectTemplate(smartCtx);
+      const finalId = smart?.id || safety.recommended_template;
+      const vars: any = {
+        customerName,
+        customerTier,
+        isVip: customerTier === 'vip',
+        topic: subCategory,
+      };
+      const t = renderTemplate(finalId, vars);
       if (t) {
         return {
           reply: t.content,
@@ -188,7 +222,8 @@ export async function processMessageAgentic(
           handoff_triggered: false,
           cost_estimate: 'free',
           meta: {
-            template_id: safety.recommended_template,
+            template_id: finalId,
+            smart_selected: !!smart,
             reasons: safety.confidence.reasons,
           },
         };

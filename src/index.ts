@@ -43,6 +43,7 @@ import knowledgeRouter from './routes/knowledge';
 import botMonitorRouter from './routes/bot-monitor';
 import contentIntelRouter from './routes/content-intel';
 import feedbackLoopRouter from './routes/feedback-loop';
+import agenticTemplatesRouter from './routes/agentic-templates';
 import { syncHubRouter, syncHubAdminRouter, syncHubDocsRouter } from './routes/sync-hub';
 import ocrRouter from './routes/ocr';
 import domainDataRouter from './routes/domain-data';
@@ -173,6 +174,7 @@ app.use('/api/conversations', conversationsRouter);
 app.use('/api/bot-monitor', botMonitorRouter);
 app.use('/api/content-intel', contentIntelRouter);
 app.use('/api/feedback-loop', feedbackLoopRouter);
+app.use('/api/agentic-templates', agenticTemplatesRouter);
 app.use('/api/sync', syncHubRouter);             // HMAC auth for OTA team
 app.use('/api/sync-admin', syncHubAdminRouter);  // UI admin (cookie auth)
 app.use('/sync-hub', syncHubDocsRouter);         // Public docs page
@@ -276,6 +278,13 @@ app.listen(config.port, () => {
       } catch (e: any) { console.warn('[boot] wiki re-seed fail:', e?.message); }
     }
   } catch (e: any) { console.warn('[boot] brand migrator fail:', e?.message); }
+
+  // v27: Agentic template seeder — seed 25 default templates vào agentic_templates
+  //       table nếu empty hoặc có template mới trong code.
+  try {
+    const { autoSeedIfNeeded } = require('./services/agentic/template-seeder');
+    autoSeedIfNeeded();
+  } catch (e: any) { console.warn('[boot] agentic template seed fail:', e?.message); }
 
   startScheduler();
   startTelegramBot();

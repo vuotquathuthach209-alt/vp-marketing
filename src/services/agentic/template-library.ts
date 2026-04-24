@@ -1,15 +1,19 @@
 /**
  * Template Library — v27 Agentic Bot
  *
- * 15 core templates cover 80% conversational cases.
+ * PRIMARY: Load templates từ DB (agentic_templates table) qua template-engine.
+ * FALLBACK: 15 hardcoded templates (nếu DB empty / error).
+ *
+ * Admin có thể edit content live qua admin UI. Cache 5 phút.
+ *
  * Mỗi template:
  *   - Không dùng AI (cost = 0)
  *   - Đúng persona em/anh/chị
  *   - Có quick_replies phù hợp
- *   - Ngữ cảnh rõ ràng (turn_number, customer_type)
- *
- * Variables trong template: ${hotelName}, ${hotline}, ${price}, etc.
+ *   - Mustache-like vars: {{customerName}}, {{hotline}}, {{missingSlots}}...
  */
+
+import { renderTemplateById, getTemplateById as getDbTemplate } from './template-engine';
 
 export interface TemplateVars {
   hotelName?: string;
@@ -18,8 +22,15 @@ export interface TemplateVars {
   district?: string;
   customerName?: string;
   customerTier?: string;
+  isVip?: boolean;
   missingSlots?: string;
   turnNumber?: number;
+  topic?: string;
+  answerPreview?: string;
+  checkinDate?: string;
+  nights?: number | string;
+  guests?: string;
+  [key: string]: any;
 }
 
 export interface Template {
@@ -291,20 +302,79 @@ Chúc anh/chị một ngày tốt lành! 🌸`,
 };
 
 /**
- * Get template by ID.
+ * Template ID alias map — Seeder dùng ID khác (first_contact_warm) nhưng legacy code
+ * gọi 'greeting_opening'. Map để không break orchestrator / safety-guard.
+ */
+const ID_ALIASES: Record<string, string> = {
+  greeting_opening: 'first_contact_warm',
+  greeting_returning: 'returning_customer_greet',
+  discover_short_stay: 'discover_short_stay_batch',
+  discover_long_stay: 'discover_long_stay_batch',
+  discover_clarify_intent: 'first_vague',
+  info_price_range: 'price_overview',
+  info_location_overview: 'location_inquiry',
+  handoff_offer: 'offer_handoff_soft',
+  handoff_execute: 'force_handoff_apology',
+  safety_unknown: 'outside_scope_safety',
+  ack_slots_partial: 'partial_info_gentle',
+  booking_confirm_summary: 'confirm_booking_summary',
+  smalltalk_acknowledge: 'smalltalk_polite',
+  bye_friendly: 'friendly_goodbye',
+};
+
+/**
+ * Get template by ID (DB first, then hardcoded fallback).
  */
 export function getTemplate(id: string): Template | null {
+  // Try DB via alias OR direct id
+  const dbId = ID_ALIASES[id] || id;
+  try {
+    const dbTemplate = getDbTemplate(dbId);
+    if (dbTemplate) {
+      return {
+        id: dbTemplate.id,
+        description: dbTemplate.description,
+        content: (vars: TemplateVars) => {
+          const rendered = renderTemplateById(dbId, vars as any);
+          return rendered?.content || '';
+        },
+        quick_replies: dbTemplate.quick_replies
+          ? () => dbTemplate.quick_replies!
+          : undefined,
+        confidence: dbTemplate.confidence,
+      };
+    }
+  } catch {}
+
+  // Fallback: hardcoded
   return TEMPLATES[id] || null;
 }
 
 /**
  * Render template với variables.
+ * DB-first: thử load từ agentic_templates, fallback hardcoded nếu không có.
  */
 export function renderTemplate(
   id: string,
   vars: TemplateVars = {},
 ): { content: string; quick_replies?: Array<{ title: string; payload: string }>; confidence: number } | null {
-  const t = getTemplate(id);
+  // Try DB (with alias resolution)
+  const dbId = ID_ALIASES[id] || id;
+  try {
+    const r = renderTemplateById(dbId, vars as any);
+    if (r) {
+      return {
+        content: r.content,
+        quick_replies: r.quick_replies,
+        confidence: r.confidence,
+      };
+    }
+  } catch (e: any) {
+    console.warn('[template-library] DB render fail for', id, ':', e?.message);
+  }
+
+  // Fallback: hardcoded
+  const t = TEMPLATES[id];
   if (!t) return null;
   return {
     content: t.content(vars),
@@ -315,8 +385,16 @@ export function renderTemplate(
 
 /**
  * List all templates (for admin UI).
+ * DB first (active only), fallback hardcoded nếu DB empty.
  */
 export function listTemplates(): Array<{ id: string; description: string }> {
+  try {
+    const { loadTemplates } = require('./template-engine');
+    const dbList = loadTemplates() as Array<{ id: string; description: string }>;
+    if (dbList.length > 0) {
+      return dbList.map(t => ({ id: t.id, description: t.description }));
+    }
+  } catch {}
   return Object.values(TEMPLATES).map(t => ({
     id: t.id,
     description: t.description,

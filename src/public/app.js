@@ -115,6 +115,7 @@ function switchTab(tab) {
   if (tab === 'settings') { loadSettings(); loadAllProviderKeys(); loadAiTier(); loadSysConfig(); }
   if (tab === 'campaigns') loadCampaigns();
   if (tab === 'autoreply') loadAutoReply();
+  if (tab === 'templates') loadAgenticTemplates();
   if (tab === 'wiki') loadWiki();
   if (tab === 'analytics') loadAnalytics();
   if (tab === 'autopilot') loadAutopilotStatus();
@@ -6992,6 +6993,251 @@ document.getElementById('fc-reset')?.addEventListener('click', async () => {
     closeFunnelConvo();
     loadFunnelAnalytics();
   } catch (e) { alert('Lỗi: ' + e.message); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// AGENTIC TEMPLATES (v27)
+// ═══════════════════════════════════════════════════════════════
+
+let _tplList = [];
+let _tplEditing = null;   // current editing template id (null = create new)
+
+async function loadAgenticTemplates() {
+  try {
+    // Load analytics
+    try {
+      const a = await api('/agentic-templates/analytics/overview');
+      if (a?.success) {
+        const t = a.data.totals || {};
+        const cards = [
+          { label: 'Templates active', value: t.templates_active || 0, color: 'emerald' },
+          { label: 'Total hits', value: t.total_hits || 0, color: 'sky' },
+          { label: 'Conversions', value: t.total_conversions || 0, color: 'amber' },
+          { label: 'Conversion rate', value: ((t.total_conversions || 0) / Math.max(1, t.total_hits || 1) * 100).toFixed(1) + '%', color: 'violet' },
+        ];
+        document.getElementById('tpl-analytics').innerHTML = cards.map(c => `
+          <div class="bg-white rounded-lg border border-slate-200 p-3">
+            <div class="text-xs text-slate-500">${c.label}</div>
+            <div class="text-2xl font-bold text-${c.color}-600">${c.value}</div>
+          </div>
+        `).join('');
+      }
+    } catch {}
+
+    // Load list
+    const r = await api('/agentic-templates');
+    if (r?.success) {
+      _tplList = r.data;
+      renderAgenticTemplatesTable();
+    }
+  } catch (e) {
+    console.error('[templates] load fail', e);
+  }
+}
+
+function renderAgenticTemplatesTable() {
+  const cat = document.getElementById('tpl-filter-category').value;
+  const q = (document.getElementById('tpl-filter-search').value || '').toLowerCase();
+  const showInactive = document.getElementById('tpl-filter-inactive').checked;
+
+  let rows = _tplList;
+  if (cat) rows = rows.filter(r => r.category === cat);
+  if (q) rows = rows.filter(r => (r.id + ' ' + (r.description || '')).toLowerCase().includes(q));
+  if (!showInactive) rows = rows.filter(r => r.active);
+
+  const catBadge = { discovery: 'sky', gathering: 'violet', info: 'emerald', objection: 'amber', decision: 'indigo', handoff: 'rose', misc: 'slate' };
+
+  document.getElementById('tpl-table').innerHTML = rows.length === 0
+    ? '<div class="p-4 text-center text-slate-400 text-sm">Không có template khớp filter.</div>'
+    : rows.map(r => `
+      <div class="p-3 hover:bg-slate-50 flex items-start gap-3 ${!r.active ? 'opacity-50' : ''}">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 mb-1">
+            <code class="text-xs font-mono bg-slate-100 px-1.5 py-0.5 rounded">${r.id}</code>
+            <span class="text-[10px] bg-${catBadge[r.category] || 'slate'}-100 text-${catBadge[r.category] || 'slate'}-700 px-1.5 py-0.5 rounded font-semibold uppercase">${r.category}</span>
+            ${!r.active ? '<span class="text-[10px] bg-slate-300 text-slate-700 px-1.5 py-0.5 rounded">INACTIVE</span>' : ''}
+            ${r.hotel_id > 0 ? `<span class="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">hotel #${r.hotel_id}</span>` : ''}
+          </div>
+          <div class="text-sm text-slate-700 mb-1">${escapeHtml(r.description || '(no description)')}</div>
+          <div class="text-xs text-slate-400 line-clamp-2 font-normal">${escapeHtml((r.content || '').substring(0, 160))}${(r.content || '').length > 160 ? '…' : ''}</div>
+          <div class="text-xs text-slate-400 mt-1">
+            📊 ${r.hits || 0} hits · ${r.conversions || 0} conv
+            ${r.last_used_at ? '· last: ' + new Date(r.last_used_at).toLocaleString('vi-VN') : ''}
+            · v${r.version}
+          </div>
+        </div>
+        <div class="flex gap-1">
+          <button onclick="openTplEditor('${r.id}')" class="px-2 py-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded text-xs">✎ Sửa</button>
+          <button onclick="deleteTpl('${r.id}')" class="px-2 py-1 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded text-xs">${r.active ? '🚫 Tắt' : '✓ Bật'}</button>
+        </div>
+      </div>
+    `).join('');
+}
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function openTplEditor(id) {
+  _tplEditing = id;
+  document.getElementById('tpl-modal-title').textContent = id ? `Sửa: ${id}` : 'Tạo template mới';
+  document.getElementById('tpl-btn-reset').classList.toggle('hidden', !id);
+
+  if (id) {
+    const r = await api('/agentic-templates/' + encodeURIComponent(id));
+    if (!r?.success) return alert('Không load được template');
+    const t = r.data;
+    document.getElementById('tpl-field-id').value = t.id;
+    document.getElementById('tpl-field-id').disabled = true;
+    document.getElementById('tpl-field-category').value = t.category;
+    document.getElementById('tpl-field-description').value = t.description || '';
+    document.getElementById('tpl-field-content').value = t.content;
+    document.getElementById('tpl-field-trigger').value = t.trigger_conditions ? JSON.stringify(t.trigger_conditions, null, 2) : '';
+    document.getElementById('tpl-field-qr').value = t.quick_replies ? JSON.stringify(t.quick_replies, null, 2) : '';
+    document.getElementById('tpl-field-confidence').value = t.confidence;
+    document.getElementById('tpl-field-active').checked = !!t.active;
+  } else {
+    document.getElementById('tpl-field-id').value = '';
+    document.getElementById('tpl-field-id').disabled = false;
+    document.getElementById('tpl-field-category').value = 'misc';
+    document.getElementById('tpl-field-description').value = '';
+    document.getElementById('tpl-field-content').value = '';
+    document.getElementById('tpl-field-trigger').value = '';
+    document.getElementById('tpl-field-qr').value = '';
+    document.getElementById('tpl-field-confidence').value = '0.9';
+    document.getElementById('tpl-field-active').checked = true;
+  }
+  document.getElementById('tpl-preview-out').textContent = '';
+  document.getElementById('tpl-modal').classList.remove('hidden');
+}
+
+function closeTplModal() {
+  document.getElementById('tpl-modal').classList.add('hidden');
+  _tplEditing = null;
+}
+
+async function saveTpl() {
+  try {
+    const id = document.getElementById('tpl-field-id').value.trim();
+    if (!id) return alert('ID bắt buộc');
+    const body = {
+      category: document.getElementById('tpl-field-category').value,
+      description: document.getElementById('tpl-field-description').value,
+      content: document.getElementById('tpl-field-content').value,
+      confidence: Number(document.getElementById('tpl-field-confidence').value) || 0.9,
+      active: document.getElementById('tpl-field-active').checked ? 1 : 0,
+    };
+    const trg = document.getElementById('tpl-field-trigger').value.trim();
+    if (trg) {
+      try { body.trigger_conditions = JSON.parse(trg); } catch { return alert('Trigger JSON invalid'); }
+    }
+    const qr = document.getElementById('tpl-field-qr').value.trim();
+    if (qr) {
+      try { body.quick_replies = JSON.parse(qr); } catch { return alert('Quick replies JSON invalid'); }
+    }
+
+    if (_tplEditing) {
+      await api('/agentic-templates/' + encodeURIComponent(_tplEditing), { method: 'PUT', body: JSON.stringify(body) });
+    } else {
+      body.id = id;
+      await api('/agentic-templates', { method: 'POST', body: JSON.stringify(body) });
+    }
+
+    closeTplModal();
+    await loadAgenticTemplates();
+    alert('✅ Đã lưu');
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function deleteTpl(id) {
+  if (!confirm('Tắt template "' + id + '"?')) return;
+  try {
+    await api('/agentic-templates/' + encodeURIComponent(id), { method: 'DELETE' });
+    await loadAgenticTemplates();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function previewTpl() {
+  try {
+    const id = document.getElementById('tpl-field-id').value.trim();
+    if (!id) return alert('Nhập ID trước');
+    const mockCtx = {
+      customerName: 'Anh Minh',
+      customerTier: 'vip',
+      isVip: true,
+      topic: 'giá phòng',
+      missingSlots: 'ngày check-in, số khách',
+      hotelName: 'Sonder Airport',
+      district: 'Tân Bình',
+      priceFrom: '550k/đêm',
+      checkinDate: '25/5',
+      nights: 2,
+      guests: '2 người lớn',
+    };
+
+    // Nếu template đã exist, dùng backend preview để tận dụng renderString
+    if (_tplEditing) {
+      const r = await api('/agentic-templates/' + encodeURIComponent(id) + '/preview', {
+        method: 'POST', body: JSON.stringify(mockCtx),
+      });
+      if (r?.success) {
+        document.getElementById('tpl-preview-out').textContent = r.rendered;
+      }
+    } else {
+      // Client-side render nhanh cho preview trước khi save
+      let out = document.getElementById('tpl-field-content').value;
+      out = out.replace(/\{\{\^(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g, (_, k, b) => !mockCtx[k] ? b : '');
+      out = out.replace(/\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g, (_, k, b) => mockCtx[k] ? b : '');
+      out = out.replace(/\{\{(\w+)\}\}/g, (_, k) => mockCtx[k] ?? '');
+      out = out.replace(/\n{3,}/g, '\n\n').trim();
+      document.getElementById('tpl-preview-out').textContent = out;
+    }
+  } catch (e) { alert('Preview lỗi: ' + e.message); }
+}
+
+async function resetTplToDefault() {
+  if (!_tplEditing) return;
+  if (!confirm('Reset "' + _tplEditing + '" về default? Snapshot hiện tại sẽ lưu vào history.')) return;
+  try {
+    await api('/agentic-templates/' + encodeURIComponent(_tplEditing) + '/reset', { method: 'POST' });
+    alert('✅ Đã reset. Reload để thấy nội dung default.');
+    closeTplModal();
+    await loadAgenticTemplates();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function showTplHistory() {
+  if (!_tplEditing) return;
+  try {
+    const r = await api('/agentic-templates/' + encodeURIComponent(_tplEditing) + '/history');
+    if (!r?.success) return;
+    const html = (r.data || []).map(h => `
+      <div class="border-b py-2">
+        <div class="text-xs text-slate-500">v${h.version} · ${new Date(h.changed_at).toLocaleString('vi-VN')} · by ${h.changed_by || 'admin'}</div>
+        <pre class="text-xs font-mono bg-slate-50 p-2 mt-1 whitespace-pre-wrap">${escapeHtml((h.content || '').substring(0, 300))}...</pre>
+      </div>
+    `).join('');
+    const w = window.open('', '_blank', 'width=700,height=600');
+    w.document.write('<html><head><title>History</title><style>body{font-family:sans-serif;padding:10px}</style></head><body><h3>Lịch sử: ' + escapeHtml(_tplEditing) + '</h3>' + (html || '<p>Chưa có history</p>') + '</body></html>');
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+// Wire event listeners (delegated — run once)
+document.addEventListener('DOMContentLoaded', () => {
+  const byId = (x) => document.getElementById(x);
+  if (byId('tpl-btn-refresh')) {
+    byId('tpl-btn-refresh').addEventListener('click', loadAgenticTemplates);
+    byId('tpl-btn-new').addEventListener('click', () => openTplEditor(null));
+    byId('tpl-filter-category').addEventListener('change', renderAgenticTemplatesTable);
+    byId('tpl-filter-search').addEventListener('input', renderAgenticTemplatesTable);
+    byId('tpl-filter-inactive').addEventListener('change', renderAgenticTemplatesTable);
+    byId('tpl-modal-close').addEventListener('click', closeTplModal);
+    byId('tpl-btn-cancel').addEventListener('click', closeTplModal);
+    byId('tpl-btn-save').addEventListener('click', saveTpl);
+    byId('tpl-btn-preview').addEventListener('click', previewTpl);
+    byId('tpl-btn-reset').addEventListener('click', resetTplToDefault);
+    byId('tpl-btn-history').addEventListener('click', showTplHistory);
+  }
 });
 
 // ====== Init ======

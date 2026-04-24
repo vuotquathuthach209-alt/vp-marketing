@@ -124,6 +124,7 @@
           </button>
           <div class="nav-group-body space-y-0.5">
             <button data-tab="autoreply" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="message-circle"></i><span>Cài đặt chatbot</span></button>
+            <button data-tab="templates" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="file-text"></i><span>Template bot</span><span class="ml-auto text-[9px] bg-emerald-500 text-slate-900 px-1 py-0.5 rounded font-bold">v27</span></button>
             <button data-tab="conversations" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="messages-square"></i><span>Hội thoại</span></button>
             <button data-tab="playground" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="message-square-dashed"></i><span>Thử bot</span></button>
             <button data-tab="feedback" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="star"></i><span>Chấm bot</span></button>
@@ -558,6 +559,121 @@
 
         <h3 class="font-bold mb-3">📜 Lịch sử trả lời gần đây</h3>
         <div id="autoreply-log" class="space-y-2 max-w-3xl"></div>
+      </section>
+
+      <!-- AGENTIC TEMPLATES TAB (v27) -->
+      <section data-panel="templates" class="panel hidden">
+        <div class="mb-4 max-w-6xl flex items-start justify-between gap-3">
+          <div>
+            <h2 class="text-2xl font-bold mb-2">📝 Template bot <span class="text-[11px] bg-emerald-500 text-slate-900 px-1.5 py-0.5 rounded font-bold align-middle">v27</span></h2>
+            <p class="text-slate-500 text-sm">25 mẫu trả lời cho các tình huống phổ biến. Bot ưu tiên dùng template (0 AI cost). Sửa content — bot cập nhật live trong 5 phút.</p>
+          </div>
+          <div class="flex gap-2">
+            <button id="tpl-btn-refresh" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-sm">🔄 Reload</button>
+            <button id="tpl-btn-new" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm font-medium">+ Tạo mới</button>
+          </div>
+        </div>
+
+        <!-- Analytics mini-cards -->
+        <div id="tpl-analytics" class="grid grid-cols-4 gap-3 max-w-6xl mb-4"></div>
+
+        <!-- Filter -->
+        <div class="flex gap-2 mb-3 text-sm">
+          <select id="tpl-filter-category" class="border rounded px-2 py-1">
+            <option value="">Tất cả category</option>
+            <option value="discovery">Discovery (chào)</option>
+            <option value="gathering">Gathering (gom slot)</option>
+            <option value="info">Info (thông tin)</option>
+            <option value="objection">Objection (khách chê)</option>
+            <option value="decision">Decision (chốt)</option>
+            <option value="handoff">Handoff (chuyển CSKH)</option>
+            <option value="misc">Misc</option>
+          </select>
+          <input id="tpl-filter-search" type="text" placeholder="Tìm ID hoặc mô tả..." class="border rounded px-2 py-1 flex-1 max-w-xs">
+          <label class="flex items-center gap-1 text-slate-600"><input type="checkbox" id="tpl-filter-inactive"> Hiển thị đã tắt</label>
+        </div>
+
+        <!-- Table -->
+        <div class="bg-white rounded-lg shadow-sm border border-slate-200 max-w-6xl overflow-hidden">
+          <div id="tpl-table" class="divide-y divide-slate-100 max-h-[55vh] overflow-y-auto"></div>
+        </div>
+
+        <!-- Edit Modal -->
+        <div id="tpl-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-start justify-center p-4 overflow-y-auto">
+          <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full my-8">
+            <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+              <h3 id="tpl-modal-title" class="font-bold text-lg">Sửa template</h3>
+              <button id="tpl-modal-close" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <div class="p-4 space-y-3">
+              <div class="grid grid-cols-3 gap-3">
+                <div>
+                  <label class="text-xs font-semibold text-slate-600">ID (slug)</label>
+                  <input id="tpl-field-id" type="text" class="border rounded px-2 py-1 w-full text-sm font-mono">
+                </div>
+                <div>
+                  <label class="text-xs font-semibold text-slate-600">Category</label>
+                  <select id="tpl-field-category" class="border rounded px-2 py-1 w-full text-sm">
+                    <option value="discovery">discovery</option>
+                    <option value="gathering">gathering</option>
+                    <option value="info">info</option>
+                    <option value="objection">objection</option>
+                    <option value="decision">decision</option>
+                    <option value="handoff">handoff</option>
+                    <option value="misc">misc</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="text-xs font-semibold text-slate-600">Confidence (0-1)</label>
+                  <input id="tpl-field-confidence" type="number" step="0.05" min="0" max="1" class="border rounded px-2 py-1 w-full text-sm">
+                </div>
+              </div>
+
+              <div>
+                <label class="text-xs font-semibold text-slate-600">Mô tả (admin note)</label>
+                <input id="tpl-field-description" type="text" class="border rounded px-2 py-1 w-full text-sm">
+              </div>
+
+              <div>
+                <label class="text-xs font-semibold text-slate-600">Content (Mustache: <code class="bg-slate-100 px-1">{{customerName}}</code>, <code class="bg-slate-100 px-1">{{hotline}}</code>, <code class="bg-slate-100 px-1">{{#isVip}}...{{/isVip}}</code>)</label>
+                <textarea id="tpl-field-content" rows="10" class="border rounded px-2 py-1 w-full text-sm font-mono"></textarea>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="text-xs font-semibold text-slate-600">Trigger Conditions (JSON)</label>
+                  <textarea id="tpl-field-trigger" rows="6" class="border rounded px-2 py-1 w-full text-xs font-mono" placeholder='{"intent":"booking","slot_completeness_lt":0.3}'></textarea>
+                </div>
+                <div>
+                  <label class="text-xs font-semibold text-slate-600">Quick Replies (JSON array)</label>
+                  <textarea id="tpl-field-qr" rows="6" class="border rounded px-2 py-1 w-full text-xs font-mono" placeholder='[{"title":"🏨 Đặt phòng","payload":"intent_booking"}]'></textarea>
+                </div>
+              </div>
+
+              <label class="flex items-center gap-1 text-sm text-slate-600"><input type="checkbox" id="tpl-field-active" checked> Active</label>
+
+              <!-- Preview area -->
+              <div>
+                <div class="flex justify-between items-center mb-1">
+                  <label class="text-xs font-semibold text-slate-600">Preview</label>
+                  <button id="tpl-btn-preview" class="text-xs text-indigo-600 hover:underline">🔍 Render preview</button>
+                </div>
+                <pre id="tpl-preview-out" class="bg-slate-50 border rounded p-3 text-sm whitespace-pre-wrap font-normal min-h-[60px]"></pre>
+              </div>
+            </div>
+
+            <div class="p-4 border-t border-slate-200 flex justify-between items-center">
+              <div class="flex gap-2">
+                <button id="tpl-btn-reset" class="text-sm text-amber-600 hover:underline hidden">↺ Reset về default</button>
+                <button id="tpl-btn-history" class="text-sm text-slate-600 hover:underline">🕓 Lịch sử</button>
+              </div>
+              <div class="flex gap-2">
+                <button id="tpl-btn-cancel" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded text-sm">Hủy</button>
+                <button id="tpl-btn-save" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm font-medium">💾 Lưu</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- BOT PLAYGROUND TAB -->

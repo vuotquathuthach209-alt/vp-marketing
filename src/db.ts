@@ -1743,6 +1743,45 @@ CREATE INDEX IF NOT EXISTS idx_reviews_usable ON hotel_reviews(hotel_id, approve
 console.log('[db] v26 hotel_reviews table ready (Real Guest Reviews)');
 
 // ═══════════════════════════════════════════════════════════
+// v27 — Agentic Templates (DB-driven, admin can edit anytime)
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+CREATE TABLE IF NOT EXISTS agentic_templates (
+  id TEXT PRIMARY KEY,                        -- slug: 'first_contact_warm'
+  category TEXT NOT NULL,                     -- discovery|gathering|info|objection|decision|handoff|misc
+  description TEXT,                           -- admin note
+  trigger_conditions TEXT,                    -- JSON: {intent, turn_range, has_tier, sub_category, keywords}
+  content TEXT NOT NULL,                      -- Mustache: "Dạ chào {{customerName}} ạ"
+  quick_replies TEXT,                         -- JSON array: [{title, payload}]
+  confidence REAL DEFAULT 0.9,                -- how confident to use this template
+  active INTEGER DEFAULT 1,
+  hits INTEGER DEFAULT 0,                     -- analytics: used count
+  conversions INTEGER DEFAULT 0,              -- led to booking
+  last_used_at INTEGER,
+  hotel_id INTEGER DEFAULT 0,                 -- 0 = global, else per-hotel override
+  version INTEGER DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agentic_cat ON agentic_templates(category, active);
+CREATE INDEX IF NOT EXISTS idx_agentic_hotel ON agentic_templates(hotel_id, active);
+
+-- Version history (rollback support)
+CREATE TABLE IF NOT EXISTS agentic_templates_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  template_id TEXT NOT NULL,
+  version INTEGER,
+  content TEXT,
+  trigger_conditions TEXT,
+  quick_replies TEXT,
+  changed_by TEXT,
+  changed_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agentic_hist ON agentic_templates_history(template_id, changed_at DESC);
+`);
+console.log('[db] v27 agentic_templates tables ready (DB-driven template engine)');
+
+// ═══════════════════════════════════════════════════════════
 // v23 — intent_logs: log mọi message qua Gemini Intent Classifier
 // Mục đích: analytics + training data cho tuning classifier + debug
 // ═══════════════════════════════════════════════════════════
