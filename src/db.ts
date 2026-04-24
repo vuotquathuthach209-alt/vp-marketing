@@ -1906,6 +1906,179 @@ CREATE INDEX IF NOT EXISTS idx_winner_log ON agentic_variant_winner_log(template
 console.log('[db] v27 CAO + auto-promote log tables ready');
 
 // ═══════════════════════════════════════════════════════════
+// VIDEO STUDIO — Module RIÊNG, tách biệt với chatbot/agentic
+// All tables prefixed `video_*` để isolation rõ ràng.
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+-- Brand Kit: bộ nhận diện thương hiệu (intro/outro, LUT, voice, style)
+CREATE TABLE IF NOT EXISTS video_brand_kits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL DEFAULT 'Default',
+  intro_clip_url TEXT,                        -- 3-5s intro (cached, reused)
+  outro_clip_url TEXT,                        -- 3s outro (CTA + logo)
+  logo_url TEXT,
+  logo_position TEXT DEFAULT 'top_right',     -- top_right | top_left | bottom_right
+  primary_color TEXT DEFAULT '#FF6B35',
+  secondary_color TEXT DEFAULT '#2B2B2B',
+  subtitle_font TEXT DEFAULT 'Montserrat-Bold',
+  subtitle_style TEXT DEFAULT 'yellow_bottom_shadow',
+  subtitle_color TEXT DEFAULT '#FFEB3B',
+  color_lut_file TEXT,                        -- Path to .cube LUT file
+  aspect_ratio TEXT DEFAULT '9:16',           -- 9:16 | 1:1 | 16:9
+  resolution TEXT DEFAULT '1080x1920',
+  voice_id TEXT,                              -- ElevenLabs voice ID
+  voice_settings_json TEXT,                   -- { stability, similarity_boost, style }
+  music_mood TEXT DEFAULT 'upbeat_travel',    -- Mood key để pick music
+  watermark_opacity REAL DEFAULT 0.7,
+  active INTEGER DEFAULT 1,
+  is_default INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+-- Series: gom video theo chủ đề cho consistency xuyên suốt
+CREATE TABLE IF NOT EXISTS video_series (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,                         -- "Tips du lịch hot"
+  description TEXT,
+  brand_kit_id INTEGER,
+  episode_template TEXT,                      -- JSON: hook/scene count/cta structure
+  theme_lock_json TEXT,                       -- { style, mood, audience }
+  total_episodes INTEGER DEFAULT 0,
+  current_episode INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'active',               -- active | paused | completed
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (brand_kit_id) REFERENCES video_brand_kits(id)
+);
+
+-- Projects: 1 row = 1 video
+CREATE TABLE IF NOT EXISTS video_projects (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  series_id INTEGER,
+  brand_kit_id INTEGER,
+  title TEXT NOT NULL,
+  topic TEXT NOT NULL,
+  hook_question TEXT,                         -- Câu hook (5s đầu)
+  target_duration_sec INTEGER DEFAULT 90,
+  tier TEXT DEFAULT 'stock',                  -- stock | hybrid | premium
+  status TEXT DEFAULT 'draft',                -- draft|scripting|script_review|visuals|voice_review|composing|qc_review|approved|scheduled|published|failed
+  script_json TEXT,                           -- { hook, scenes: [...], cta }
+  visual_mode TEXT DEFAULT 'stock',
+  voice_profile_id TEXT,                      -- Override brand kit voice if set
+  music_track_url TEXT,
+  draft_video_url TEXT,                       -- Composed preview
+  final_video_url TEXT,                       -- Approved final
+  thumbnail_url TEXT,
+  caption_text TEXT,                          -- Caption cho FB/IG/Zalo
+  published_to TEXT,                          -- JSON array [{ platform, post_id, url, published_at }]
+  cost_cents INTEGER DEFAULT 0,
+  error_log TEXT,
+  generated_by TEXT,                          -- Admin email
+  scheduled_publish_at INTEGER,               -- Timestamp nếu schedule
+  reviewed_at_gate1 INTEGER,                  -- Script approved timestamp
+  reviewed_at_gate2 INTEGER,                  -- Voice approved
+  reviewed_at_gate3 INTEGER,                  -- Visuals approved
+  reviewed_at_gate4 INTEGER,                  -- Final approved
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (series_id) REFERENCES video_series(id),
+  FOREIGN KEY (brand_kit_id) REFERENCES video_brand_kits(id)
+);
+CREATE INDEX IF NOT EXISTS idx_video_proj_status ON video_projects(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_video_proj_series ON video_projects(series_id);
+
+-- Scenes: chi tiết từng scene của video
+CREATE TABLE IF NOT EXISTS video_scenes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  scene_index INTEGER NOT NULL,               -- 0 = hook, 1+ = main scenes, last = cta
+  kind TEXT DEFAULT 'main',                   -- hook | main | cta
+  text TEXT,                                  -- Voiceover text cho scene này
+  duration_sec REAL,
+  visual_prompt TEXT,                         -- AI visual description (cho stock search hoặc AI gen)
+  visual_provider TEXT,                       -- pexels | pixabay | runway | luma | hailuo
+  visual_url TEXT,                            -- Clip file URL/path
+  visual_cached_id INTEGER,                   -- Reference to video_stock_cache
+  voice_segment_url TEXT,                     -- TTS audio segment
+  status TEXT DEFAULT 'pending',              -- pending | generating | ready | failed
+  retry_count INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES video_projects(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_video_scenes_proj ON video_scenes(project_id, scene_index);
+
+-- Content ideas: pool chủ đề travel tips hot
+CREATE TABLE IF NOT EXISTS video_content_ideas (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  topic TEXT NOT NULL,
+  description TEXT,
+  target_audience TEXT,                       -- "du khách trẻ", "gia đình", ...
+  source_url TEXT,
+  source_type TEXT,                           -- rss | reddit | google_trends | ai_generated | manual
+  relevance_score REAL DEFAULT 0.5,
+  trending_score REAL DEFAULT 0.5,            -- Từ Google Trends
+  seasonal_tag TEXT,                          -- tet | summer | holiday | evergreen
+  used_project_id INTEGER,                    -- NULL nếu chưa dùng, id project nếu đã dùng
+  discovered_at INTEGER NOT NULL,
+  used_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_video_ideas_unused ON video_content_ideas(used_project_id, relevance_score DESC);
+
+-- Stock footage cache (Pexels/Pixabay dedup để tiết kiệm API quota)
+CREATE TABLE IF NOT EXISTS video_stock_cache (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  query TEXT NOT NULL,                        -- Search query đã dùng
+  provider TEXT NOT NULL,                     -- pexels | pixabay
+  clip_id TEXT,                               -- External ID from provider
+  clip_url TEXT NOT NULL,
+  thumbnail_url TEXT,
+  duration_sec REAL,
+  width INTEGER,
+  height INTEGER,
+  license TEXT DEFAULT 'CC0',
+  photographer TEXT,
+  photographer_url TEXT,
+  tags TEXT,                                  -- Comma-separated
+  cached_at INTEGER NOT NULL,
+  used_count INTEGER DEFAULT 0,
+  last_used_at INTEGER,
+  UNIQUE(provider, clip_id)
+);
+CREATE INDEX IF NOT EXISTS idx_video_stock_query ON video_stock_cache(query);
+
+-- Publish log: track khi publish video lên platforms
+CREATE TABLE IF NOT EXISTS video_publish_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  platform TEXT NOT NULL,                     -- facebook | instagram | zalo | youtube
+  platform_post_id TEXT,
+  platform_url TEXT,
+  status TEXT NOT NULL,                       -- queued | uploading | published | failed
+  error_msg TEXT,
+  engagement_json TEXT,                       -- { views, likes, comments, shares }
+  last_metrics_at INTEGER,
+  published_at INTEGER,
+  FOREIGN KEY (project_id) REFERENCES video_projects(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_video_publish_log ON video_publish_log(project_id, platform);
+
+-- Cost ledger: track cost từng API call để monitor spend
+CREATE TABLE IF NOT EXISTS video_cost_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER,
+  provider TEXT,                              -- elevenlabs | runway | pexels (free but track calls)
+  operation TEXT,                             -- tts | video_gen | stock_fetch
+  units_used INTEGER,                         -- chars / seconds / calls
+  cost_cents INTEGER,
+  metadata_json TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_video_cost_proj ON video_cost_ledger(project_id);
+`);
+console.log('[db] Video Studio module tables ready (isolated block)');
+
+// ═══════════════════════════════════════════════════════════
 // v23 — intent_logs: log mọi message qua Gemini Intent Classifier
 // Mục đích: analytics + training data cho tuning classifier + debug
 // ═══════════════════════════════════════════════════════════

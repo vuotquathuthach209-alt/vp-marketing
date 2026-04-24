@@ -44,6 +44,7 @@ import botMonitorRouter from './routes/bot-monitor';
 import contentIntelRouter from './routes/content-intel';
 import feedbackLoopRouter from './routes/feedback-loop';
 import agenticTemplatesRouter from './routes/agentic-templates';
+import videoStudioRouter from './routes/video-studio';
 import { syncHubRouter, syncHubAdminRouter, syncHubDocsRouter } from './routes/sync-hub';
 import ocrRouter from './routes/ocr';
 import domainDataRouter from './routes/domain-data';
@@ -175,6 +176,7 @@ app.use('/api/bot-monitor', botMonitorRouter);
 app.use('/api/content-intel', contentIntelRouter);
 app.use('/api/feedback-loop', feedbackLoopRouter);
 app.use('/api/agentic-templates', agenticTemplatesRouter);
+app.use('/api/video-studio', videoStudioRouter);    // VIDEO STUDIO — module riêng biệt
 app.use('/api/sync', syncHubRouter);             // HMAC auth for OTA team
 app.use('/api/sync-admin', syncHubAdminRouter);  // UI admin (cookie auth)
 app.use('/sync-hub', syncHubDocsRouter);         // Public docs page
