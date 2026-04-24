@@ -270,10 +270,11 @@ export function getAllHotelsScored(): { eligible: HotelCandidate[]; rejected: Ho
   const networkAvg = getNetworkAvgRating();
   const rows = db.prepare(`
     SELECT hp.hotel_id, hp.name_canonical, hp.property_type, hp.district, hp.city,
-           hp.monthly_price_from, hp.min_nightly_price, hp.usp_top3 as usp_json,
+           hp.monthly_price_from, hp.usp_top3 as usp_json,
            CAST(json_extract(hp.scraped_data, '$.review_avg') AS REAL) as review_avg,
            CAST(json_extract(hp.scraped_data, '$.review_count') AS INTEGER) as review_count,
-           CAST(json_extract(hp.scraped_data, '$.is_verified') AS INTEGER) as verified
+           CAST(json_extract(hp.scraped_data, '$.is_verified') AS INTEGER) as verified,
+           (SELECT MIN(price_weekday) FROM hotel_room_catalog WHERE hotel_id = hp.hotel_id AND price_weekday > 0) as min_nightly_price
     FROM hotel_profile hp
     WHERE EXISTS (SELECT 1 FROM mkt_hotels mh WHERE mh.ota_hotel_id = hp.hotel_id AND mh.status = 'active')
   `).all() as any[];
