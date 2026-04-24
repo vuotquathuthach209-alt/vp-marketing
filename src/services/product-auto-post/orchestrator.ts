@@ -164,11 +164,14 @@ export async function generateTodayPlan(): Promise<{
  */
 async function downloadImageToMedia(imageUrl: string): Promise<string | null> {
   try {
+    const https = require('https');
     const resp = await axios.get(imageUrl, {
       responseType: 'arraybuffer',
       timeout: 20_000,
       maxContentLength: 10 * 1024 * 1024,
       maxRedirects: 3,
+      // v25: OTA server có self-signed cert với IP → allow tạm
+      httpsAgent: new https.Agent({ rejectUnauthorized: false }),
     });
     const buf = Buffer.from(resp.data);
     const ctype = String(resp.headers['content-type'] || 'image/jpeg').toLowerCase();
