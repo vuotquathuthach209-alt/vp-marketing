@@ -46,6 +46,7 @@ function requireEnabled(req: AuthRequest, res: Response, next: NextFunction) {
 
 router.get('/status', (_req, res) => {
   try {
+    const { getSetting } = require('../db');
     res.json({
       success: true,
       enabled: isVideoStudioEnabled(),
@@ -54,11 +55,12 @@ router.get('/status', (_req, res) => {
         target_duration_sec: Number(getVSSetting('target_duration_sec', '90')),
         auto_publish: getVSSetting('auto_publish') === 'true',
         review_required: getVSSetting('review_required', 'true') === 'true',
+        elevenlabs_voice_id: getVSSetting('elevenlabs_voice_id') || '',
       },
       api_keys: {
-        pexels: !!(process.env.PEXELS_API_KEY || getVSSetting('pexels_api_key')),
-        pixabay: !!(process.env.PIXABAY_API_KEY || getVSSetting('pixabay_api_key')),
-        elevenlabs: !!(process.env.ELEVENLABS_API_KEY || getVSSetting('elevenlabs_api_key')),
+        pexels: !!(process.env.PEXELS_API_KEY || getSetting('pexels_api_key')),
+        pixabay: !!(process.env.PIXABAY_API_KEY || getSetting('pixabay_api_key')),
+        elevenlabs: !!(process.env.ELEVENLABS_API_KEY || getSetting('elevenlabs_api_key')),
       },
     });
   } catch (e: any) {
@@ -88,13 +90,21 @@ router.post('/toggle', superadminOnly, (req: AuthRequest, res) => {
 
 router.post('/settings', superadminOnly, (req: AuthRequest, res) => {
   try {
-    const allowed = [
-      'target_duration_sec', 'auto_publish', 'review_required',
-      'pexels_api_key', 'pixabay_api_key', 'elevenlabs_api_key', 'elevenlabs_voice_id',
-    ];
-    for (const k of allowed) {
+    // API keys save WITHOUT prefix (feature-flag.getApiKey reads `${provider}_api_key`)
+    const apiKeys = ['pexels_api_key', 'pixabay_api_key', 'elevenlabs_api_key'];
+    // Video-studio-specific settings save WITH vs_ prefix
+    const vsSettings = ['target_duration_sec', 'auto_publish', 'review_required', 'elevenlabs_voice_id'];
+
+    const { setSetting } = require('../db');
+
+    for (const k of apiKeys) {
       if (req.body?.[k] !== undefined) {
-        setVSSetting(k, String(req.body[k]));
+        setSetting(k, String(req.body[k]));   // No prefix
+      }
+    }
+    for (const k of vsSettings) {
+      if (req.body?.[k] !== undefined) {
+        setVSSetting(k, String(req.body[k])); // Prefix vs_
       }
     }
     res.json({ success: true });
