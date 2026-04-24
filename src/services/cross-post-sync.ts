@@ -304,12 +304,20 @@ export async function crossPostFromPostId(postId: number, sourceType?: string): 
       }
     }
 
-    // Priority 2: fallback to public base URL (nếu FB fetch fail)
+    // Priority 2: media_filename might be (a) full URL, (b) local filename, (c) path
     if (!imageUrl && post.media_type === 'image' && post.media_filename) {
-      const { config } = require('../config');
-      const baseUrl = config.publicBaseUrl || process.env.PUBLIC_BASE_URL || 'https://mkt.sondervn.com';
-      imageUrl = `${baseUrl.replace(/\/$/, '')}/media/${post.media_filename}`;
-      console.log(`[cross-post] fallback to public base URL: ${imageUrl.slice(0, 80)}...`);
+      const mf = String(post.media_filename);
+      if (/^https?:\/\//.test(mf)) {
+        // Already full URL (e.g. Google Drive, uploaded via URL) — use as-is
+        imageUrl = mf;
+        console.log(`[cross-post] using external URL from media_filename: ${imageUrl.slice(0, 80)}...`);
+      } else {
+        // Local filename → prepend public base URL
+        const { config } = require('../config');
+        const baseUrl = config.publicBaseUrl || process.env.PUBLIC_BASE_URL || 'https://mkt.sondervn.com';
+        imageUrl = `${baseUrl.replace(/\/$/, '')}/media/${mf.replace(/^\/+/, '')}`;
+        console.log(`[cross-post] fallback to public base URL: ${imageUrl.slice(0, 80)}...`);
+      }
     }
 
     return await crossPostToAllPlatforms({
