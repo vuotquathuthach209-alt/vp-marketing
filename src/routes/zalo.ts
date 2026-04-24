@@ -158,6 +158,88 @@ zaloWebhookRouter.post('/webhook/zalo', async (req, res) => {
   }
 });
 
+// ── v24: Zalo OAuth callback — PUBLIC (no auth, called by Zalo redirect) ────
+// Handle: GET /api/zalo/oauth/callback?code=XXX&oa_id=YYY&state=ZZZ
+// Exchange authorization code → access_token + refresh_token và lưu DB.
+zaloWebhookRouter.get('/api/zalo/oauth/callback', async (req, res) => {
+  try {
+    const code = String(req.query.code || '');
+    const oaId = String(req.query.oa_id || '');
+    const state = String(req.query.state || '');
+    if (!code || !oaId) {
+      return res.status(400).send(`<h2>❌ Missing code or oa_id</h2><p>code=${code || '(empty)'}</p><p>oa_id=${oaId || '(empty)'}</p>`);
+    }
+
+    // Fetch app credentials
+    const { getSetting } = require('../db');
+    const appId = getSetting('zalo_app_id');
+    const appSecret = getSetting('zalo_app_secret');
+    if (!appId || !appSecret) {
+      return res.status(500).send('<h2>❌ Missing zalo_app_id or zalo_app_secret in settings</h2>');
+    }
+
+    // Exchange code → token (Zalo OA v4 API)
+    const tokenResp = await axios.post(
+      'https://oauth.zaloapp.com/v4/oa/access_token',
+      new URLSearchParams({
+        code,
+        app_id: String(appId),
+        grant_type: 'authorization_code',
+      }),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'secret_key': String(appSecret),
+        },
+        timeout: 15000,
+      }
+    );
+
+    const data = tokenResp.data;
+    if (!data?.access_token) {
+      return res.status(500).send(`<h2>❌ Zalo exchange error</h2><pre>${JSON.stringify(data, null, 2)}</pre>`);
+    }
+
+    // Get OA info
+    const existingOa = getZaloByOaId(oaId);
+    const hotelId = existingOa?.hotel_id || 1;
+    const expiresAt = Date.now() + (parseInt(String(data.expires_in || 90000), 10) * 1000);
+
+    saveZaloOA({
+      hotel_id: hotelId,
+      oa_id: oaId,
+      oa_name: existingOa?.oa_name || 'Sonder',
+      access_token: data.access_token,
+      refresh_token: data.refresh_token || undefined,
+      app_secret: existingOa?.app_secret || undefined,
+    });
+
+    // Save expiry
+    db.prepare(`UPDATE zalo_oa SET token_expires_at = ? WHERE oa_id = ?`).run(expiresAt, oaId);
+
+    console.log(`[zalo-oauth] ✅ exchanged code → new token for oa=${oaId}, expires in ${Math.round((expiresAt - Date.now())/3600_000)}h`);
+
+    return res.send(`
+      <!DOCTYPE html>
+      <html><head><meta charset="utf-8"><title>Zalo OA re-authorized</title></head>
+      <body style="font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 20px;">
+        <h1>✅ Zalo OA đã được re-authorize</h1>
+        <p><strong>OA:</strong> ${existingOa?.oa_name || 'Sonder'} (${oaId})</p>
+        <p><strong>Token mới:</strong> ${data.access_token.slice(0, 20)}...${data.access_token.slice(-10)}</p>
+        <p><strong>Refresh token:</strong> ${data.refresh_token ? '✅ có' : '❌ không'}</p>
+        <p><strong>Expires:</strong> ${new Date(expiresAt).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}</p>
+        <p><strong>State:</strong> ${state}</p>
+        <hr>
+        <p>Có thể đóng tab này. Bot sẽ tự động dùng token mới.</p>
+        <p style="color:#888">Next step: verify bằng <code>python scripts/diag-zalo-upload.py</code></p>
+      </body></html>
+    `);
+  } catch (e: any) {
+    console.error('[zalo-oauth] callback fail:', e?.response?.data || e?.message);
+    return res.status(500).send(`<h2>❌ Exchange error</h2><pre>${e?.response?.data ? JSON.stringify(e.response.data, null, 2) : e?.message}</pre>`);
+  }
+});
+
 // ── Authed CRUD ─────────────────────────────────────────────────────────
 const router = Router();
 router.use(authMiddleware);
