@@ -55,7 +55,7 @@ export interface TemplateSuggestion {
 export function gatherStuckConversations(limit: number = 30): ConversationSnippet[] {
   try {
     const rows = db.prepare(`
-      SELECT s.sender_id, s.same_stage_count, s.current_stage
+      SELECT s.sender_id, s.same_stage_count, s.stage
       FROM bot_conversation_state s
       WHERE s.same_stage_count >= 2
       ORDER BY s.updated_at DESC
@@ -71,7 +71,7 @@ export function gatherStuckConversations(limit: number = 30): ConversationSnippe
         sender_id: r.sender_id,
         messages: msgs.reverse(),
         stuck_turns: r.same_stage_count,
-        intent: r.current_stage,
+        intent: r.stage,
       };
     });
   } catch (e: any) {
