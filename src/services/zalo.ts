@@ -575,9 +575,13 @@ export async function zaloCreateTimelineArticle(
       throw new Error(`Zalo article ${r.data.error}: ${r.data.message}`);
     }
 
+    // Zalo trả về token để identify article trong workflow tiếp theo.
+    // Nếu status='show' → publish ngay; nếu 'hide' → draft (dùng token để publish sau).
+    const articleToken = r.data?.data?.token || r.data?.data?.id;
+
     return {
-      article_id: r.data?.data?.id,
-      url: r.data?.data?.url,
+      article_id: articleToken,
+      url: r.data?.data?.url || `article:${articleToken}`,
       raw: r.data,
     };
   } catch (e: any) {
