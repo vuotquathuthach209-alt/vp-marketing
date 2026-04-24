@@ -193,6 +193,10 @@ export async function generateCaption(
       .replace(/```[\s\S]*?```/g, '')
       .trim();
 
+    // v25: Persona post-process — auto-fix LLM slip-ups of banned pronouns.
+    //      LLM đôi khi dùng "mình" reflexive ("giữ phòng cho mình") — replace bằng context-appropriate.
+    caption = postProcessPersona(caption);
+
     // QA: check length
     if (caption.length < 80) {
       console.warn(`[caption-gen] too short (${caption.length} chars), rejected`);
@@ -212,6 +216,40 @@ export async function generateCaption(
     console.error('[caption-gen] fail:', e?.message);
     return null;
   }
+}
+
+/**
+ * v25: Post-process để fix LLM persona slip-ups.
+ * LLM đôi khi dùng "mình" reflexive hoặc "bạn" formal — replace theo context.
+ */
+function postProcessPersona(text: string): string {
+  let out = text;
+
+  // "giữ phòng cho mình" → "giữ phòng cho anh/chị" (self-reference tới khách)
+  // "cho mình biết" → "cho em biết"
+  // "với mình" → "với em"
+  out = out.replace(/\bcho\s+mình\s+(biết|gửi|xin|lấy|số)\b/gi, 'cho em $1');
+  out = out.replace(/\bvới\s+mình\b/gi, 'với em');
+  out = out.replace(/\b(inbox|nhắn|gọi|liên hệ)\s+mình\b/gi, '$1 em');
+  out = out.replace(/\bgiữ\s+(phòng|chỗ|đơn)\s+cho\s+mình\b/gi, 'giữ $1 cho anh/chị');
+
+  // "tôi" → "em" (trong context bot self-reference)
+  out = out.replace(/\b(của\s+)?tôi\b/gi, '$1em');
+
+  // "bạn" formal → "anh/chị"
+  out = out.replace(/\bbạn\b/gi, 'anh/chị');
+
+  // "mình" standalone (bot tự xưng) → "em"
+  //   Chỉ match khi không trong compound word như "gia đình mình" (giữ nguyên)
+  //   Pattern safe: mình at start hoặc sau dấu câu
+  out = out.replace(/(^|[.,!?\s])Mình\b/g, '$1Em');
+  // lowercase version
+  out = out.replace(/(^|[.,!?]\s)mình\b/g, '$1em');
+
+  // Cleanup: double spaces
+  out = out.replace(/\s+/g, ' ').trim();
+
+  return out;
 }
 
 /**

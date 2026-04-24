@@ -601,6 +601,20 @@ export function startScheduler() {
     }
   }, { timezone: 'Asia/Ho_Chi_Minh' });
 
+  // ── v25: Auto-sync new hotels từ OTA mỗi 6h ──
+  //   Khách sạn mới register OTA → tự động vào bot rotation ngày mai.
+  cron.schedule('0 */6 * * *', async () => {
+    try {
+      const { syncNewHotelsFromOta } = require('./product-auto-post/ota-sync-new-hotels');
+      const r = await syncNewHotelsFromOta();
+      if (r.created > 0 || r.updated > 0) {
+        console.log(`[scheduler] ota-new-hotels-sync: created=${r.created} updated=${r.updated}`);
+      }
+    } catch (e: any) {
+      console.error('[scheduler] ota-new-hotels-sync error:', e?.message);
+    }
+  });
+
   // Zalo OA token refresh — v22: cron mỗi 6h (thay vì 20h) + notify admin nếu fail
   //                              Trước đó 20h nhưng nếu miss 1 cycle → 40h → token expire (~25h life).
   cron.schedule('0 */6 * * *', async () => {
