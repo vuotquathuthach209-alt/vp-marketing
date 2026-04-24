@@ -116,6 +116,13 @@ function switchTab(tab) {
   if (tab === 'campaigns') loadCampaigns();
   if (tab === 'autoreply') loadAutoReply();
   if (tab === 'templates') loadAgenticTemplates();
+  // Video Studio tabs (mảng 3 của VP MKT)
+  if (tab === 'vs-dashboard') vsLoadDashboard();
+  if (tab === 'vs-create') vsInitCreate();
+  if (tab === 'vs-ideas') vsLoadIdeas();
+  if (tab === 'vs-projects') vsLoadProjects();
+  if (tab === 'vs-brand') vsLoadBrandKit();
+  if (tab === 'vs-settings') vsLoadSettings();
   if (tab === 'wiki') loadWiki();
   if (tab === 'analytics') loadAnalytics();
   if (tab === 'autopilot') loadAutopilotStatus();
@@ -8055,6 +8062,576 @@ document.addEventListener('DOMContentLoaded', () => {
     byId('tpl-autopromote-toggle').addEventListener('change', toggleAutoPromote);
     byId('tpl-btn-autopromote-run').addEventListener('click', runAutoPromoteNow);
     byId('tpl-btn-autopromote-log').addEventListener('click', showAutoPromoteLog);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// VIDEO STUDIO (mảng 3 của VP MKT) — tất cả prefix vs để tránh conflict
+// Backend isolated: /api/video-studio/*  |  DB tables: video_*
+// ═══════════════════════════════════════════════════════════════
+
+const VS_API = '/api/video-studio';
+let _vsStatus = null;
+let _vsCurrentProjectId = null;
+let _vsPickedIdeaId = null;
+
+async function vsApi(path, opts = {}) {
+  const r = await fetch(VS_API + path, {
+    method: opts.method || 'GET',
+    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    credentials: 'include',
+    body: opts.body,
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+  return data;
+}
+
+function vsEsc(s) { return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+// ── Status check ──
+async function vsCheckStatus() {
+  try {
+    _vsStatus = await vsApi('/status');
+    return _vsStatus;
+  } catch (e) {
+    return null;
+  }
+}
+
+// ── DASHBOARD ──
+async function vsLoadDashboard() {
+  if (!_vsStatus) await vsCheckStatus();
+
+  const banner = document.getElementById('vs-dash-banner');
+  if (!_vsStatus?.enabled) {
+    banner.innerHTML = `
+      <div class="bg-amber-50 border border-amber-300 rounded-lg p-4">
+        <div class="font-bold text-amber-800">⚠️ Video Studio module chưa bật</div>
+        <div class="text-sm text-amber-700 mt-1">Vào <button onclick="switchTab('vs-settings')" class="underline">Video Settings</button> → bật toggle + paste API keys.</div>
+      </div>
+    `;
+    document.getElementById('vs-dash-summary').innerHTML = '';
+    document.getElementById('vs-dash-recent').innerHTML = '';
+    return;
+  }
+
+  const keys = _vsStatus.api_keys || {};
+  const missing = Object.entries(keys).filter(([, v]) => !v).map(([k]) => k);
+  if (missing.length) {
+    banner.innerHTML = `
+      <div class="bg-rose-50 border border-rose-300 rounded-lg p-4">
+        <div class="font-bold text-rose-800">⚠️ Thiếu API keys</div>
+        <div class="text-sm text-rose-700 mt-1">Cần setup: <strong>${missing.join(', ')}</strong>. Vào Video Settings.</div>
+      </div>
+    `;
+  } else {
+    banner.innerHTML = '';
+  }
+
+  try {
+    const s = await vsApi('/dashboard/summary');
+    if (!s.success) return;
+    const d = s.data;
+    const statusMap = Object.fromEntries((d.status_counts || []).map(r => [r.status, r.n]));
+    const cards = [
+      { label: 'Total projects', value: (d.status_counts || []).reduce((sum, r) => sum + r.n, 0), color: 'slate' },
+      { label: 'Đang review', value: (statusMap.script_review || 0) + (statusMap.voice_review || 0) + (statusMap.qc_review || 0), color: 'amber' },
+      { label: 'Published', value: statusMap.published || 0, color: 'emerald' },
+      { label: 'Ideas mới', value: d.unused_ideas || 0, color: 'indigo' },
+    ];
+    document.getElementById('vs-dash-summary').innerHTML = cards.map(c => `
+      <div class="bg-white rounded-lg border p-4">
+        <div class="text-xs text-slate-500">${c.label}</div>
+        <div class="text-3xl font-bold text-${c.color}-600 mt-1">${c.value}</div>
+      </div>
+    `).join('');
+
+    const recent = d.recent_projects || [];
+    document.getElementById('vs-dash-recent').innerHTML = recent.length
+      ? recent.map(p => `
+        <div class="p-3 hover:bg-slate-50 flex items-center gap-3 cursor-pointer" onclick="vsOpenProject(${p.id})">
+          <div class="flex-1">
+            <div class="font-medium">${vsEsc(p.title)}</div>
+            <div class="text-xs text-slate-500">${new Date(p.updated_at).toLocaleString('vi-VN')}</div>
+          </div>
+          <span class="text-xs font-bold px-2 py-0.5 rounded bg-slate-200 text-slate-700">${vsEsc(p.status)}</span>
+        </div>
+      `).join('')
+      : '<div class="p-6 text-center text-slate-400 text-sm">Chưa có project nào. Tạo video đầu tiên!</div>';
+
+    // Ideas badge
+    const badge = document.getElementById('vs-ideas-badge');
+    if (d.unused_ideas > 0) { badge.textContent = d.unused_ideas + ' mới'; badge.classList.remove('hidden'); }
+    else { badge.classList.add('hidden'); }
+  } catch (e) {
+    console.warn('[vs] dashboard fail:', e.message);
+  }
+}
+
+function switchTab(tab) {
+  const btn = document.querySelector(`[data-tab="${tab}"]`);
+  if (btn) btn.click();
+}
+
+// ── CREATE ──
+function vsInitCreate() {
+  // No-op — form already in DOM, wait for user input
+}
+
+async function vsSubmitCreate() {
+  try {
+    const topic = document.getElementById('vs-create-topic').value.trim();
+    if (!topic) return alert('Nhập topic');
+
+    const btn = document.getElementById('vs-create-submit');
+    btn.disabled = true; btn.textContent = '⏳ Creating...';
+
+    const payload = {
+      topic,
+      target_duration_sec: Number(document.getElementById('vs-create-duration').value),
+      tier: document.getElementById('vs-create-tier').value,
+      style: document.getElementById('vs-create-style').value,
+      audience: document.getElementById('vs-create-audience').value || undefined,
+      idea_id: _vsPickedIdeaId,
+    };
+
+    const createR = await vsApi('/projects', { method: 'POST', body: JSON.stringify(payload) });
+    if (!createR.success) { alert('Lỗi: ' + createR.error); btn.disabled = false; btn.textContent = '🎬 Tạo project + generate script'; return; }
+
+    btn.textContent = '⏳ Generating script (Gemini)...';
+    const scriptR = await vsApi(`/projects/${createR.id}/generate-script`, { method: 'POST', body: JSON.stringify({}) });
+
+    btn.disabled = false;
+    btn.textContent = '🎬 Tạo project + generate script';
+
+    if (scriptR.success) {
+      alert(`✅ Project #${createR.id} — script generated (${scriptR.scenes?.length} scenes). Review ngay.`);
+      _vsPickedIdeaId = null;
+      document.getElementById('vs-create-topic').value = '';
+      document.getElementById('vs-create-audience').value = '';
+      switchTab('vs-projects');
+      setTimeout(() => vsOpenProject(createR.id), 200);
+    } else {
+      alert('Lỗi gen script: ' + (scriptR.error || 'unknown'));
+    }
+  } catch (e) {
+    alert('Lỗi: ' + e.message);
+    const btn = document.getElementById('vs-create-submit');
+    btn.disabled = false; btn.textContent = '🎬 Tạo project + generate script';
+  }
+}
+
+// ── IDEAS ──
+async function vsLoadIdeas() {
+  try {
+    const r = await vsApi('/ideas?limit=100');
+    const list = document.getElementById('vs-ideas-list');
+    if (!r.data || r.data.length === 0) {
+      list.innerHTML = '<div class="bg-white rounded-lg border p-6 text-center text-slate-400">Chưa có ideas. Bấm "AI brainstorm" hoặc "Discover".</div>';
+      return;
+    }
+
+    list.innerHTML = r.data.map(i => {
+      const score = (i.relevance_score * 0.6 + i.trending_score * 0.4);
+      const tier = score >= 0.7 ? 'emerald' : score >= 0.5 ? 'amber' : 'slate';
+      const seasonBadge = i.seasonal_tag && i.seasonal_tag !== 'evergreen'
+        ? `<span class="text-[10px] bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded">${vsEsc(i.seasonal_tag)}</span>` : '';
+      return `
+        <div class="bg-white rounded-lg border p-3 flex items-start gap-3">
+          <div class="flex-1">
+            <div class="flex items-center gap-2 mb-1 flex-wrap">
+              <span class="text-[10px] bg-${tier}-100 text-${tier}-700 px-1.5 py-0.5 rounded font-bold">${(score * 100).toFixed(0)}%</span>
+              <span class="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">${vsEsc(i.source_type)}</span>
+              ${seasonBadge}
+            </div>
+            <div class="font-medium">${vsEsc(i.topic)}</div>
+            ${i.description ? `<div class="text-xs text-slate-500 mt-1">${vsEsc(i.description)}</div>` : ''}
+            ${i.target_audience ? `<div class="text-xs text-slate-400 mt-1">🎯 ${vsEsc(i.target_audience)}</div>` : ''}
+          </div>
+          <div class="flex gap-1 flex-col">
+            <button onclick="vsUseIdea(${i.id}, ${JSON.stringify(vsEsc(i.topic)).replace(/\"/g, '&quot;')})" class="px-2 py-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-xs whitespace-nowrap">🎬 Dùng</button>
+            <button onclick="vsDeleteIdea(${i.id})" class="px-2 py-1 bg-rose-100 text-rose-700 rounded text-xs">🗑</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) { console.error('[vs] ideas fail', e); }
+}
+
+async function vsBrainstorm() {
+  try {
+    const btn = document.getElementById('vs-ideas-brainstorm');
+    btn.textContent = '⏳ AI đang nghĩ...'; btn.disabled = true;
+    const r = await vsApi('/ideas/brainstorm', { method: 'POST', body: JSON.stringify({ count: 10 }) });
+    btn.textContent = '🧠 AI brainstorm'; btn.disabled = false;
+    alert(`✅ Thêm ${r.saved} ideas mới`);
+    await vsLoadIdeas();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function vsDiscover() {
+  try {
+    const btn = document.getElementById('vs-ideas-discover');
+    btn.textContent = '⏳ Scan RSS + Reddit...'; btn.disabled = true;
+    const r = await vsApi('/ideas/discover', { method: 'POST' });
+    btn.textContent = '🔍 Discover (RSS + Reddit)'; btn.disabled = false;
+    alert(`✅ Discovery!\n  RSS: ${r.rss_found}\n  Reddit: ${r.reddit_found}\n  AI: ${r.ai_generated}\n  Saved: ${r.saved}`);
+    await vsLoadIdeas();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function vsAddManualIdea() {
+  const topic = prompt('Topic:');
+  if (!topic) return;
+  const desc = prompt('Mô tả (optional):') || '';
+  try {
+    await vsApi('/ideas', { method: 'POST', body: JSON.stringify({ topic, description: desc }) });
+    await vsLoadIdeas();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function vsDeleteIdea(id) {
+  if (!confirm('Xoá idea?')) return;
+  await vsApi('/ideas/' + id, { method: 'DELETE' });
+  await vsLoadIdeas();
+}
+
+function vsUseIdea(id, topic) {
+  _vsPickedIdeaId = id;
+  switchTab('vs-create');
+  setTimeout(() => {
+    document.getElementById('vs-create-topic').value = topic;
+  }, 100);
+  alert('✅ Đã chọn idea. Chỉnh config + bấm Tạo project.');
+}
+
+// ── PROJECTS ──
+async function vsLoadProjects() {
+  try {
+    document.getElementById('vs-project-detail-wrap').classList.add('hidden');
+    document.getElementById('vs-projects-list').classList.remove('hidden');
+
+    const filter = document.getElementById('vs-projects-filter-status').value;
+    const path = filter ? `/projects?status=${filter}` : '/projects';
+    const r = await vsApi(path);
+
+    document.getElementById('vs-projects-list').innerHTML = r.data.length === 0
+      ? '<div class="bg-white rounded-lg border p-6 text-center text-slate-400">Chưa có project.</div>'
+      : r.data.map(p => `
+        <div class="bg-white rounded-lg border p-3 hover:bg-slate-50 cursor-pointer" onclick="vsOpenProject(${p.id})">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-bold">${vsEsc(p.status)}</span>
+            <span class="text-xs text-slate-500">#${p.id}</span>
+            <span class="text-xs text-slate-500">${p.target_duration_sec}s · ${vsEsc(p.tier)}</span>
+          </div>
+          <div class="font-medium">${vsEsc(p.title)}</div>
+          <div class="text-xs text-slate-400 mt-1">${new Date(p.updated_at).toLocaleString('vi-VN')}</div>
+        </div>
+      `).join('');
+  } catch (e) { console.error('[vs] projects fail:', e); }
+}
+
+async function vsOpenProject(id) {
+  try {
+    _vsCurrentProjectId = id;
+    switchTab('vs-projects');
+    setTimeout(async () => {
+      document.getElementById('vs-projects-list').classList.add('hidden');
+      document.getElementById('vs-project-detail-wrap').classList.remove('hidden');
+
+      const content = document.getElementById('vs-project-detail-content');
+      content.innerHTML = '<div class="text-slate-400">⏳ Loading...</div>';
+
+      const r = await vsApi('/projects/' + id);
+      if (!r.success) { content.innerHTML = `<div class="text-rose-600">Lỗi: ${vsEsc(r.error)}</div>`; return; }
+      content.innerHTML = vsRenderProjectDetail(r.data);
+    }, 100);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+function vsRenderProjectDetail(p) {
+  const script = p.script;
+  let html = `
+    <div class="mb-4">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-bold">${vsEsc(p.status)}</span>
+        <span class="text-xs text-slate-500">#${p.id} · ${p.target_duration_sec}s · ${vsEsc(p.tier)}</span>
+        <span class="text-xs text-slate-500">Cost: $${((p.cost_cents || 0) / 100).toFixed(2)}</span>
+      </div>
+      <h2 class="text-xl font-bold mt-1">${vsEsc(p.title)}</h2>
+      <div class="text-sm text-slate-600">Topic: ${vsEsc(p.topic)}</div>
+    </div>
+  `;
+
+  // Status-specific action panels
+  if (p.status === 'draft') {
+    html += `<div class="mb-4 p-3 bg-amber-50 rounded border border-amber-200">
+      <button onclick="vsRetryScript(${p.id})" class="text-indigo-600 hover:underline">Tạo script</button>
+    </div>`;
+  }
+
+  if (p.status === 'script_review' && script) {
+    html += `<div class="mb-4 p-3 bg-indigo-50 rounded border border-indigo-300">
+      <div class="font-semibold text-indigo-800 mb-2">🛑 Gate 1: Review script</div>
+      <div class="mt-2 flex gap-2">
+        <button onclick="vsApproveScript(${p.id})" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm font-medium">✅ Approve → Fetch visuals</button>
+        <button onclick="vsRetryScript(${p.id})" class="px-3 py-1.5 bg-slate-200 rounded text-sm">🔄 Re-generate</button>
+      </div>
+    </div>`;
+  }
+
+  if (p.status === 'visuals') {
+    html += `<div class="mb-4 p-3 bg-sky-50 rounded border border-sky-300">
+      <div class="font-semibold text-sky-800 mb-2">🎨 Fetch stock clips</div>
+      <button onclick="vsFetchVisuals(${p.id})" class="px-3 py-1.5 bg-sky-500 hover:bg-sky-600 text-white rounded text-sm font-medium">🔍 Fetch (Pexels + Pixabay)</button>
+    </div>`;
+  }
+
+  if (p.status === 'voice_review') {
+    const hasVoice = (p.scenes || []).some(s => s.voice_segment_url);
+    if (!hasVoice) {
+      html += `<div class="mb-4 p-3 bg-indigo-50 rounded border border-indigo-300">
+        <div class="font-semibold text-indigo-800 mb-2">🗣️ Gate 2: Generate voice</div>
+        <div class="text-sm text-slate-700">ElevenLabs TTS per-scene. Cost ~$0.36/video.</div>
+        <button onclick="vsGenVoice(${p.id})" class="mt-2 px-3 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded text-sm font-medium">🗣️ Generate voice</button>
+      </div>`;
+    } else {
+      html += `<div class="mb-4 p-3 bg-emerald-50 rounded border border-emerald-300">
+        <div class="font-semibold text-emerald-800 mb-2">✅ Voice ready — listen + approve</div>
+        <div class="mt-2 flex gap-2">
+          <button onclick="vsApproveVoice(${p.id})" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm font-medium">✅ Approve → Compose</button>
+          <button onclick="vsGenVoice(${p.id})" class="px-3 py-1.5 bg-slate-200 rounded text-sm">🔄 Re-gen</button>
+        </div>
+      </div>`;
+    }
+  }
+
+  if (p.status === 'composing') {
+    html += `<div class="mb-4 p-3 bg-violet-50 rounded border border-violet-300">
+      <div class="font-semibold text-violet-800 mb-2">🎬 Gate 3: Compose (FFmpeg)</div>
+      <button onclick="vsCompose(${p.id})" class="px-3 py-1.5 bg-violet-500 hover:bg-violet-600 text-white rounded text-sm font-medium">🎬 Compose video</button>
+    </div>`;
+  }
+
+  if (p.status === 'qc_review' && p.draft_video_url) {
+    html += `<div class="mb-4 p-3 bg-amber-50 rounded border border-amber-300">
+      <div class="font-semibold text-amber-800 mb-2">🔍 Gate 4: Final preview + approve</div>
+      <video src="${vsEsc(p.draft_video_url)}" controls class="mt-2 max-w-sm rounded border" style="max-height: 600px"></video>
+      <div class="mt-2 flex gap-2">
+        <button onclick="vsApproveFinal(${p.id})" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm font-medium">✅ Approve final</button>
+        <button onclick="vsCompose(${p.id})" class="px-3 py-1.5 bg-slate-200 rounded text-sm">🔄 Re-compose</button>
+      </div>
+    </div>`;
+  }
+
+  if (p.status === 'approved' && p.final_video_url) {
+    html += `<div class="mb-4 p-3 bg-emerald-50 rounded border border-emerald-300">
+      <div class="font-semibold text-emerald-800 mb-2">✅ Ready to publish</div>
+      <video src="${vsEsc(p.final_video_url)}" controls class="mt-2 max-w-sm rounded border" style="max-height: 600px"></video>
+      <div class="mt-2 text-sm text-slate-600">Publishers FB/IG/Zalo sẽ có ở V1.6.</div>
+    </div>`;
+  }
+
+  if (script) {
+    html += `<div class="mb-4 bg-white rounded-lg border p-4">
+      <h3 class="font-bold mb-2">📝 Script Overview</h3>
+      <div class="text-sm mb-2"><strong>Hook:</strong> ${vsEsc(script.hook_question)}</div>
+      <div class="text-sm mb-2"><strong>CTA:</strong> ${vsEsc(script.cta_text)}</div>
+      <div class="text-sm mb-1"><strong>Caption:</strong> ${vsEsc(script.caption_social || p.caption_text || '')}</div>
+      ${script.hashtags?.length ? `<div class="text-xs text-slate-500">${script.hashtags.map(h => vsEsc(h)).join(' ')}</div>` : ''}
+    </div>`;
+  }
+
+  html += '<h3 class="font-bold mb-2">🎬 Scenes</h3><div class="space-y-2">';
+  for (const s of p.scenes || []) {
+    const kindColor = { hook: 'indigo', main: 'slate', cta: 'emerald' };
+    const statusColor = { ready: 'emerald', failed: 'rose', pending: 'amber', generating: 'sky' };
+    html += `
+      <div class="bg-white rounded-lg border p-3">
+        <div class="flex items-center gap-2 mb-1 flex-wrap">
+          <span class="text-[10px] bg-${kindColor[s.kind] || 'slate'}-100 text-${kindColor[s.kind] || 'slate'}-700 px-1.5 py-0.5 rounded font-bold">${vsEsc(s.kind)} #${s.scene_index}</span>
+          <span class="text-[10px] bg-${statusColor[s.status] || 'slate'}-100 text-${statusColor[s.status] || 'slate'}-700 px-1.5 py-0.5 rounded">${vsEsc(s.status)}</span>
+          <span class="text-xs text-slate-500">${s.duration_sec}s</span>
+          ${s.visual_provider ? `<span class="text-xs text-slate-500">· ${vsEsc(s.visual_provider)}</span>` : ''}
+        </div>
+        <div class="text-sm"><strong>Text:</strong> ${vsEsc(s.text)}</div>
+        <div class="text-xs text-slate-500 mt-1"><strong>Visual:</strong> ${vsEsc(s.visual_prompt)}</div>
+        ${s.visual_url ? `
+          <details class="mt-2">
+            <summary class="cursor-pointer text-xs text-indigo-600">🎨 Xem clip</summary>
+            <video src="${vsEsc(s.visual_url)}" controls class="mt-2 max-w-xs rounded"></video>
+          </details>` : ''}
+        ${s.voice_segment_url ? `
+          <div class="mt-2"><audio src="${vsEsc(s.voice_segment_url)}" controls class="w-full max-w-sm" style="height: 32px"></audio></div>` : ''}
+      </div>
+    `;
+  }
+  html += '</div>';
+
+  html += `<div class="mt-4 flex gap-2">
+    <button onclick="vsDeleteProject(${p.id})" class="px-3 py-1.5 bg-rose-100 text-rose-700 rounded text-sm">🗑 Xoá</button>
+  </div>`;
+  return html;
+}
+
+async function vsRetryScript(id) {
+  if (!confirm('Re-generate script?')) return;
+  await vsApi(`/projects/${id}/generate-script`, { method: 'POST', body: JSON.stringify({}) });
+  vsOpenProject(id);
+}
+async function vsApproveScript(id) { await vsApi(`/projects/${id}/approve-script`, { method: 'POST' }); vsOpenProject(id); }
+async function vsFetchVisuals(id) {
+  try {
+    const btn = event.target; btn.disabled = true; btn.textContent = '⏳ Fetching...';
+    const r = await vsApi(`/projects/${id}/generate-visuals`, { method: 'POST' });
+    alert(`Fetched: ${r.fetched}, Failed: ${r.failed}`);
+    vsOpenProject(id);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+async function vsGenVoice(id) {
+  if (!confirm('Generate voice? Sẽ gọi ElevenLabs API.')) return;
+  try {
+    const btn = event.target; btn.disabled = true; btn.textContent = '⏳ ElevenLabs...';
+    const r = await vsApi(`/projects/${id}/generate-voice`, { method: 'POST' });
+    if (r.success) alert(`✅ Voice generated: ${r.scenes_generated} scenes`);
+    else alert('Lỗi: ' + (r.error || 'unknown'));
+    vsOpenProject(id);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+async function vsApproveVoice(id) { await vsApi(`/projects/${id}/approve-voice`, { method: 'POST' }); vsOpenProject(id); }
+async function vsCompose(id) {
+  if (!confirm('Compose video (30-60s)?')) return;
+  try {
+    const btn = event.target; btn.disabled = true; btn.textContent = '⏳ Composing...';
+    const r = await vsApi(`/projects/${id}/compose`, { method: 'POST' });
+    if (r.success) alert(`✅ Composed!\nDuration: ${r.duration_sec?.toFixed(1)}s\nSize: ${((r.size_bytes || 0) / 1024 / 1024).toFixed(1)}MB`);
+    else alert('Lỗi: ' + r.error);
+    vsOpenProject(id);
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+async function vsApproveFinal(id) { await vsApi(`/projects/${id}/approve-final`, { method: 'POST' }); vsOpenProject(id); }
+async function vsDeleteProject(id) {
+  if (!confirm('Xoá project?')) return;
+  await vsApi(`/projects/${id}`, { method: 'DELETE' });
+  switchTab('vs-projects');
+}
+
+// ── BRAND KIT ──
+async function vsLoadBrandKit() {
+  try {
+    const r = await vsApi('/brand-kits/default');
+    if (!r.success) { document.getElementById('vs-brand-kit-content').innerHTML = '<div class="text-slate-400">⏳ Enable module first</div>'; return; }
+    const k = r.data;
+    document.getElementById('vs-brand-kit-content').innerHTML = `
+      <div class="bg-white rounded-lg border p-5 space-y-3">
+        <div class="flex items-center gap-2 mb-2">
+          <h3 class="font-bold">${vsEsc(k.name)}</h3>
+          <span class="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">DEFAULT</span>
+        </div>
+        <div class="grid grid-cols-2 gap-3 text-sm">
+          <div><div class="text-slate-500 text-xs">Logo position</div><div>${vsEsc(k.logo_position)}</div></div>
+          <div><div class="text-slate-500 text-xs">Aspect</div><div>${vsEsc(k.aspect_ratio)} (${vsEsc(k.resolution)})</div></div>
+          <div><div class="text-slate-500 text-xs">Primary</div><div><span class="inline-block w-4 h-4 rounded mr-1 align-middle" style="background:${vsEsc(k.primary_color)}"></span>${vsEsc(k.primary_color)}</div></div>
+          <div><div class="text-slate-500 text-xs">Secondary</div><div><span class="inline-block w-4 h-4 rounded mr-1 align-middle" style="background:${vsEsc(k.secondary_color)}"></span>${vsEsc(k.secondary_color)}</div></div>
+          <div><div class="text-slate-500 text-xs">Font</div><div>${vsEsc(k.subtitle_font)}</div></div>
+          <div><div class="text-slate-500 text-xs">Music mood</div><div>${vsEsc(k.music_mood)}</div></div>
+          <div class="col-span-2"><div class="text-slate-500 text-xs">LUT file</div><div class="text-xs font-mono">${vsEsc(k.color_lut_file || '—')}</div></div>
+        </div>
+        <div class="border-t pt-3 text-xs text-slate-500">
+          Brand kit auto-generate khi enable module. V2 sẽ có UI edit.
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    document.getElementById('vs-brand-kit-content').innerHTML = `<div class="text-rose-600">Lỗi: ${vsEsc(e.message)}</div>`;
+  }
+}
+
+// ── SETTINGS ──
+async function vsLoadSettings() {
+  await vsCheckStatus();
+  document.getElementById('vs-settings-enabled').checked = _vsStatus?.enabled || false;
+}
+
+async function vsToggleEnabled(e) {
+  try {
+    await vsApi('/toggle', { method: 'POST', body: JSON.stringify({ enabled: e.target.checked }) });
+    await vsCheckStatus();
+  } catch (err) {
+    alert('Lỗi: ' + err.message);
+    e.target.checked = !e.target.checked;
+  }
+}
+
+async function vsSaveSettings() {
+  try {
+    const payload = {
+      pexels_api_key: document.getElementById('vs-settings-pexels').value || undefined,
+      pixabay_api_key: document.getElementById('vs-settings-pixabay').value || undefined,
+      elevenlabs_api_key: document.getElementById('vs-settings-elevenlabs').value || undefined,
+      elevenlabs_voice_id: document.getElementById('vs-settings-voice-id').value || undefined,
+    };
+    const filtered = Object.fromEntries(Object.entries(payload).filter(([, v]) => v !== undefined));
+    await vsApi('/settings', { method: 'POST', body: JSON.stringify(filtered) });
+    alert('✅ Đã lưu');
+    await vsCheckStatus();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function vsListVoices() {
+  try {
+    const r = await vsApi('/voices');
+    const panel = document.getElementById('vs-settings-voice-list-result');
+    if (!r.success || !r.data?.length) {
+      panel.innerHTML = '<div class="text-rose-600">Không load được voices. Check API key đã save chưa.</div>';
+    } else {
+      panel.innerHTML = '<div class="bg-white border rounded p-2">' + r.data.map(v => `
+        <div class="flex items-center justify-between gap-2 py-1 border-b last:border-b-0">
+          <div>
+            <div class="font-mono text-xs">${vsEsc(v.voice_id)}</div>
+            <div class="text-sm">${vsEsc(v.name)} <span class="text-slate-500">(${vsEsc(v.language || 'n/a')})</span></div>
+          </div>
+          <button onclick="document.getElementById('vs-settings-voice-id').value='${vsEsc(v.voice_id)}'" class="px-2 py-1 bg-emerald-500 text-white rounded text-xs">Pick</button>
+        </div>
+      `).join('') + '</div>';
+    }
+    panel.classList.remove('hidden');
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function vsPreviewVoice() {
+  const voiceId = document.getElementById('vs-settings-voice-id').value.trim();
+  if (!voiceId) return alert('Nhập Voice ID');
+  try {
+    const r = await vsApi('/voices/preview', { method: 'POST', body: JSON.stringify({ voice_id: voiceId }) });
+    if (!r.success) return alert('Lỗi: ' + (r.error || 'unknown'));
+    const audio = document.getElementById('vs-settings-voice-audio');
+    audio.src = 'data:audio/mpeg;base64,' + r.audio_base64;
+    audio.classList.remove('hidden');
+    audio.play();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+// ── Wire events ──
+document.addEventListener('DOMContentLoaded', () => {
+  const $ = (x) => document.getElementById(x);
+  if ($('vs-create-submit')) {
+    $('vs-create-submit').addEventListener('click', vsSubmitCreate);
+    $('vs-create-pick-idea').addEventListener('click', () => switchTab('vs-ideas'));
+    $('vs-ideas-brainstorm').addEventListener('click', vsBrainstorm);
+    $('vs-ideas-discover').addEventListener('click', vsDiscover);
+    $('vs-ideas-add').addEventListener('click', vsAddManualIdea);
+    $('vs-projects-refresh').addEventListener('click', vsLoadProjects);
+    $('vs-projects-filter-status').addEventListener('change', vsLoadProjects);
+    $('vs-back-to-projects').addEventListener('click', () => {
+      document.getElementById('vs-project-detail-wrap').classList.add('hidden');
+      document.getElementById('vs-projects-list').classList.remove('hidden');
+    });
+    $('vs-settings-enabled').addEventListener('change', vsToggleEnabled);
+    $('vs-settings-save').addEventListener('click', vsSaveSettings);
+    $('vs-settings-voice-list').addEventListener('click', vsListVoices);
+    $('vs-settings-voice-preview').addEventListener('click', vsPreviewVoice);
   }
 });
 

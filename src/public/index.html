@@ -116,6 +116,22 @@
           </div>
         </div>
 
+        <!-- 🎬 GROUP 2B: VIDEO STUDIO (mảng 3 của VP MKT) -->
+        <div class="nav-group" data-group="video-studio">
+          <button class="nav-group-header w-full flex items-center gap-2 px-3 pt-3 pb-1 text-[10px] uppercase tracking-wider text-slate-500 font-bold hover:text-slate-300">
+            <i data-lucide="chevron-down" class="nav-caret w-3 h-3"></i>
+            <span>Tạo video &amp; Đăng</span>
+          </button>
+          <div class="nav-group-body space-y-0.5">
+            <button data-tab="vs-dashboard" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="film"></i><span>Video Dashboard</span><span class="ml-auto text-[9px] bg-emerald-500 text-slate-900 px-1 py-0.5 rounded font-bold">v1.5</span></button>
+            <button data-tab="vs-create" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="plus-circle"></i><span>Tạo video mới</span></button>
+            <button data-tab="vs-ideas" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="lightbulb"></i><span>Ideas library</span><span id="vs-ideas-badge" class="ml-auto hidden text-[9px] bg-amber-500 text-slate-900 px-1 py-0.5 rounded font-bold"></span></button>
+            <button data-tab="vs-projects" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="video"></i><span>Video Projects</span></button>
+            <button data-tab="vs-brand" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="palette"></i><span>Brand Kit</span></button>
+            <button data-tab="vs-settings" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="settings"></i><span>Video Settings</span></button>
+          </div>
+        </div>
+
         <!-- 💬 GROUP 3: CHATBOT & AI -->
         <div class="nav-group" data-group="chatbot">
           <button class="nav-group-header w-full flex items-center gap-2 px-3 pt-3 pb-1 text-[10px] uppercase tracking-wider text-slate-500 font-bold hover:text-slate-300">
@@ -548,6 +564,144 @@
 
         <h3 class="font-bold mb-3">📋 Chiến dịch đang có</h3>
         <div id="campaigns-list" class="space-y-3"></div>
+      </section>
+
+      <!-- 🎬 VIDEO STUDIO PANELS (mảng 3 của VP MKT) -->
+      <section data-panel="vs-dashboard" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-1">🎬 Video Dashboard</h2>
+        <p class="text-slate-500 mb-4 text-sm">Tạo video travel tips từ AI + stock footage + ElevenLabs voice + FFmpeg compose.</p>
+        <div id="vs-dash-banner" class="mb-4"></div>
+        <div id="vs-dash-summary" class="grid grid-cols-4 gap-4 mb-6"></div>
+        <h3 class="font-bold mb-2">📺 Projects gần đây</h3>
+        <div id="vs-dash-recent" class="bg-white rounded-lg border divide-y"></div>
+      </section>
+
+      <section data-panel="vs-create" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-4">➕ Tạo video mới</h2>
+        <div class="max-w-2xl bg-white rounded-lg border p-5 space-y-4">
+          <div>
+            <label class="text-sm font-semibold">Topic (chủ đề video)</label>
+            <div class="flex gap-2">
+              <input id="vs-create-topic" type="text" class="border rounded px-3 py-2 w-full" placeholder="VD: 5 mẹo đặt vé máy bay rẻ ít ai biết">
+              <button id="vs-create-pick-idea" class="px-3 py-2 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded whitespace-nowrap text-sm">💡 Pick từ Ideas</button>
+            </div>
+          </div>
+          <div class="grid grid-cols-3 gap-3">
+            <div>
+              <label class="text-sm font-semibold">Duration</label>
+              <select id="vs-create-duration" class="border rounded px-2 py-2 w-full">
+                <option value="60">60s</option>
+                <option value="90" selected>90s</option>
+                <option value="120">120s</option>
+                <option value="180">180s</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-sm font-semibold">Tier</label>
+              <select id="vs-create-tier" class="border rounded px-2 py-2 w-full">
+                <option value="stock" selected>Stock (~$0.40)</option>
+                <option value="hybrid" disabled>Hybrid (V3)</option>
+                <option value="premium" disabled>Premium (V3)</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-sm font-semibold">Style</label>
+              <select id="vs-create-style" class="border rounded px-2 py-2 w-full">
+                <option value="warm">Warm</option>
+                <option value="energetic">Energetic</option>
+                <option value="informative">Informative</option>
+                <option value="professional">Professional</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label class="text-sm font-semibold">Target audience (optional)</label>
+            <input id="vs-create-audience" type="text" class="border rounded px-3 py-2 w-full" placeholder="VD: du khách trẻ 20-35">
+          </div>
+          <button id="vs-create-submit" class="w-full px-4 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded font-medium">🎬 Tạo project + generate script</button>
+        </div>
+      </section>
+
+      <section data-panel="vs-ideas" class="panel hidden">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-2xl font-bold">💡 Video Ideas Library</h2>
+          <div class="flex gap-2">
+            <button id="vs-ideas-add" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-sm">+ Nhập manual</button>
+            <button id="vs-ideas-brainstorm" class="px-3 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded text-sm">🧠 AI brainstorm</button>
+            <button id="vs-ideas-discover" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm">🔍 Discover (RSS + Reddit)</button>
+          </div>
+        </div>
+        <div id="vs-ideas-list" class="space-y-2"></div>
+      </section>
+
+      <section data-panel="vs-projects" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-4">📺 Video Projects</h2>
+        <div class="mb-3 flex gap-2">
+          <select id="vs-projects-filter-status" class="border rounded px-2 py-1 text-sm">
+            <option value="">Tất cả status</option>
+            <option value="draft">draft</option>
+            <option value="scripting">scripting</option>
+            <option value="script_review">script_review</option>
+            <option value="visuals">visuals</option>
+            <option value="voice_review">voice_review</option>
+            <option value="composing">composing</option>
+            <option value="qc_review">qc_review</option>
+            <option value="approved">approved</option>
+            <option value="published">published</option>
+          </select>
+          <button id="vs-projects-refresh" class="px-3 py-1 bg-slate-200 rounded text-sm">🔄 Refresh</button>
+        </div>
+        <div id="vs-projects-list" class="space-y-2"></div>
+        <div id="vs-project-detail-wrap" class="hidden mt-4">
+          <button id="vs-back-to-projects" class="text-sm text-indigo-600 hover:underline mb-3">← Back to projects</button>
+          <div id="vs-project-detail-content"></div>
+        </div>
+      </section>
+
+      <section data-panel="vs-brand" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-4">🎨 Video Brand Kit</h2>
+        <div id="vs-brand-kit-content" class="max-w-3xl"></div>
+      </section>
+
+      <section data-panel="vs-settings" class="panel hidden">
+        <h2 class="text-2xl font-bold mb-4">⚙️ Video Studio Settings</h2>
+        <div class="max-w-2xl bg-white rounded-lg border p-5 space-y-4">
+          <div class="pb-3 border-b">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="font-semibold">Video Studio enabled</div>
+                <div class="text-xs text-slate-500">Toggle module tạo video</div>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="vs-settings-enabled" class="sr-only peer">
+                <div class="w-11 h-6 bg-slate-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+              </label>
+            </div>
+          </div>
+          <div>
+            <label class="text-sm font-semibold">Pexels API key</label>
+            <input type="password" id="vs-settings-pexels" class="border rounded px-3 py-2 w-full" placeholder="Đăng ký free: pexels.com/api">
+          </div>
+          <div>
+            <label class="text-sm font-semibold">Pixabay API key</label>
+            <input type="password" id="vs-settings-pixabay" class="border rounded px-3 py-2 w-full" placeholder="Đăng ký free: pixabay.com/api/docs">
+          </div>
+          <div>
+            <label class="text-sm font-semibold">ElevenLabs API key</label>
+            <input type="password" id="vs-settings-elevenlabs" class="border rounded px-3 py-2 w-full" placeholder="elevenlabs.io — Starter $22/mo">
+          </div>
+          <div>
+            <label class="text-sm font-semibold">ElevenLabs Voice ID (VN)</label>
+            <div class="flex gap-2">
+              <input type="text" id="vs-settings-voice-id" class="border rounded px-3 py-2 flex-1" placeholder="Voice ID — bấm List để chọn">
+              <button id="vs-settings-voice-list" class="px-3 py-2 bg-slate-200 rounded text-sm whitespace-nowrap">📋 List</button>
+              <button id="vs-settings-voice-preview" class="px-3 py-2 bg-indigo-500 text-white rounded text-sm whitespace-nowrap">🎧 Preview</button>
+            </div>
+            <audio id="vs-settings-voice-audio" controls class="mt-2 hidden w-full"></audio>
+            <div id="vs-settings-voice-list-result" class="mt-2 hidden max-h-64 overflow-y-auto text-xs"></div>
+          </div>
+          <button id="vs-settings-save" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded">💾 Lưu settings</button>
+        </div>
       </section>
 
       <!-- AUTO REPLY TAB -->

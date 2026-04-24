@@ -2,186 +2,20 @@
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<title>🎬 Video Studio — Sonder</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-<style>
-  body { font-family: system-ui, -apple-system, sans-serif; }
-  .nav-btn.active { background: #1e293b; color: white; }
-  .status-badge { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; }
-</style>
+<title>Video Studio — Redirect</title>
+<meta http-equiv="refresh" content="0; url=/#vs-dashboard">
+<script>
+  // Video Studio đã được tích hợp vào main admin panel (mảng 3 của VP MKT).
+  // Redirect về /index.html + switch tab vs-dashboard.
+  window.location.href = '/';
+  setTimeout(() => {
+    const btn = document.querySelector('[data-tab="vs-dashboard"]');
+    if (btn) btn.click();
+  }, 500);
+</script>
 </head>
-<body class="bg-slate-50">
-<div class="flex h-screen">
-  <!-- Sidebar -->
-  <aside class="w-64 bg-slate-900 text-slate-200 flex flex-col">
-    <div class="p-4 border-b border-slate-800">
-      <h1 class="font-bold text-lg">🎬 Video Studio</h1>
-      <p class="text-xs text-slate-400 mt-1">Module riêng — Sonder</p>
-      <span id="vs-flag" class="mt-2 inline-block text-[10px] bg-rose-600 text-white px-2 py-0.5 rounded hidden">OFF</span>
-    </div>
-    <nav class="flex-1 overflow-y-auto p-3 space-y-1">
-      <button data-tab="dashboard" class="nav-btn active w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="layout-dashboard" class="inline w-4 h-4 mr-2"></i>Dashboard</button>
-      <button data-tab="create" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="plus-circle" class="inline w-4 h-4 mr-2"></i>Tạo video mới</button>
-      <button data-tab="ideas" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="lightbulb" class="inline w-4 h-4 mr-2"></i>Ideas library <span id="ideas-badge" class="ml-auto text-[9px] bg-amber-500 text-slate-900 px-1 py-0.5 rounded font-bold hidden"></span></button>
-      <button data-tab="projects" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="film" class="inline w-4 h-4 mr-2"></i>Projects</button>
-      <button data-tab="brand" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="palette" class="inline w-4 h-4 mr-2"></i>Brand Kit</button>
-      <button data-tab="settings" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="settings" class="inline w-4 h-4 mr-2"></i>Settings</button>
-    </nav>
-    <div class="p-3 border-t border-slate-800 space-y-1">
-      <a href="/" class="block text-xs text-slate-400 hover:text-white">← Về app chính</a>
-      <button id="vs-logout" class="text-xs text-slate-400 hover:text-white">Đăng xuất</button>
-    </div>
-  </aside>
-
-  <!-- Main -->
-  <main class="flex-1 overflow-y-auto p-6">
-    <!-- DASHBOARD -->
-    <section data-panel="dashboard" class="panel">
-      <h2 class="text-2xl font-bold mb-4">🎬 Dashboard</h2>
-      <div id="dash-banner" class="mb-4"></div>
-      <div id="dash-summary" class="grid grid-cols-4 gap-4 mb-6"></div>
-      <h3 class="font-bold mb-2">📺 Projects gần đây</h3>
-      <div id="dash-recent" class="bg-white rounded-lg border divide-y"></div>
-    </section>
-
-    <!-- CREATE -->
-    <section data-panel="create" class="panel hidden">
-      <h2 class="text-2xl font-bold mb-4">➕ Tạo video mới</h2>
-      <div class="max-w-2xl bg-white rounded-lg border p-5 space-y-4">
-        <div>
-          <label class="text-sm font-semibold">Topic (chủ đề video)</label>
-          <div class="flex gap-2">
-            <input id="create-topic" type="text" class="border rounded px-3 py-2 w-full" placeholder="VD: 5 mẹo đặt vé máy bay rẻ ít ai biết">
-            <button id="create-pick-idea" class="px-3 py-2 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded whitespace-nowrap text-sm">💡 Pick idea</button>
-          </div>
-        </div>
-        <div class="grid grid-cols-3 gap-3">
-          <div>
-            <label class="text-sm font-semibold">Duration</label>
-            <select id="create-duration" class="border rounded px-2 py-2 w-full">
-              <option value="60">60s</option>
-              <option value="90" selected>90s</option>
-              <option value="120">120s</option>
-              <option value="180">180s</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-sm font-semibold">Tier</label>
-            <select id="create-tier" class="border rounded px-2 py-2 w-full">
-              <option value="stock" selected>Stock (~$0.40)</option>
-              <option value="hybrid" disabled>Hybrid (V3)</option>
-              <option value="premium" disabled>Premium (V3)</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-sm font-semibold">Style</label>
-            <select id="create-style" class="border rounded px-2 py-2 w-full">
-              <option value="warm">Warm</option>
-              <option value="energetic">Energetic</option>
-              <option value="informative">Informative</option>
-              <option value="professional">Professional</option>
-            </select>
-          </div>
-        </div>
-        <div>
-          <label class="text-sm font-semibold">Target audience (optional)</label>
-          <input id="create-audience" type="text" class="border rounded px-3 py-2 w-full" placeholder="VD: du khách trẻ 20-35">
-        </div>
-        <button id="create-submit" class="w-full px-4 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded font-medium">🎬 Tạo project + generate script</button>
-      </div>
-    </section>
-
-    <!-- IDEAS -->
-    <section data-panel="ideas" class="panel hidden">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-2xl font-bold">💡 Ideas library</h2>
-        <div class="flex gap-2">
-          <button id="ideas-add-manual" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-sm">+ Nhập manual</button>
-          <button id="ideas-brainstorm" class="px-3 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded text-sm">🧠 AI brainstorm</button>
-          <button id="ideas-discover" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm">🔍 Discover (RSS + Reddit)</button>
-        </div>
-      </div>
-      <div id="ideas-list" class="space-y-2"></div>
-    </section>
-
-    <!-- PROJECTS -->
-    <section data-panel="projects" class="panel hidden">
-      <h2 class="text-2xl font-bold mb-4">📺 Projects</h2>
-      <div class="mb-3 flex gap-2">
-        <select id="projects-filter-status" class="border rounded px-2 py-1 text-sm">
-          <option value="">Tất cả status</option>
-          <option value="draft">draft</option>
-          <option value="scripting">scripting</option>
-          <option value="script_review">script_review</option>
-          <option value="visuals">visuals</option>
-          <option value="voice_review">voice_review</option>
-          <option value="composing">composing</option>
-          <option value="qc_review">qc_review</option>
-          <option value="approved">approved</option>
-          <option value="published">published</option>
-        </select>
-        <button id="projects-refresh" class="px-3 py-1 bg-slate-200 rounded text-sm">🔄 Refresh</button>
-      </div>
-      <div id="projects-list" class="space-y-2"></div>
-    </section>
-
-    <!-- PROJECT DETAIL (populated dynamically) -->
-    <section data-panel="project-detail" class="panel hidden">
-      <button id="back-to-projects" class="text-sm text-indigo-600 hover:underline mb-3">← Back to projects</button>
-      <div id="project-detail-content"></div>
-    </section>
-
-    <!-- BRAND KIT -->
-    <section data-panel="brand" class="panel hidden">
-      <h2 class="text-2xl font-bold mb-4">🎨 Brand Kit</h2>
-      <div id="brand-kit-content" class="max-w-3xl"></div>
-    </section>
-
-    <!-- SETTINGS -->
-    <section data-panel="settings" class="panel hidden">
-      <h2 class="text-2xl font-bold mb-4">⚙️ Settings</h2>
-      <div class="max-w-2xl bg-white rounded-lg border p-5 space-y-4">
-        <div class="pb-3 border-b">
-          <div class="flex items-center justify-between">
-            <div>
-              <div class="font-semibold">Video Studio enabled</div>
-              <div class="text-xs text-slate-500">Toggle toàn bộ module on/off</div>
-            </div>
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" id="settings-enabled" class="sr-only peer">
-              <div class="w-11 h-6 bg-slate-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
-            </label>
-          </div>
-        </div>
-        <div>
-          <label class="text-sm font-semibold">Pexels API key</label>
-          <input type="password" id="settings-pexels" class="border rounded px-3 py-2 w-full" placeholder="Đăng ký free: pexels.com/api">
-        </div>
-        <div>
-          <label class="text-sm font-semibold">Pixabay API key</label>
-          <input type="password" id="settings-pixabay" class="border rounded px-3 py-2 w-full" placeholder="Đăng ký free: pixabay.com/api/docs">
-        </div>
-        <div>
-          <label class="text-sm font-semibold">ElevenLabs API key</label>
-          <input type="password" id="settings-elevenlabs" class="border rounded px-3 py-2 w-full" placeholder="elevenlabs.io — Starter $22/mo">
-        </div>
-        <div>
-          <label class="text-sm font-semibold">ElevenLabs Voice ID (VN)</label>
-          <div class="flex gap-2">
-            <input type="text" id="settings-elevenlabs-voice" class="border rounded px-3 py-2 flex-1" placeholder="Voice ID từ ElevenLabs library">
-            <button id="settings-voice-list" class="px-3 py-2 bg-slate-200 rounded text-sm whitespace-nowrap">📋 List voices</button>
-            <button id="settings-voice-preview" class="px-3 py-2 bg-indigo-500 text-white rounded text-sm whitespace-nowrap">🎧 Preview</button>
-          </div>
-          <audio id="settings-voice-audio" controls class="mt-2 hidden w-full"></audio>
-          <div id="settings-voice-list-result" class="mt-2 hidden max-h-64 overflow-y-auto text-xs"></div>
-        </div>
-        <button id="settings-save" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded">💾 Lưu settings</button>
-      </div>
-    </section>
-  </main>
-</div>
-
-<script src="/video-studio.js"></script>
+<body style="font-family: system-ui; padding: 40px; text-align: center;">
+  <h1>🎬 Video Studio</h1>
+  <p>Module đã được tích hợp vào <a href="/">main VP MKT admin panel</a> → sidebar "Tạo video &amp; Đăng"</p>
 </body>
 </html>
