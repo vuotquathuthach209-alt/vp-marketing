@@ -14,12 +14,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
-import axios from 'axios';
 import { db, getSetting } from '../../db';
 import type { TipScene, TipsScript } from './tips-engine';
 import type { TipVisual } from './tips-visuals';
-
-const FormData = require('form-data');
+// ⚡ Sonder brand voice — shared utility (skill: sonder-brand-voice)
+// Edge-TTS HoaiMy → ElevenLabs STS với voice Ngân (a3AkyqGG4v8Pg7SWQ0Y3)
+import { synthesizeSonderVoice, audioFileDuration } from '../sonder-voice';
 
 const MEDIA_DIR = '/opt/vp-marketing/data/media';
 const TIPS_OUT_DIR = path.join(MEDIA_DIR, 'tips-out');
@@ -33,8 +33,8 @@ const W = 1080;
 const H = 1920;
 
 // ═══════════════════════════════════════════════════════════
-// Voice synthesis — Edge-TTS (VN pronunciation) → ElevenLabs STS (Ngân voice)
-// Same pattern as story-to-video (proven chuẩn giọng VN + natural)
+// Voice synthesis — DELEGATED to ../sonder-voice (brand voice skill)
+// All TTS goes through Edge-TTS HoaiMy → ElevenLabs STS với voice Ngân
 // ═══════════════════════════════════════════════════════════
 
 interface VoiceSegment {
@@ -44,162 +44,47 @@ interface VoiceSegment {
 }
 
 /**
- * STEP 1: Edge-TTS Vietnamese HoaiMyNeural → reference audio.
- *   - Phát âm tiếng Việt chuẩn 100%, miễn phí
- *   - Output sẽ feed vào STS để clone giọng cuối cùng
- */
-async function edgeTtsVietnamese(text: string, outPath: string): Promise<{ ok: boolean; error?: string }> {
-  const voice = getSetting('vs_edge_tts_voice') || 'vi-VN-HoaiMyNeural';
-  const rate = getSetting('vs_edge_tts_rate') || '-3%';
-  const pitch = getSetting('vs_edge_tts_pitch') || '+3Hz';
-
-  for (let attempt = 1; attempt <= 4; attempt++) {
-    try {
-      const r = spawnSync('python3', [
-        '-m', 'edge_tts',
-        `--voice=${voice}`,
-        `--rate=${rate}`,
-        `--pitch=${pitch}`,
-        `--text`, text,
-        `--write-media`, outPath,
-      ], { encoding: 'utf8', timeout: 120_000 });
-
-      if (r.status !== 0) throw new Error('edge-tts: ' + (r.stderr || '').slice(-200));
-      if (!fs.existsSync(outPath) || fs.statSync(outPath).size < 1000) throw new Error('empty edge audio');
-      return { ok: true };
-    } catch (e: any) {
-      if (attempt < 4) {
-        const backoff = attempt * 2;
-        await new Promise(r => setTimeout(r, backoff * 1000));
-      } else {
-        return { ok: false, error: e?.message };
-      }
-    }
-  }
-  return { ok: false, error: 'edge-tts max retries' };
-}
-
-/**
- * STEP 2: ElevenLabs Speech-to-Speech — convert Edge audio sang giọng Ngân (clone).
- *   - Giữ pronunciation từ Edge-TTS (chuẩn VN)
- *   - Apply timbre + style của voice Ngân (natural human-like)
- *   - Model: eleven_multilingual_sts_v2
- */
-async function elevenLabsStsVietnamese(refAudioPath: string, voiceId: string, outPath: string): Promise<{ ok: boolean; error?: string }> {
-  const apiKey = getSetting('elevenlabs_api_key') || getSetting('vs_elevenlabs_api_key');
-  if (!apiKey) return { ok: false, error: 'no_elevenlabs_key' };
-
-  try {
-    const form = new FormData();
-    form.append('audio', fs.createReadStream(refAudioPath), { filename: 'source.mp3', contentType: 'audio/mpeg' });
-    form.append('model_id', 'eleven_multilingual_sts_v2');
-    form.append('voice_settings', JSON.stringify({
-      stability: 0.5,
-      similarity_boost: 0.85,
-      style: 0.3,
-      use_speaker_boost: true,
-    }));
-
-    const resp = await axios.post(
-      `https://api.elevenlabs.io/v1/speech-to-speech/${voiceId}`,
-      form,
-      {
-        headers: { 'xi-api-key': apiKey, ...form.getHeaders(), 'Accept': 'audio/mpeg' },
-        responseType: 'arraybuffer',
-        timeout: 180_000,
-        maxContentLength: 50 * 1024 * 1024,
-      }
-    );
-    fs.writeFileSync(outPath, Buffer.from(resp.data));
-    return { ok: true };
-  } catch (e: any) {
-    const errBody = e.response?.data ? Buffer.from(e.response.data).toString('utf8').substring(0, 300) : e.message;
-    return { ok: false, error: errBody };
-  }
-}
-
-/**
- * Combined: Edge-TTS → STS pattern.
- * Fallback: nếu STS fail → dùng Edge audio luôn (cleaner robotic but accurate VN).
- */
-async function synthesizeSegment(text: string, voiceId: string | undefined, outPath: string): Promise<{ ok: boolean; error?: string; mode: 'sts' | 'edge_only' | 'none' }> {
-  const ts = Date.now() + Math.floor(Math.random() * 1000);
-  const edgeRefPath = path.join(VOICE_DIR, `edge-ref-tips-${ts}.mp3`);
-
-  // Step 1: Edge-TTS reference
-  const edgeR = await edgeTtsVietnamese(text, edgeRefPath);
-  if (!edgeR.ok) return { ok: false, error: 'edge-tts: ' + edgeR.error, mode: 'none' };
-
-  // Step 2: STS với voice Ngân (nếu có voiceId + API key)
-  if (voiceId) {
-    const stsR = await elevenLabsStsVietnamese(edgeRefPath, voiceId, outPath);
-    if (stsR.ok) {
-      try { fs.unlinkSync(edgeRefPath); } catch {}
-      return { ok: true, mode: 'sts' };
-    }
-    console.warn(`[tips-composer] STS fail, fallback Edge audio: ${stsR.error?.substring(0, 100)}`);
-  }
-
-  // Fallback: dùng Edge audio trực tiếp
-  fs.copyFileSync(edgeRefPath, outPath);
-  try { fs.unlinkSync(edgeRefPath); } catch {}
-  return { ok: true, mode: 'edge_only' };
-}
-
-function ffprobeDuration(filePath: string): number {
-  const r = spawnSync('ffprobe', [
-    '-v', 'quiet', '-show_entries', 'format=duration', '-of', 'csv=p=0', filePath
-  ], { encoding: 'utf8' });
-  return parseFloat(r.stdout?.trim()) || 0;
-}
-
-/**
  * Synthesize all segments for tips video (hook + 5 tips + cta = 7 segments).
  *
- * Pattern: Edge-TTS Vietnamese → ElevenLabs Speech-to-Speech với voice Ngân.
- * Same as story-to-video — chuẩn pronunciation VN + giọng natural.
+ * Delegates to shared sonder-voice utility (skill: sonder-brand-voice).
+ * Per-Tips override allowed via setting `vs_elevenlabs_voice_id_energetic`.
  */
 export async function synthesizeTipsVoice(script: TipsScript, projectId: number): Promise<VoiceSegment[]> {
-  // Voice ID priority:
-  //   1. vs_elevenlabs_voice_id_energetic (nếu admin set riêng cho Tips)
-  //   2. vs_elevenlabs_voice_id_owner (Ngân clone, dùng cho story)
-  //   3. vs_elevenlabs_voice_id
-  //   4. None → fallback Edge-TTS only (no STS)
-  const voiceId = getSetting('vs_elevenlabs_voice_id_energetic')
-    || getSetting('vs_elevenlabs_voice_id_owner')
-    || getSetting('vs_elevenlabs_voice_id')
-    || undefined;
+  // Tips can use specific energetic voice if admin sets it; otherwise default Ngân
+  const tipsVoiceOverride = getSetting('vs_elevenlabs_voice_id_energetic') || undefined;
 
   const segments: VoiceSegment[] = [];
   const ts = Date.now();
   const modes: string[] = [];
 
+  const buildPath = (suffix: string) => path.join(VOICE_DIR, `tips-${projectId}-${ts}-${suffix}.mp3`);
+
   // 1. Hook
-  const hookPath = path.join(VOICE_DIR, `tips-${projectId}-${ts}-hook.mp3`);
-  const hookR = await synthesizeSegment(script.hook_text, voiceId, hookPath);
+  const hookPath = buildPath('hook');
+  const hookR = await synthesizeSonderVoice(script.hook_text, hookPath, tipsVoiceOverride);
   if (!hookR.ok) throw new Error('hook synth fail: ' + hookR.error);
   modes.push(hookR.mode);
-  segments.push({ text: script.hook_text, audio_path: hookPath, duration_sec: ffprobeDuration(hookPath) });
+  segments.push({ text: script.hook_text, audio_path: hookPath, duration_sec: audioFileDuration(hookPath) });
 
   // 2. Tips × 5
   for (let i = 0; i < script.tips.length; i++) {
     const tip = script.tips[i];
-    const tipPath = path.join(VOICE_DIR, `tips-${projectId}-${ts}-tip${i + 1}.mp3`);
-    const r = await synthesizeSegment(tip.text, voiceId, tipPath);
+    const tipPath = buildPath(`tip${i + 1}`);
+    const r = await synthesizeSonderVoice(tip.text, tipPath, tipsVoiceOverride);
     if (!r.ok) throw new Error(`tip ${i + 1} synth fail: ` + r.error);
     modes.push(r.mode);
-    segments.push({ text: tip.text, audio_path: tipPath, duration_sec: ffprobeDuration(tipPath) });
+    segments.push({ text: tip.text, audio_path: tipPath, duration_sec: audioFileDuration(tipPath) });
   }
 
   // 3. CTA
-  const ctaPath = path.join(VOICE_DIR, `tips-${projectId}-${ts}-cta.mp3`);
-  const ctaR = await synthesizeSegment(script.cta_text, voiceId, ctaPath);
+  const ctaPath = buildPath('cta');
+  const ctaR = await synthesizeSonderVoice(script.cta_text, ctaPath, tipsVoiceOverride);
   if (!ctaR.ok) throw new Error('cta synth fail: ' + ctaR.error);
   modes.push(ctaR.mode);
-  segments.push({ text: script.cta_text, audio_path: ctaPath, duration_sec: ffprobeDuration(ctaPath) });
+  segments.push({ text: script.cta_text, audio_path: ctaPath, duration_sec: audioFileDuration(ctaPath) });
 
   const stsCount = modes.filter(m => m === 'sts').length;
-  console.log(`[tips-composer] voice synth done: ${segments.length} segments (${stsCount} STS, ${modes.length - stsCount} edge-only), total ${segments.reduce((s, x) => s + x.duration_sec, 0).toFixed(1)}s`);
+  console.log(`[tips-composer] voice synth: ${segments.length} segments (${stsCount} STS, ${modes.length - stsCount} edge-only) for project #${projectId}`);
 
   return segments;
 }
@@ -343,7 +228,7 @@ export async function composeTipsVideo(opts: ComposeOpts): Promise<{ output_path
       throw new Error('ffmpeg final concat fail: ' + errTail);
     }
 
-    const duration = ffprobeDuration(outputPath);
+    const duration = audioFileDuration(outputPath);
     const size = fs.statSync(outputPath).size;
 
     // Cleanup intermediate segments
