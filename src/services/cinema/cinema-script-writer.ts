@@ -318,27 +318,43 @@ async function callClaude(system: string, user: string, maxTokens = 8000): Promi
   const apiKey = getSetting('anthropic_api_key') || process.env.CLAUDE_API_KEY;
   if (!apiKey) throw new Error('anthropic_api_key not set');
 
-  const r = await axios.post(
-    'https://api.anthropic.com/v1/messages',
-    {
-      model: 'claude-sonnet-4-6',
-      max_tokens: maxTokens,
-      system,
-      messages: [{ role: 'user', content: user }],
-    },
-    {
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      timeout: 360_000,                 // 6 min — long script generation
-    },
-  );
+  // Use AbortController for hard timeout — axios timeout không đủ tin cậy
+  // cho long-running Claude calls (response stream có thể stall mà không trigger timeout)
+  const HARD_TIMEOUT_MS = 240_000;     // 4 min hard ceiling
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), HARD_TIMEOUT_MS);
 
-  const text = ((r.data?.content || []).map((b: any) => b?.text || '').join('') || '').trim();
-  if (!text) throw new Error('Claude returned empty response');
-  return text;
+  try {
+    const r = await axios.post(
+      'https://api.anthropic.com/v1/messages',
+      {
+        model: 'claude-sonnet-4-6',
+        max_tokens: maxTokens,
+        system,
+        messages: [{ role: 'user', content: user }],
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        timeout: HARD_TIMEOUT_MS,
+        signal: controller.signal,
+      },
+    );
+
+    const text = ((r.data?.content || []).map((b: any) => b?.text || '').join('') || '').trim();
+    if (!text) throw new Error('Claude returned empty response');
+    return text;
+  } catch (e: any) {
+    if (e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError') {
+      throw new Error(`Claude API hard-timeout (${HARD_TIMEOUT_MS / 1000}s) — aborted`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
