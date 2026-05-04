@@ -85,8 +85,8 @@ export function createWeekendProject(input: CreateWeekendInput): { id: number; t
   const now = Date.now();
   const result = db.prepare(`
     INSERT INTO weekend_videos
-      (theme_type, theme_subject, topic, status, scenes_count, duration_sec, generated_by, cost_cents, created_at, updated_at)
-    VALUES (?, ?, ?, 'draft', ?, ?, ?, 0, ?, ?)
+      (theme_type, theme_subject, topic, status, script_json, scenes_count, duration_sec, generated_by, cost_cents, created_at, updated_at)
+    VALUES (?, ?, ?, 'draft', '{}', ?, ?, ?, 0, ?, ?)
   `).run(
     theme,
     subject,
