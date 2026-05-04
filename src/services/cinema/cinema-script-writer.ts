@@ -318,13 +318,13 @@ async function callClaude(system: string, user: string, maxTokens = 8000): Promi
   const apiKey = getSetting('anthropic_api_key') || process.env.CLAUDE_API_KEY;
   if (!apiKey) throw new Error('anthropic_api_key not set');
 
-  // Use AbortController for hard timeout — axios timeout không đủ tin cậy
-  // cho long-running Claude calls (response stream có thể stall mà không trigger timeout)
+  // Promise.race robust timeout — axios timeout + AbortController đều có thể fail
+  // với long-running streaming responses từ Claude API. Promise.race guarantees
+  // exactly one promise wins.
   const HARD_TIMEOUT_MS = 240_000;     // 4 min hard ceiling
   const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => controller.abort(), HARD_TIMEOUT_MS);
 
-  try {
+  const apiCall: Promise<string> = (async () => {
     const r = await axios.post(
       'https://api.anthropic.com/v1/messages',
       {
@@ -343,17 +343,24 @@ async function callClaude(system: string, user: string, maxTokens = 8000): Promi
         signal: controller.signal,
       },
     );
-
     const text = ((r.data?.content || []).map((b: any) => b?.text || '').join('') || '').trim();
     if (!text) throw new Error('Claude returned empty response');
     return text;
-  } catch (e: any) {
-    if (e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError') {
-      throw new Error(`Claude API hard-timeout (${HARD_TIMEOUT_MS / 1000}s) — aborted`);
-    }
-    throw e;
+  })();
+
+  let timeoutId: NodeJS.Timeout | null = null;
+  const timeoutPromise: Promise<never> = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      try { controller.abort(); } catch {}
+      reject(new Error(`Claude API hard-timeout (${HARD_TIMEOUT_MS / 1000}s) — Promise.race fired`));
+    }, HARD_TIMEOUT_MS);
+  });
+
+  try {
+    const result = await Promise.race([apiCall, timeoutPromise]);
+    return result;
   } finally {
-    clearTimeout(timeoutHandle);
+    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 
