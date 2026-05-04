@@ -2290,6 +2290,119 @@ CREATE INDEX IF NOT EXISTS idx_weekend_theme_log_date ON weekend_theme_log(sunda
 console.log('[db] V2.2 weekend_videos + weekend_theme_log tables ready');
 
 // ═══════════════════════════════════════════════════════════
+// V3 ANTHOLOGY: Sonder Stories — Multi-arc web storytelling
+// Skill reference: sonder-storytelling
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+-- Character pool (Linh, Tuấn, Vy, Khanh, Hà, Tài + future)
+CREATE TABLE IF NOT EXISTS story_characters (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  age INTEGER,
+  gender TEXT,
+  role TEXT,                              -- main_protagonist | staff_anchor | external_observer | returning_guest | family_visitor | long_term_resident
+  backstory TEXT NOT NULL,
+  visual_prompt TEXT NOT NULL,
+  signature_props TEXT,                   -- JSON array
+  voice_style TEXT,
+  voice_id_override TEXT,
+  appearance_count INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'active',
+  created_at INTEGER NOT NULL
+);
+
+-- Location pool
+CREATE TABLE IF NOT EXISTS story_locations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  area TEXT,
+  signature_details TEXT,                 -- JSON array
+  visual_prompt_addon TEXT,
+  recurring_elements TEXT,                -- JSON array
+  appearance_count INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+
+-- Brand values registry
+CREATE TABLE IF NOT EXISTS story_brand_values (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  value_key TEXT UNIQUE NOT NULL,
+  value_label_vn TEXT NOT NULL,
+  description TEXT,
+  example_actions TEXT,                   -- JSON array
+  appearance_count INTEGER DEFAULT 0
+);
+
+-- Logo placement library
+CREATE TABLE IF NOT EXISTS story_logo_placements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  placement_key TEXT UNIQUE NOT NULL,
+  placement_label TEXT,
+  visual_prompt_addon TEXT,
+  alpha_strength REAL DEFAULT 0.35,
+  description TEXT
+);
+
+-- ⭐ ARCS (multi-season, multi-character)
+CREATE TABLE IF NOT EXISTS story_arcs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  arc_slug TEXT UNIQUE NOT NULL,          -- linh_season_1 | tuan_backstory | vy_cafe
+  character_slug TEXT NOT NULL,           -- main character of this arc
+  season_no INTEGER DEFAULT 1,
+  arc_title TEXT NOT NULL,
+  premise TEXT,
+  episodes_planned INTEGER NOT NULL,
+  episodes_published INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'planned',          -- planned | active | completed | paused
+  next_arc_slug TEXT,                     -- arc nào sẽ continue sau khi arc này kết
+  started_at INTEGER,
+  ended_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_arcs_status ON story_arcs(status, character_slug);
+
+-- ⭐ ARC EPISODES — link episode → arc + beat
+CREATE TABLE IF NOT EXISTS story_arc_episodes (
+  arc_id INTEGER NOT NULL,
+  episode_id INTEGER NOT NULL,            -- FK to story_episodes
+  arc_episode_no INTEGER NOT NULL,        -- 1, 2, 3 within arc
+  beat TEXT,                              -- inciting | escalation | midpoint | climax | resolution
+  prerequisites TEXT,                     -- JSON array of episode_ids cần xem trước
+  thread_advances TEXT,                   -- JSON array advances made this episode
+  PRIMARY KEY (arc_id, arc_episode_no)
+);
+CREATE INDEX IF NOT EXISTS idx_arc_eps_episode ON story_arc_episodes(episode_id);
+
+-- ⭐ CONTINUITY FACTS — anti-contradiction tracking
+CREATE TABLE IF NOT EXISTS story_continuity (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  fact_key TEXT NOT NULL,                 -- "linh.has_ex_in_dn" | "tuan.years_at_sonder" | "vy.daughter_age"
+  fact_value TEXT NOT NULL,
+  established_episode_id INTEGER,         -- FK story_episodes
+  established_at INTEGER NOT NULL,
+  superseded_at INTEGER,                  -- nếu fact thay đổi
+  notes TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_continuity_key ON story_continuity(fact_key, established_at DESC);
+`);
+console.log('[db] V3 anthology tables ready (characters, locations, values, logos, arcs, arc_episodes, continuity)');
+
+// Extend story_episodes for anthology metadata
+try {
+  const cols = (db.prepare(`SELECT name FROM pragma_table_info('story_episodes')`).all() as any[]).map((r: any) => r.name);
+  if (!cols.includes('character_ids')) db.exec(`ALTER TABLE story_episodes ADD COLUMN character_ids TEXT`);
+  if (!cols.includes('location_id')) db.exec(`ALTER TABLE story_episodes ADD COLUMN location_id INTEGER`);
+  if (!cols.includes('brand_values_json')) db.exec(`ALTER TABLE story_episodes ADD COLUMN brand_values_json TEXT`);
+  if (!cols.includes('logo_placements_json')) db.exec(`ALTER TABLE story_episodes ADD COLUMN logo_placements_json TEXT`);
+  if (!cols.includes('arc_id')) db.exec(`ALTER TABLE story_episodes ADD COLUMN arc_id INTEGER`);
+  if (!cols.includes('slot')) db.exec(`ALTER TABLE story_episodes ADD COLUMN slot TEXT`);
+  if (!cols.includes('hook_surface')) db.exec(`ALTER TABLE story_episodes ADD COLUMN hook_surface TEXT`);
+  if (!cols.includes('hook_arc')) db.exec(`ALTER TABLE story_episodes ADD COLUMN hook_arc TEXT`);
+} catch (e: any) { console.warn('[db] V3 alter story_episodes:', e?.message); }
+
+// ═══════════════════════════════════════════════════════════
 // v23 — intent_logs: log mọi message qua Gemini Intent Classifier
 // Mục đích: analytics + training data cho tuning classifier + debug
 // ═══════════════════════════════════════════════════════════

@@ -434,34 +434,113 @@ BGM moods (rotate theo tập):
 
 ---
 
-## 📅 FREQUENCY + ROTATION
+## 📅 FREQUENCY + ROTATION (LOCKED — 1 TẬP/NGÀY)
 
 ```
 ═══════════════════════════════════════════════════════════════
-  SCHEDULE: 1 tập/ngày, 19:00 VN
+  SCHEDULE: 1 TẬP/NGÀY — Quality first, audience ritual
 ═══════════════════════════════════════════════════════════════
 
-  T2: Linh — main spine (settling, growth)
-  T3: Chú Tuấn — staff anchor POV
-  T4: Chị Vy — external observer (cafe view)
-  T5: Linh — main spine continuation
-  T6: Anh Khanh — returning guest (occasional Tài)
-  T7: CROSSOVER — 2-3 chars cùng frame
-  CN: Linh / Cô Hà / Tài (rotating)
+  ⏰ 19:00 TỐI VN    — Sonder Stories đăng tập mới
+                       (peak engagement, audience build habit)
 
-  → 7 tập/tuần × 4 tuần = 28 tập/tháng
-  → Linh xuất hiện 12-14 tập/tháng (≥40%)
-  → Tuấn xuất hiện 8-10 tập/tháng
-  → Crossover ≥4 tập/tháng
+  WEEKLY ROTATION:
+    T2 (Mon)   →  Linh (main spine — settling)
+    T3 (Tue)   →  Tuấn (anchor character POV)
+    T4 (Wed)   →  Linh (continuation — week thread)
+    T5 (Thu)   →  Vy (external observer)
+    T6 (Fri)   →  Linh (mid-week peak)
+    T7 (Sat)   →  Crossover (2-3 chars cùng frame)
+    CN (Sun)   →  Khanh / Hà / Tài (rotating supporting)
+
+═══════════════════════════════════════════════════════════════
+  → 7 tập/tuần × 4 tuần = ~30 tập/tháng
+  → Linh = 3 tập/tuần (43%) — main spine
+  → Supporting = 3 tập/tuần (43%) — variety
+  → Crossover = 1 tập/tuần (14%) — universe building
+  → Cost: ~$15/tháng
+  → Audience ritual: "19h là Sonder time"
 ═══════════════════════════════════════════════════════════════
 ```
+
+### Tại sao 1 tập/ngày (không 3)?
+
+✅ **Quality first** — mỗi tập đầu tư kỹ, pass 13-item checklist
+✅ **Algorithm ritual** — TikTok/Reels yêu daily creators 19h consistent
+✅ **Audience anticipation** — 24h chờ tập tiếp = engagement spike
+✅ **Production buffer** — 1 tập/ngày = 6 phút FFmpeg, không stress VPS
+✅ **Cost rẻ** — $15/tháng (vs $45 if 3/ngày)
+✅ **Continuity safer** — ít tập/tuần = ít risk contradict
 
 ### Quy tắc rotation
 
-- Không cùng character 2 ngày liên tiếp (trừ Linh continuation ít)
-- Không cùng location 3 ngày liên tiếp
-- Ít nhất 1 crossover/tuần
-- Linh phải có "arc" (thay đổi nhỏ qua tháng — settling → integrating → growing)
+- **Linh = 3 tập/tuần (T2, T4, T6)** — main spine, audience theo arc Linh
+- **Tuấn = 1 tập/tuần (T3)** — anchor character, sub-arc backstory
+- **Vy = 1 tập/tuần (T5)** — external observer, mini-arc cafe
+- **Khanh / Hà / Tài rotate CN** — variety, mỗi character ~1 tập/3-4 tuần
+- **Crossover T7 mỗi tuần** — universe building bắt buộc
+- **Linh arc advance** mỗi tập T2/T4/T6 (3 advances/tuần)
+- **Supporting arcs** advance mỗi tập của character đó
+
+### Multi-arc Web Structure ⭐ (NEW)
+
+KHÔNG phải tuyến tính, KHÔNG phải anthology rời rạc — **MẠNG LƯỚI ARCS**:
+
+```
+        ╔═══════════════════════╗
+        ║  LINH — Season 1      ║  30 tập "Sài Gòn Tháng Đầu"
+        ║  (40% tập, main spine)║  → Linh chấp nhận SG là nhà
+        ╚═══════════════════════╝
+             ↓ ngay sau
+        ╔═══════════════════════╗
+        ║  LINH — Season 2      ║  30 tập "Sài Gòn Tháng Hai"
+        ║                       ║  → New conflict (love? career?)
+        ╚═══════════════════════╝
+
+        ╔═══════════════════════╗     ╔═══════════════════════╗
+        ║  TUẤN — Backstory     ║     ║  VY — Cafe & con gái  ║
+        ║  10 tập sub-arc       ║     ║  15 tập sub-arc        ║
+        ╚═══════════════════════╝     ╚═══════════════════════╝
+                   ↘                ↙
+                  ╔═══════════════════╗
+                  ║   CROSSOVERS      ║   20% tập
+                  ║   Linh + Tuấn     ║   World building
+                  ║   Linh + Vy       ║   Universe expansion
+                  ║   Tuấn + Khanh    ║
+                  ╚═══════════════════╝
+```
+
+### 2-Layer Hook (Algorithm + Loyalty) ⭐ NEW
+
+Mỗi tập PHẢI có **2 layers**:
+
+**Layer 1 — Surface (newcomer hiểu được)**:
+- Hook self-contained, ai xem cũng cảm được
+- Algorithm yêu vì viral hook tốt
+
+**Layer 2 — Arc (loyal viewers reward)**:
+- Callback tập trước
+- Breadcrumb advance plot
+- Loyal viewer cảm "thưởng" được câu chuyện
+
+VÍ DỤ tập 7 "Linh thấy người cũ":
+- Surface: "Trưa Sài Gòn 35 độ. Mình thấy 1 người tưởng đã quên." → ai xem cũng OK
+- Arc: viewer cũ biết Linh có ex ĐN (tập 1) → tension tăng
+
+### Continuity tracking ⭐ NEW
+
+Script writer **PHẢI ĐỌC** trước khi gen tập mới:
+1. **5 tập gần nhất cùng character** (continuity nhân vật)
+2. **`story_continuity` table** (facts đã established về thế giới)
+3. **`story_arcs` current state** (arc đang ở beat nào)
+
+Anti-contradiction là KEY. Linh đeo vòng tay tập 1 → tập 50 vẫn đeo (trừ khi có moment cố ý gỡ).
+
+### Resolution rule
+
+Khi 1 arc kết → **mở arc mới NGAY tập kế tiếp**. KHÔNG để gap.
+- Linh S1 hết tập 30 → tập 31 mở Linh S2 (hint conflict mới)
+- Tuấn backstory hết → tập kế chú có situation mới với guest mới
 
 ---
 

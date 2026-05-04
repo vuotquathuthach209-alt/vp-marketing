@@ -291,6 +291,12 @@ app.listen(config.port, () => {
     autoSeedIfNeeded();
   } catch (e: any) { console.warn('[boot] agentic template seed fail:', e?.message); }
 
+  // V3 Anthology: Sonder Stories — seed 6 characters + 4 locations + 4 values + 7 logos + 3 arcs
+  try {
+    const { autoSeedAnthologyIfNeeded } = require('./services/anthology/seed-data');
+    autoSeedAnthologyIfNeeded();
+  } catch (e: any) { console.warn('[boot] anthology seed fail:', e?.message); }
+
   startScheduler();
   startTelegramBot();
 });
