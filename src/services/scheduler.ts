@@ -900,17 +900,22 @@ export function startScheduler() {
       .catch((e: any) => console.error('[scheduler] story-publish err:', e?.message));
   }, { timezone: 'Asia/Ho_Chi_Minh' });
 
-  // ═══ V2.1 Daily Tips — T2/T4/T6 19:00 VN (cron auto-run) ═══
-  cron.schedule('0 19 * * 1,3,5', () => {
-    import('./video-studio/tips-orchestrator').then(m => m.runDailyTipsAuto({ skipPublish: false }))
-      .then(r => {
-        console.log(`[scheduler] daily-tips: ok=${r.ok} category=${r.category} topic="${(r.topic || '').substring(0, 60)}" steps=[${r.steps_completed.join(',')}]`);
-        if (!r.ok) console.warn(`[scheduler] daily-tips error: ${r.error}`);
-      })
-      .catch((e: any) => console.error('[scheduler] daily-tips err:', e?.message));
-  }, { timezone: 'Asia/Ho_Chi_Minh' });
+  // ═══ V2.1 Daily Tips — DEPRECATED (off-philosophy lecture style) ═══
+  // Replaced bằng Sonder Stories Anthology (1 tập/ngày 19:00 VN, multi-arc storytelling).
+  // Re-enable bằng setting `vs_tips_cron_enabled = 'true'`.
+  if ((require('../db').getSetting('vs_tips_cron_enabled') || 'false') === 'true') {
+    cron.schedule('0 19 * * 1,3,5', () => {
+      import('./video-studio/tips-orchestrator').then(m => m.runDailyTipsAuto({ skipPublish: false }))
+        .then(r => {
+          console.log(`[scheduler] daily-tips: ok=${r.ok} category=${r.category} topic="${(r.topic || '').substring(0, 60)}" steps=[${r.steps_completed.join(',')}]`);
+          if (!r.ok) console.warn(`[scheduler] daily-tips error: ${r.error}`);
+        })
+        .catch((e: any) => console.error('[scheduler] daily-tips err:', e?.message));
+    }, { timezone: 'Asia/Ho_Chi_Minh' });
+    console.log('[scheduler] V2.1 Tips cron ENABLED (vs_tips_cron_enabled=true)');
+  }
 
-  // ═══ V2.1 Tips ideas replenishment — Sunday 8h sáng VN ═══
+  // ═══ V2.1 Tips ideas replenishment — Sunday 8h sáng VN (kept — harmless) ═══
   cron.schedule('0 8 * * 0', () => {
     import('./video-studio/tips-engine').then(m => m.replenishIdeasIfLow())
       .then(r => {
@@ -919,16 +924,42 @@ export function startScheduler() {
       .catch((e: any) => console.error('[scheduler] tips-replenish err:', e?.message));
   }, { timezone: 'Asia/Ho_Chi_Minh' });
 
-  // ═══ V2.2 Weekend Special — CN 19:00 VN (cron auto-run, 1 video/tuần) ═══
-  cron.schedule('0 19 * * 0', () => {
-    import('./video-studio/weekend-orchestrator').then(m => m.runWeekendAuto({ skipPublish: false }))
-      .then(r => {
-        const tag = r.skipped ? `skipped:${r.skipped}` : (r.ok ? 'ok' : 'fail');
-        console.log(`[scheduler] weekend-auto: ${tag} theme=${r.theme_type} subject="${r.theme_subject}" steps=[${r.steps_completed.join(',')}]`);
-        if (!r.ok && !r.skipped) console.warn(`[scheduler] weekend-auto error: ${r.error}`);
-      })
-      .catch((e: any) => console.error('[scheduler] weekend-auto err:', e?.message));
-  }, { timezone: 'Asia/Ho_Chi_Minh' });
+  // ═══ V2.2 Weekend Special — DEPRECATED (replaced bởi anthology T7 crossover slot) ═══
+  // Re-enable bằng setting `vs_weekend_cron_enabled = 'true'`.
+  if ((require('../db').getSetting('vs_weekend_cron_enabled') || 'false') === 'true') {
+    cron.schedule('0 19 * * 0', () => {
+      import('./video-studio/weekend-orchestrator').then(m => m.runWeekendAuto({ skipPublish: false }))
+        .then(r => {
+          const tag = r.skipped ? `skipped:${r.skipped}` : (r.ok ? 'ok' : 'fail');
+          console.log(`[scheduler] weekend-auto: ${tag} theme=${r.theme_type} subject="${r.theme_subject}" steps=[${r.steps_completed.join(',')}]`);
+          if (!r.ok && !r.skipped) console.warn(`[scheduler] weekend-auto error: ${r.error}`);
+        })
+        .catch((e: any) => console.error('[scheduler] weekend-auto err:', e?.message));
+    }, { timezone: 'Asia/Ho_Chi_Minh' });
+    console.log('[scheduler] V2.2 Weekend cron ENABLED (vs_weekend_cron_enabled=true)');
+  }
+
+  // ═══ V3 Sonder Stories Anthology — 1 tập/ngày 19:00 VN (LOCKED, multi-arc) ═══
+  // Default ENABLED. Disable: setting `vs_anthology_cron_enabled = 'false'`.
+  // Reference skill: sonder-storytelling
+  if ((require('../db').getSetting('vs_anthology_cron_enabled') || 'true') !== 'false') {
+    cron.schedule('0 19 * * *', async () => {
+      try {
+        const { runFullAnthologyPipeline } = await import('./anthology/anthology-orchestrator');
+        const r = await runFullAnthologyPipeline({ generatedBy: 'cron-19h' });
+        if (r.ok) {
+          console.log(`[scheduler] anthology-auto ✅ ep#${r.episode_id} no=${r.episode_no} | "${r.script?.title}" | ${r.duration_sec?.toFixed(1)}s | url=${r.final_video_url || 'n/a'}`);
+        } else {
+          console.warn(`[scheduler] anthology-auto ❌ step=${r.step_failed || '?'} ep#${r.episode_id || '?'}: ${r.error}`);
+        }
+      } catch (e: any) {
+        console.error('[scheduler] anthology-auto err:', e?.message);
+      }
+    }, { timezone: 'Asia/Ho_Chi_Minh' });
+    console.log('[scheduler] V3 Anthology cron ENABLED (1 tập/ngày 19:00 VN)');
+  } else {
+    console.log('[scheduler] V3 Anthology cron DISABLED (vs_anthology_cron_enabled=false)');
+  }
 
   // Monthly concept proposal — 28 mỗi tháng 9h sáng VN
   cron.schedule('0 9 28 * *', async () => {
@@ -947,5 +978,5 @@ export function startScheduler() {
     }
   }, { timezone: 'Asia/Ho_Chi_Minh' });
 
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h, zalo-refresh 20h, zalo-articles 2p, template-suggest CN 2h, auto-promote daily 3h');
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h, zalo-refresh 20h, zalo-articles 2p, template-suggest CN 2h, auto-promote daily 3h, anthology daily 19:00 VN');
 }

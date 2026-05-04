@@ -123,6 +123,7 @@ function switchTab(tab) {
   if (tab === 'vs-projects') vsLoadProjects();
   if (tab === 'vs-tips') vsTipsLoadAll();
   if (tab === 'vs-weekend') vsWeekendLoadAll();
+  if (tab === 'vs-anthology') vsAnthLoadAll();
   if (tab === 'vs-brand') vsLoadBrandKit();
   if (tab === 'vs-settings') vsLoadSettings();
   if (tab === 'wiki') loadWiki();
@@ -9372,4 +9373,379 @@ document.addEventListener('DOMContentLoaded', () => {
   e('vs-weekend-manual', 'click', vsWeekendManualCreate);
   e('vs-weekend-auto-run', 'click', vsWeekendAutoRun);
   e('vs-weekend-themes', 'click', vsWeekendShowThemes);
+
+  // ═══ V3 Sonder Stories (Anthology) ═══
+  e('vs-anth-refresh', 'click', vsAnthLoadAll);
+  e('vs-anth-today-pick', 'click', vsAnthShowTodayPick);
+  e('vs-anth-generate-now', 'click', vsAnthGenerateNow);
+  e('vs-anth-back', 'click', () => {
+    document.getElementById('vs-anth-detail-wrap').classList.add('hidden');
+    document.getElementById('vs-anth-episodes-list').classList.remove('hidden');
+  });
+  e('vs-anth-filter-status', 'change', vsAnthLoadEpisodes);
+  e('vs-anth-facts-char', 'change', vsAnthLoadFacts);
+  e('vs-anth-cron-toggle', 'change', vsAnthToggleCron);
+  // Subtab switcher
+  document.querySelectorAll('.vs-anth-subtab').forEach((b) => {
+    b.addEventListener('click', () => vsAnthSwitchSubtab(b.dataset.subtab));
+  });
 });
+
+// ═══════════════════════════════════════════════════════════
+// V3 Sonder Stories Anthology — admin UI handlers
+// ═══════════════════════════════════════════════════════════
+
+async function vsAnthLoadAll() {
+  await Promise.all([
+    vsAnthLoadStatus(),
+    vsAnthLoadStats(),
+    vsAnthLoadEpisodes(),
+  ]);
+}
+
+async function vsAnthLoadStatus() {
+  try {
+    const r = await fetch('/api/anthology/status', { credentials: 'include' });
+    const d = await r.json();
+    const banner = document.getElementById('vs-anth-status-banner');
+    const cronToggle = document.getElementById('vs-anth-cron-toggle');
+    if (d.success) {
+      const pick = d.today_pick;
+      banner.innerHTML = `
+        <div class="flex items-center justify-between">
+          <div>
+            <span class="font-semibold">📅 Today's pick:</span>
+            <span class="ml-2">${pick.primary}${pick.is_crossover ? ` + ${(pick.secondary || []).join(', ')}` : ''}</span>
+            <span class="text-slate-500 ml-2">(${pick.reason})</span>
+          </div>
+          <div class="text-xs text-slate-600">Cron: ${d.cron_enabled ? '<span class="text-emerald-600 font-semibold">ENABLED</span>' : '<span class="text-rose-600">DISABLED</span>'} • ${d.cron_schedule}</div>
+        </div>`;
+      if (cronToggle) cronToggle.checked = d.cron_enabled;
+    } else {
+      banner.innerHTML = `<span class="text-rose-600">Error: ${d.error}</span>`;
+    }
+  } catch (err) {
+    console.error('[anth] loadStatus err:', err);
+  }
+}
+
+async function vsAnthLoadStats() {
+  try {
+    const r = await fetch('/api/anthology/stats', { credentials: 'include' });
+    const d = await r.json();
+    if (!d.success) return;
+    const grid = document.getElementById('vs-anth-stats');
+    const byStatus = d.by_status || {};
+    grid.innerHTML = `
+      <div class="bg-rose-50 border border-rose-200 rounded p-3">
+        <div class="text-xs text-rose-700 font-semibold uppercase">Total episodes</div>
+        <div class="text-3xl font-bold text-rose-900">${d.total_episodes || 0}</div>
+      </div>
+      <div class="bg-amber-50 border border-amber-200 rounded p-3">
+        <div class="text-xs text-amber-700 font-semibold uppercase">QC Review</div>
+        <div class="text-3xl font-bold text-amber-900">${byStatus.qc_review || 0}</div>
+      </div>
+      <div class="bg-emerald-50 border border-emerald-200 rounded p-3">
+        <div class="text-xs text-emerald-700 font-semibold uppercase">Published</div>
+        <div class="text-3xl font-bold text-emerald-900">${byStatus.published || 0}</div>
+      </div>
+      <div class="bg-slate-50 border border-slate-200 rounded p-3">
+        <div class="text-xs text-slate-700 font-semibold uppercase">Active arcs</div>
+        <div class="text-3xl font-bold text-slate-900">${(d.active_arcs || []).length}</div>
+      </div>`;
+  } catch (err) {
+    console.error('[anth] loadStats err:', err);
+  }
+}
+
+async function vsAnthLoadEpisodes() {
+  try {
+    const status = document.getElementById('vs-anth-filter-status').value;
+    const url = status ? `/api/anthology/episodes?status=${status}&limit=50` : '/api/anthology/episodes?limit=50';
+    const r = await fetch(url, { credentials: 'include' });
+    const d = await r.json();
+    const list = document.getElementById('vs-anth-episodes-list');
+    if (!d.success || !d.episodes || d.episodes.length === 0) {
+      list.innerHTML = '<div class="text-slate-500 text-sm py-4">Chưa có tập nào. Click "▶ Generate now" để tạo tập đầu tiên.</div>';
+      return;
+    }
+    list.innerHTML = d.episodes.map((ep) => {
+      const chars = ep.character_ids ? JSON.parse(ep.character_ids).join(', ') : '?';
+      const statusColor = {
+        published: 'bg-emerald-100 text-emerald-800',
+        approved: 'bg-blue-100 text-blue-800',
+        qc_review: 'bg-amber-100 text-amber-800',
+        composing_video: 'bg-indigo-100 text-indigo-800',
+        synthesizing_voice: 'bg-purple-100 text-purple-800',
+        fetching_visuals: 'bg-pink-100 text-pink-800',
+        generating_script: 'bg-cyan-100 text-cyan-800',
+        failed: 'bg-rose-100 text-rose-800',
+        draft: 'bg-slate-100 text-slate-700',
+      }[ep.status] || 'bg-slate-100 text-slate-700';
+      const dur = ep.video_duration_sec ? `${ep.video_duration_sec}s` : '—';
+      return `
+        <div class="bg-white border rounded p-3 hover:bg-slate-50 cursor-pointer" onclick="vsAnthOpenDetail(${ep.id})">
+          <div class="flex items-center justify-between">
+            <div class="flex-1">
+              <div class="flex items-center gap-2">
+                <span class="font-semibold text-sm">Ep #${ep.episode_no}</span>
+                <span class="text-xs px-2 py-0.5 rounded ${statusColor}">${ep.status}</span>
+                <span class="text-xs text-slate-500">slot=${ep.slot || '?'} • ${chars}</span>
+              </div>
+              <div class="text-sm font-semibold mt-1">${ep.title || '(no title)'}</div>
+              ${ep.hook_surface ? `<div class="text-xs text-slate-600 mt-0.5 italic">"${ep.hook_surface}"</div>` : ''}
+            </div>
+            <div class="text-xs text-slate-500 text-right">
+              <div>${dur}</div>
+              ${ep.error ? `<div class="text-rose-600 max-w-xs truncate" title="${ep.error}">⚠ ${ep.error.slice(0, 40)}</div>` : ''}
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  } catch (err) {
+    console.error('[anth] loadEpisodes err:', err);
+  }
+}
+
+async function vsAnthOpenDetail(id) {
+  try {
+    const r = await fetch(`/api/anthology/episodes/${id}`, { credentials: 'include' });
+    const d = await r.json();
+    if (!d.success) { alert('Error: ' + d.error); return; }
+    const ep = d.episode;
+    const script = ep.script;
+
+    document.getElementById('vs-anth-episodes-list').classList.add('hidden');
+    document.getElementById('vs-anth-detail-wrap').classList.remove('hidden');
+
+    const chars = (ep.characters || []).map((c) => `<span class="px-2 py-0.5 bg-slate-100 rounded text-xs">${c.name} (${c.role})</span>`).join(' ');
+    const values = (ep.brand_values || []).map((v) => `<span class="px-2 py-0.5 bg-rose-50 border border-rose-200 rounded text-xs">${v}</span>`).join(' ');
+    const logos = (ep.logo_placements || []).map((l) => `<span class="px-2 py-0.5 bg-amber-50 border border-amber-200 rounded text-xs">${l}</span>`).join(' ');
+
+    let layersHtml = '';
+    if (script && script.layers) {
+      layersHtml = script.layers.map((l) => `
+        <div class="border-l-4 border-rose-300 pl-3 py-2">
+          <div class="text-xs font-semibold uppercase text-rose-700">L${l.layer_no} • ${l.layer_name} • ${l.duration_target_sec}s</div>
+          <div class="text-sm mt-1 italic">"${l.voiceover_text}"</div>
+          <div class="text-xs text-slate-500 mt-1">📷 ${l.visual_prompt}</div>
+        </div>`).join('');
+    }
+
+    let videoHtml = '';
+    if (ep.final_video_url) {
+      videoHtml = `<video controls class="w-full max-w-sm rounded border" src="${ep.final_video_url}"></video>`;
+    } else {
+      videoHtml = '<div class="text-slate-500 text-sm">Video chưa render xong</div>';
+    }
+
+    document.getElementById('vs-anth-detail-content').innerHTML = `
+      <div class="bg-white rounded border p-5 max-w-5xl">
+        <div class="flex items-start justify-between mb-3">
+          <div>
+            <h3 class="text-xl font-bold">Tập #${ep.episode_no} • ${ep.title}</h3>
+            <div class="text-sm text-slate-600 mt-1">${ep.caption || ''}</div>
+          </div>
+          <div class="flex gap-2">
+            ${ep.status === 'qc_review' ? `<button onclick="vsAnthApprove(${ep.id})" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm">✓ Approve</button>` : ''}
+            ${ep.status === 'approved' ? `<button onclick="vsAnthMarkPublished(${ep.id})" class="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded text-sm">📤 Mark published</button>` : ''}
+            ${ep.status !== 'published' ? `<button onclick="vsAnthDelete(${ep.id})" class="px-3 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded text-sm">🗑 Delete</button>` : ''}
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <div class="text-xs font-semibold uppercase text-slate-500 mb-1">Video</div>
+            ${videoHtml}
+          </div>
+          <div class="space-y-2 text-sm">
+            <div><span class="text-slate-500 text-xs">Status:</span> <span class="font-semibold">${ep.status}</span></div>
+            <div><span class="text-slate-500 text-xs">Slot:</span> ${ep.slot || '?'}</div>
+            <div><span class="text-slate-500 text-xs">Duration:</span> ${ep.video_duration_sec || '?'}s</div>
+            <div><span class="text-slate-500 text-xs">Characters:</span> ${chars || '—'}</div>
+            <div><span class="text-slate-500 text-xs">Location:</span> ${ep.location?.name || '?'}</div>
+            <div><span class="text-slate-500 text-xs">Arc:</span> ${ep.arc?.arc_title || '—'} ${ep.arc ? `(beat: ${ep.beat || '?'})` : ''}</div>
+            <div><span class="text-slate-500 text-xs">Brand values:</span> ${values || '—'}</div>
+            <div><span class="text-slate-500 text-xs">Logo placements:</span> ${logos || '—'}</div>
+            ${script?.hook_arc && script.hook_arc !== script.hook_surface ? `<div><span class="text-slate-500 text-xs">Hook arc (loyal):</span> <em>"${script.hook_arc}"</em></div>` : ''}
+            ${ep.error ? `<div class="text-rose-600 text-xs mt-2 p-2 bg-rose-50 rounded">⚠ ${ep.error}</div>` : ''}
+          </div>
+        </div>
+
+        ${layersHtml ? `<div class="mt-4">
+          <div class="text-xs font-semibold uppercase text-slate-500 mb-2">📐 6-Layer Script</div>
+          <div class="space-y-1">${layersHtml}</div>
+        </div>` : ''}
+      </div>`;
+  } catch (err) {
+    console.error('[anth] openDetail err:', err);
+    alert('Lỗi: ' + err.message);
+  }
+}
+
+async function vsAnthApprove(id) {
+  if (!confirm(`Approve tập #${id}?`)) return;
+  const r = await fetch(`/api/anthology/episodes/${id}/approve`, { method: 'POST', credentials: 'include' });
+  const d = await r.json();
+  if (d.success) {
+    alert('Approved!');
+    vsAnthOpenDetail(id);
+    vsAnthLoadEpisodes();
+  } else {
+    alert('Error: ' + d.error);
+  }
+}
+
+async function vsAnthMarkPublished(id) {
+  if (!confirm(`Mark tập #${id} as published? (Sẽ trigger persist facts + bump counters + advance arc)`)) return;
+  const r = await fetch(`/api/anthology/episodes/${id}/mark-published`, { method: 'POST', credentials: 'include' });
+  const d = await r.json();
+  if (d.success) {
+    alert('Marked published!');
+    vsAnthOpenDetail(id);
+    vsAnthLoadEpisodes();
+  } else {
+    alert('Error: ' + d.error);
+  }
+}
+
+async function vsAnthDelete(id) {
+  if (!confirm(`Xoá tập #${id} hoàn toàn?`)) return;
+  const r = await fetch(`/api/anthology/episodes/${id}`, { method: 'DELETE', credentials: 'include' });
+  const d = await r.json();
+  if (d.success) {
+    alert('Đã xoá');
+    document.getElementById('vs-anth-detail-wrap').classList.add('hidden');
+    document.getElementById('vs-anth-episodes-list').classList.remove('hidden');
+    vsAnthLoadEpisodes();
+  } else {
+    alert('Error: ' + d.error);
+  }
+}
+
+async function vsAnthShowTodayPick() {
+  const r = await fetch('/api/anthology/today-pick', { credentials: 'include' });
+  const d = await r.json();
+  if (d.success) {
+    alert(`Today's pick:\n\nPrimary: ${d.pick.primary}${d.pick.is_crossover ? '\nSecondary: ' + (d.pick.secondary || []).join(', ') : ''}\nArc: ${d.pick.arc_slug || 'none'}\nReason: ${d.pick.reason}`);
+  }
+}
+
+async function vsAnthGenerateNow() {
+  if (!confirm('Generate tập mới ngay bây giờ? Pipeline sẽ chạy 5-10 phút (script → visuals → voice → compose).')) return;
+  const btn = document.getElementById('vs-anth-generate-now');
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating...';
+  try {
+    const r = await fetch('/api/anthology/generate', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const d = await r.json();
+    if (d.success) {
+      alert(`✅ Tập #${d.episode_no} (id=${d.episode_id}) generated!\n\nTitle: ${d.script?.title}\nDuration: ${d.duration_sec?.toFixed(1)}s\nVideo: ${d.final_video_url}`);
+      vsAnthLoadAll();
+    } else {
+      alert(`❌ Failed at step "${d.step_failed}": ${d.error}`);
+    }
+  } catch (err) {
+    alert('Lỗi: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '▶ Generate now';
+  }
+}
+
+async function vsAnthToggleCron(ev) {
+  const enabled = ev.target.checked;
+  const r = await fetch('/api/anthology/toggle-cron', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  const d = await r.json();
+  if (!d.success) {
+    alert('Error: ' + d.error);
+    ev.target.checked = !enabled;
+  } else {
+    alert('Cron ' + (enabled ? 'ENABLED' : 'DISABLED') + '. ' + (d.note || ''));
+  }
+}
+
+function vsAnthSwitchSubtab(subtab) {
+  document.querySelectorAll('.vs-anth-subtab').forEach((b) => {
+    if (b.dataset.subtab === subtab) {
+      b.classList.add('border-rose-500', 'font-semibold');
+      b.classList.remove('border-transparent', 'text-slate-600');
+    } else {
+      b.classList.remove('border-rose-500', 'font-semibold');
+      b.classList.add('border-transparent', 'text-slate-600');
+    }
+  });
+  document.querySelectorAll('.vs-anth-content').forEach((d) => {
+    d.classList.toggle('hidden', d.dataset.subtabContent !== subtab);
+  });
+  // Lazy-load subtab content
+  if (subtab === 'arcs') vsAnthLoadArcs();
+  else if (subtab === 'characters') vsAnthLoadCharacters();
+  else if (subtab === 'facts') vsAnthLoadFacts();
+}
+
+async function vsAnthLoadArcs() {
+  const r = await fetch('/api/anthology/arcs', { credentials: 'include' });
+  const d = await r.json();
+  const list = document.getElementById('vs-anth-arcs-list');
+  if (!d.success || !d.arcs) { list.innerHTML = '<div class="text-slate-500 text-sm">No arcs</div>'; return; }
+  list.innerHTML = d.arcs.map((a) => {
+    const progress = a.episodes_planned ? Math.round((a.episodes_published / a.episodes_planned) * 100) : 0;
+    const statusColor = a.status === 'active' ? 'bg-emerald-100 text-emerald-800' : a.status === 'completed' ? 'bg-slate-100 text-slate-600' : 'bg-amber-100 text-amber-800';
+    return `
+      <div class="bg-white border rounded p-3">
+        <div class="flex items-center justify-between mb-1">
+          <div class="font-semibold text-sm">${a.arc_title}</div>
+          <span class="text-xs px-2 py-0.5 rounded ${statusColor}">${a.status}</span>
+        </div>
+        <div class="text-xs text-slate-600">${a.character_slug} • Season ${a.season_no}</div>
+        <div class="text-xs text-slate-700 mt-1 italic">${a.premise || ''}</div>
+        <div class="mt-2 h-2 bg-slate-200 rounded overflow-hidden"><div class="h-full bg-rose-500" style="width: ${progress}%"></div></div>
+        <div class="text-xs text-slate-500 mt-1">${a.episodes_published || 0} / ${a.episodes_planned} tập (${progress}%)</div>
+      </div>`;
+  }).join('');
+}
+
+async function vsAnthLoadCharacters() {
+  const r = await fetch('/api/anthology/characters', { credentials: 'include' });
+  const d = await r.json();
+  const list = document.getElementById('vs-anth-chars-list');
+  if (!d.success) return;
+  list.innerHTML = d.characters.map((c) => `
+    <div class="bg-white border rounded p-3">
+      <div class="flex items-center justify-between">
+        <div class="font-semibold">${c.name} <span class="text-xs text-slate-500">${c.age}t • ${c.role}</span></div>
+        <div class="text-xs text-rose-600 font-semibold">${c.appearance_count} eps</div>
+      </div>
+      <div class="text-xs text-slate-600 mt-1 line-clamp-2">${c.backstory}</div>
+      <div class="text-xs text-slate-500 mt-1">voice: ${c.voice_style}${c.voice_id_override ? ' (custom voice)' : ' (Ngân default)'}</div>
+    </div>`).join('');
+}
+
+async function vsAnthLoadFacts() {
+  const charSlug = document.getElementById('vs-anth-facts-char').value;
+  const url = charSlug ? `/api/anthology/facts?character=${charSlug}&limit=100` : '/api/anthology/facts?limit=100';
+  const r = await fetch(url, { credentials: 'include' });
+  const d = await r.json();
+  const list = document.getElementById('vs-anth-facts-list');
+  if (!d.success) return;
+  if (d.facts.length === 0) {
+    list.innerHTML = '<div class="text-slate-500 text-sm">Chưa có fact nào established</div>';
+    return;
+  }
+  list.innerHTML = d.facts.map((f) => `
+    <div class="px-3 py-1.5 bg-slate-50 border-l-4 border-rose-300 rounded">
+      <span class="font-semibold text-rose-700">${f.fact_key}</span>
+      <span class="text-slate-700"> = ${f.fact_value}</span>
+      ${f.notes ? `<span class="text-slate-500 text-xs"> (${f.notes})</span>` : ''}
+    </div>`).join('');
+}

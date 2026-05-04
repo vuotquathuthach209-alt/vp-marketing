@@ -128,8 +128,9 @@
             <button data-tab="vs-create" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="plus-circle"></i><span>Tạo video mới</span></button>
             <button data-tab="vs-ideas" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="lightbulb"></i><span>Ideas library</span><span id="vs-ideas-badge" class="ml-auto hidden text-[9px] bg-amber-500 text-slate-900 px-1 py-0.5 rounded font-bold"></span></button>
             <button data-tab="vs-projects" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="video"></i><span>Video Projects</span></button>
-            <button data-tab="vs-tips" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="zap"></i><span>Daily Tips (Rail B)</span><span class="ml-auto text-[9px] bg-emerald-500 text-slate-900 px-1 py-0.5 rounded font-bold">v2.1</span></button>
-            <button data-tab="vs-weekend" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="calendar-days"></i><span>Weekend (Rail C)</span><span class="ml-auto text-[9px] bg-emerald-500 text-slate-900 px-1 py-0.5 rounded font-bold">v2.2</span></button>
+            <button data-tab="vs-anthology" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="book-marked"></i><span>Sonder Stories</span><span class="ml-auto text-[9px] bg-rose-500 text-white px-1 py-0.5 rounded font-bold">v3</span></button>
+            <button data-tab="vs-tips" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm opacity-50"><i data-lucide="zap"></i><span>Daily Tips</span><span class="ml-auto text-[9px] bg-slate-500 text-white px-1 py-0.5 rounded font-bold">deprecated</span></button>
+            <button data-tab="vs-weekend" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm opacity-50"><i data-lucide="calendar-days"></i><span>Weekend</span><span class="ml-auto text-[9px] bg-slate-500 text-white px-1 py-0.5 rounded font-bold">deprecated</span></button>
             <button data-tab="vs-brand" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="palette"></i><span>Brand Kit</span></button>
             <button data-tab="vs-settings" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="settings"></i><span>Video Settings</span></button>
           </div>
@@ -805,6 +806,114 @@
           <summary class="cursor-pointer font-semibold">📚 4 themes overview</summary>
           <div id="vs-weekend-themes-content" class="mt-3"></div>
         </details>
+      </section>
+
+      <!-- ═══ V3 SONDER STORIES — Multi-arc Anthology ═══ -->
+      <section data-panel="vs-anthology" class="panel hidden">
+        <div class="mb-4 flex items-center justify-between">
+          <div>
+            <h2 class="text-2xl font-bold mb-1">📖 Sonder Stories <span class="text-xs ml-2 bg-rose-500 text-white px-2 py-0.5 rounded">v3 anthology</span></h2>
+            <p class="text-slate-500 text-sm">Multi-arc serialized storytelling • 1 tập/ngày 19:00 VN • 6-layer structure • Ý tự thành</p>
+          </div>
+          <div class="flex gap-2">
+            <button id="vs-anth-today-pick" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-sm">📅 Today's pick</button>
+            <button id="vs-anth-generate-now" class="px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded text-sm">▶ Generate now</button>
+            <button id="vs-anth-refresh" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-sm">🔄</button>
+          </div>
+        </div>
+
+        <!-- Status banner -->
+        <div id="vs-anth-status-banner" class="mb-4 px-4 py-3 bg-rose-50 border border-rose-200 rounded text-sm"></div>
+
+        <!-- Stats grid -->
+        <div id="vs-anth-stats" class="grid grid-cols-4 gap-3 max-w-6xl mb-4"></div>
+
+        <!-- Tabs: Episodes / Arcs / Characters / Facts / Pipeline -->
+        <div class="flex gap-2 mb-3 text-sm border-b">
+          <button class="vs-anth-subtab px-3 py-2 border-b-2 border-rose-500 font-semibold" data-subtab="episodes">📺 Episodes</button>
+          <button class="vs-anth-subtab px-3 py-2 border-b-2 border-transparent text-slate-600 hover:text-slate-900" data-subtab="arcs">🎭 Arcs</button>
+          <button class="vs-anth-subtab px-3 py-2 border-b-2 border-transparent text-slate-600 hover:text-slate-900" data-subtab="characters">👥 Characters</button>
+          <button class="vs-anth-subtab px-3 py-2 border-b-2 border-transparent text-slate-600 hover:text-slate-900" data-subtab="facts">📝 Facts</button>
+          <button class="vs-anth-subtab px-3 py-2 border-b-2 border-transparent text-slate-600 hover:text-slate-900" data-subtab="settings">⚙️ Settings</button>
+        </div>
+
+        <!-- Episodes subtab -->
+        <div class="vs-anth-content" data-subtab-content="episodes">
+          <div class="flex gap-2 mb-3 text-sm">
+            <select id="vs-anth-filter-status" class="border rounded px-2 py-1">
+              <option value="">Tất cả status</option>
+              <option value="draft">draft</option>
+              <option value="generating_script">generating_script</option>
+              <option value="fetching_visuals">fetching_visuals</option>
+              <option value="synthesizing_voice">synthesizing_voice</option>
+              <option value="composing_video">composing_video</option>
+              <option value="qc_review">qc_review</option>
+              <option value="approved">approved</option>
+              <option value="published">published</option>
+              <option value="failed">failed</option>
+            </select>
+          </div>
+          <div id="vs-anth-episodes-list" class="space-y-2 max-w-6xl"></div>
+        </div>
+
+        <!-- Arcs subtab -->
+        <div class="vs-anth-content hidden" data-subtab-content="arcs">
+          <div id="vs-anth-arcs-list" class="space-y-2 max-w-6xl"></div>
+        </div>
+
+        <!-- Characters subtab -->
+        <div class="vs-anth-content hidden" data-subtab-content="characters">
+          <div id="vs-anth-chars-list" class="grid grid-cols-2 gap-3 max-w-6xl"></div>
+        </div>
+
+        <!-- Facts subtab -->
+        <div class="vs-anth-content hidden" data-subtab-content="facts">
+          <div class="flex gap-2 mb-3 text-sm">
+            <select id="vs-anth-facts-char" class="border rounded px-2 py-1">
+              <option value="">Tất cả character</option>
+              <option value="linh">Linh</option>
+              <option value="tuan">Tuấn</option>
+              <option value="vy">Vy</option>
+              <option value="khanh">Khanh</option>
+              <option value="ha">Hà</option>
+              <option value="tai">Tài</option>
+            </select>
+          </div>
+          <div id="vs-anth-facts-list" class="space-y-1 max-w-6xl text-sm font-mono"></div>
+        </div>
+
+        <!-- Settings subtab -->
+        <div class="vs-anth-content hidden" data-subtab-content="settings">
+          <div class="max-w-2xl bg-white rounded-lg border p-5 space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b">
+              <div>
+                <div class="font-semibold">Cron daily 19:00 VN</div>
+                <div class="text-xs text-slate-500">Auto-run anthology pipeline mỗi tối 19:00</div>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="vs-anth-cron-toggle" class="sr-only peer">
+                <div class="w-11 h-6 bg-slate-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-rose-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-rose-500"></div>
+              </label>
+            </div>
+            <div class="text-xs text-slate-600 leading-relaxed">
+              <strong>Schedule rotation (LOCKED skill):</strong><br>
+              T2/T4/T6 → Linh (main spine)<br>
+              T3 → Tuấn (anchor) | T5 → Vy (observer)<br>
+              T7 → Crossover (Linh + supporting)<br>
+              CN → Khanh / Hà / Tài (rotate LRU)
+            </div>
+            <div class="text-xs text-slate-500 border-t pt-3">
+              📚 Skill ref: <code>.claude/skills/sonder-storytelling/SKILL.md</code><br>
+              🎙 Voice: Edge-TTS HoaiMy → ElevenLabs STS Ngân (a3AkyqGG4v8Pg7SWQ0Y3)
+            </div>
+          </div>
+        </div>
+
+        <!-- Detail view -->
+        <div id="vs-anth-detail-wrap" class="hidden mt-4">
+          <button id="vs-anth-back" class="text-sm text-rose-600 hover:underline mb-3">← Back to list</button>
+          <div id="vs-anth-detail-content"></div>
+        </div>
       </section>
 
       <section data-panel="vs-brand" class="panel hidden">
