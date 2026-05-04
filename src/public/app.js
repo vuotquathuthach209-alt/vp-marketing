@@ -9385,6 +9385,7 @@ document.addEventListener('DOMContentLoaded', () => {
   e('vs-anth-filter-status', 'change', vsAnthLoadEpisodes);
   e('vs-anth-facts-char', 'change', vsAnthLoadFacts);
   e('vs-anth-cron-toggle', 'change', vsAnthToggleCron);
+  e('vs-anth-save-publish-settings', 'click', vsAnthSavePublishSettings);
   // Subtab switcher
   document.querySelectorAll('.vs-anth-subtab').forEach((b) => {
     b.addEventListener('click', () => vsAnthSwitchSubtab(b.dataset.subtab));
@@ -9409,8 +9410,15 @@ async function vsAnthLoadStatus() {
     const d = await r.json();
     const banner = document.getElementById('vs-anth-status-banner');
     const cronToggle = document.getElementById('vs-anth-cron-toggle');
+    const pubFb = document.getElementById('vs-anth-pub-fb');
+    const pubYt = document.getElementById('vs-anth-pub-yt');
+    const ytStatus = document.getElementById('vs-anth-yt-status');
+    const ytPrivacy = document.getElementById('vs-anth-yt-privacy');
+    const fbPageSel = document.getElementById('vs-anth-fb-page');
     if (d.success) {
       const pick = d.today_pick;
+      const fbBadge = d.publish_fb_enabled ? '<span class="ml-2 text-blue-600">FB✓</span>' : '<span class="ml-2 text-slate-400">FB✗</span>';
+      const ytBadge = (d.publish_yt_enabled && d.yt_connected) ? '<span class="ml-1 text-red-600">YT✓</span>' : '<span class="ml-1 text-slate-400">YT✗</span>';
       banner.innerHTML = `
         <div class="flex items-center justify-between">
           <div>
@@ -9418,14 +9426,71 @@ async function vsAnthLoadStatus() {
             <span class="ml-2">${pick.primary}${pick.is_crossover ? ` + ${(pick.secondary || []).join(', ')}` : ''}</span>
             <span class="text-slate-500 ml-2">(${pick.reason})</span>
           </div>
-          <div class="text-xs text-slate-600">Cron: ${d.cron_enabled ? '<span class="text-emerald-600 font-semibold">ENABLED</span>' : '<span class="text-rose-600">DISABLED</span>'} • ${d.cron_schedule}</div>
+          <div class="text-xs text-slate-600">Cron: ${d.cron_enabled ? '<span class="text-emerald-600 font-semibold">ENABLED</span>' : '<span class="text-rose-600">DISABLED</span>'} • ${d.cron_schedule}${fbBadge}${ytBadge}</div>
         </div>`;
       if (cronToggle) cronToggle.checked = d.cron_enabled;
+      if (pubFb) pubFb.checked = d.publish_fb_enabled;
+      if (pubYt) pubYt.checked = d.publish_yt_enabled;
+      if (ytPrivacy) ytPrivacy.value = d.yt_privacy || 'public';
+      if (ytStatus) {
+        ytStatus.innerHTML = d.yt_connected
+          ? '<span class="text-emerald-600 font-semibold">YT OAuth connected</span>'
+          : '<span class="text-rose-600">YT OAuth chưa setup — qua admin → YouTube tab connect trước</span>';
+      }
+      if (fbPageSel && d.fb_pages) {
+        fbPageSel.innerHTML = '<option value="">(First page — auto)</option>'
+          + d.fb_pages.map((p) => `<option value="${p.fb_page_id}" ${d.fb_page_id_selected === p.fb_page_id ? 'selected' : ''}>${p.name} (${p.fb_page_id})</option>`).join('');
+      }
     } else {
       banner.innerHTML = `<span class="text-rose-600">Error: ${d.error}</span>`;
     }
   } catch (err) {
     console.error('[anth] loadStatus err:', err);
+  }
+}
+
+async function vsAnthSavePublishSettings() {
+  try {
+    const body = {
+      publish_fb_enabled: document.getElementById('vs-anth-pub-fb').checked,
+      publish_yt_enabled: document.getElementById('vs-anth-pub-yt').checked,
+      fb_page_id: document.getElementById('vs-anth-fb-page').value || '',
+      yt_privacy: document.getElementById('vs-anth-yt-privacy').value || 'public',
+    };
+    const r = await fetch('/api/anthology/publish-settings', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (d.success) {
+      alert('Saved publish settings');
+      vsAnthLoadStatus();
+    } else {
+      alert('Error: ' + d.error);
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function vsAnthPublishNow(id) {
+  if (!confirm(`Publish ngay ep#${id} lên FB Reels + YouTube Shorts?`)) return;
+  try {
+    const r = await fetch(`/api/anthology/episodes/${id}/publish-now`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    const d = await r.json();
+    let msg = `Result for ep#${id}:\n`;
+    msg += `\n📘 FB: ${d.fb?.skipped ? 'skipped (disabled)' : (d.fb?.ok ? '✅ post_id=' + d.fb.post_id : '❌ ' + d.fb?.error)}`;
+    msg += `\n📺 YT: ${d.yt?.skipped ? 'skipped (disabled)' : (d.yt?.ok ? '✅ ' + d.yt.url : '❌ ' + d.yt?.error)}`;
+    alert(msg);
+    vsAnthOpenDetail(id);
+    vsAnthLoadEpisodes();
+  } catch (e) {
+    alert('Error: ' + e.message);
   }
 }
 
@@ -9546,9 +9611,10 @@ async function vsAnthOpenDetail(id) {
             <h3 class="text-xl font-bold">Tập #${ep.episode_no} • ${ep.title}</h3>
             <div class="text-sm text-slate-600 mt-1">${ep.caption || ''}</div>
           </div>
-          <div class="flex gap-2">
+          <div class="flex gap-2 flex-wrap">
             ${ep.status === 'qc_review' ? `<button onclick="vsAnthApprove(${ep.id})" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm">✓ Approve</button>` : ''}
-            ${ep.status === 'approved' ? `<button onclick="vsAnthMarkPublished(${ep.id})" class="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded text-sm">📤 Mark published</button>` : ''}
+            ${(ep.status === 'qc_review' || ep.status === 'approved') && ep.final_video_url ? `<button onclick="vsAnthPublishNow(${ep.id})" class="px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded text-sm font-semibold">🚀 Publish FB+YT now</button>` : ''}
+            ${ep.status === 'approved' ? `<button onclick="vsAnthMarkPublished(${ep.id})" class="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded text-sm">📤 Mark published (no upload)</button>` : ''}
             ${ep.status !== 'published' ? `<button onclick="vsAnthDelete(${ep.id})" class="px-3 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded text-sm">🗑 Delete</button>` : ''}
           </div>
         </div>
@@ -9561,6 +9627,8 @@ async function vsAnthOpenDetail(id) {
             <div><span class="text-slate-500 text-xs">Status:</span> <span class="font-semibold">${ep.status}</span></div>
             <div><span class="text-slate-500 text-xs">Slot:</span> ${ep.slot || '?'}</div>
             <div><span class="text-slate-500 text-xs">Duration:</span> ${ep.video_duration_sec || '?'}s</div>
+            ${ep.fb_post_ids ? `<div><span class="text-slate-500 text-xs">📘 FB:</span> ${(JSON.parse(ep.fb_post_ids) || []).map((id) => `<a href="https://facebook.com/${id}" target="_blank" class="text-blue-600 hover:underline text-xs">${id}</a>`).join(', ')}</div>` : ''}
+            ${ep.yt_video_id ? `<div><span class="text-slate-500 text-xs">📺 YT:</span> <a href="https://youtu.be/${ep.yt_video_id}" target="_blank" class="text-red-600 hover:underline text-xs">youtu.be/${ep.yt_video_id}</a></div>` : ''}
             <div><span class="text-slate-500 text-xs">Characters:</span> ${chars || '—'}</div>
             <div><span class="text-slate-500 text-xs">Location:</span> ${ep.location?.name || '?'}</div>
             <div><span class="text-slate-500 text-xs">Arc:</span> ${ep.arc?.arc_title || '—'} ${ep.arc ? `(beat: ${ep.beat || '?'})` : ''}</div>

@@ -426,6 +426,8 @@ export interface RunFullPipelineInput {
   episodeIdeaSeed?: string;
   generatedBy?: string;
   scheduledAt?: number;
+  /** If true, skip qc_review and set status='approved' (cron auto-mode). Default false (admin manual = qc_review). */
+  autoApprove?: boolean;
 }
 
 export interface RunFullPipelineResult {
@@ -488,10 +490,12 @@ export async function runFullAnthologyPipeline(input: RunFullPipelineInput = {})
   }
   console.log(`[anth-orch] ✅ video: ${composeR.output_path} (${composeR.duration_sec?.toFixed(1)}s)`);
 
-  // Step 6: Set status qc_review (admin manual approve next)
-  setStatus(episode_id, 'qc_review');
+  // Step 6: Set status — autoApprove (cron) → 'approved' (publish cron sẽ pick up)
+  //                    manual UI generate → 'qc_review' (admin manual approve)
+  const finalStatus: AnthologyStatus = input.autoApprove ? 'approved' : 'qc_review';
+  setStatus(episode_id, finalStatus);
 
-  console.log(`[anth-orch] PIPELINE COMPLETE ep#${episode_id} → qc_review\n${'═'.repeat(60)}\n`);
+  console.log(`[anth-orch] PIPELINE COMPLETE ep#${episode_id} → ${finalStatus}\n${'═'.repeat(60)}\n`);
 
   // Reload final URL
   const finalRow = db.prepare(`SELECT final_video_url FROM story_episodes WHERE id = ?`).get(episode_id) as any;

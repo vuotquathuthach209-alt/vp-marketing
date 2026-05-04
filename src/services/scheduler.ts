@@ -939,24 +939,47 @@ export function startScheduler() {
     console.log('[scheduler] V2.2 Weekend cron ENABLED (vs_weekend_cron_enabled=true)');
   }
 
-  // ═══ V3 Sonder Stories Anthology — 1 tập/ngày 19:00 VN (LOCKED, multi-arc) ═══
-  // Default ENABLED. Disable: setting `vs_anthology_cron_enabled = 'false'`.
+  // ═══ V3 Sonder Stories Anthology — 2-stage cron ═══
+  // Stage A: 17:00 VN — generate pipeline (script→visuals→voice→compose) → status='approved'
+  // Stage B: 19:00 VN — publish to FB Reels + YouTube Shorts → status='published'
+  //
+  // 2-hour buffer between A và B đảm bảo video render xong trước peak publish time.
+  // Disable: setting `vs_anthology_cron_enabled = 'false'`.
   // Reference skill: sonder-storytelling
   if ((require('../db').getSetting('vs_anthology_cron_enabled') || 'true') !== 'false') {
-    cron.schedule('0 19 * * *', async () => {
+    // STAGE A — Generate (17:00 VN)
+    cron.schedule('0 17 * * *', async () => {
       try {
         const { runFullAnthologyPipeline } = await import('./anthology/anthology-orchestrator');
-        const r = await runFullAnthologyPipeline({ generatedBy: 'cron-19h' });
+        const r = await runFullAnthologyPipeline({ generatedBy: 'cron-17h-generate', autoApprove: true });
         if (r.ok) {
-          console.log(`[scheduler] anthology-auto ✅ ep#${r.episode_id} no=${r.episode_no} | "${r.script?.title}" | ${r.duration_sec?.toFixed(1)}s | url=${r.final_video_url || 'n/a'}`);
+          console.log(`[scheduler] anthology-generate ✅ ep#${r.episode_id} no=${r.episode_no} | "${r.script?.title}" | ${r.duration_sec?.toFixed(1)}s → APPROVED for 19h publish`);
         } else {
-          console.warn(`[scheduler] anthology-auto ❌ step=${r.step_failed || '?'} ep#${r.episode_id || '?'}: ${r.error}`);
+          console.warn(`[scheduler] anthology-generate ❌ step=${r.step_failed || '?'} ep#${r.episode_id || '?'}: ${r.error}`);
         }
       } catch (e: any) {
-        console.error('[scheduler] anthology-auto err:', e?.message);
+        console.error('[scheduler] anthology-generate err:', e?.message);
       }
     }, { timezone: 'Asia/Ho_Chi_Minh' });
-    console.log('[scheduler] V3 Anthology cron ENABLED (1 tập/ngày 19:00 VN)');
+
+    // STAGE B — Publish (19:00 VN, peak engagement)
+    cron.schedule('0 19 * * *', async () => {
+      try {
+        const { publishNextScheduledEpisode } = await import('./anthology/anthology-publisher');
+        const r = await publishNextScheduledEpisode();
+        if (r.skipped) {
+          console.log(`[scheduler] anthology-publish ⏭ skipped: ${r.skipped}`);
+        } else if (r.ok && r.result) {
+          console.log(`[scheduler] anthology-publish ✅ ep#${r.result.episode_id} | FB=${r.result.fb.ok ? r.result.fb.post_id : '✗ ' + r.result.fb.error} | YT=${r.result.yt.ok ? r.result.yt.url : '✗ ' + r.result.yt.error}`);
+        } else {
+          console.warn(`[scheduler] anthology-publish ❌ ${r.error || 'unknown'}`);
+        }
+      } catch (e: any) {
+        console.error('[scheduler] anthology-publish err:', e?.message);
+      }
+    }, { timezone: 'Asia/Ho_Chi_Minh' });
+
+    console.log('[scheduler] V3 Anthology 2-stage cron ENABLED (generate 17h → publish 19h VN)');
   } else {
     console.log('[scheduler] V3 Anthology cron DISABLED (vs_anthology_cron_enabled=false)');
   }
@@ -978,5 +1001,5 @@ export function startScheduler() {
     }
   }, { timezone: 'Asia/Ho_Chi_Minh' });
 
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h, zalo-refresh 20h, zalo-articles 2p, template-suggest CN 2h, auto-promote daily 3h, anthology daily 19:00 VN');
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h, zalo-refresh 20h, zalo-articles 2p, template-suggest CN 2h, auto-promote daily 3h, anthology generate 17h → publish 19h VN');
 }

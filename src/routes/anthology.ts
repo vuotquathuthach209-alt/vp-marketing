@@ -23,6 +23,8 @@ import {
   getAnthologyEpisodeDetail,
   getAnthologyStats,
 } from '../services/anthology/anthology-orchestrator';
+import { publishEpisodeNow, publishNextScheduledEpisode } from '../services/anthology/anthology-publisher';
+import { isYoutubeConnected } from '../services/youtube-publisher';
 
 const router = Router();
 router.use(authMiddleware);
@@ -34,12 +36,20 @@ router.use(authMiddleware);
 router.get('/status', (_req, res) => {
   try {
     const cronEnabled = (getSetting('vs_anthology_cron_enabled') || 'true') !== 'false';
+    const fbPages = db.prepare(`SELECT id, name, fb_page_id FROM pages ORDER BY id ASC`).all() as any[];
+    const fbPageId = getSetting('vs_anthology_fb_page_id') || (fbPages[0]?.fb_page_id || null);
     res.json({
       success: true,
       cron_enabled: cronEnabled,
-      cron_schedule: '0 19 * * * (Asia/Ho_Chi_Minh)',
+      cron_schedule: 'generate 17h → publish 19h VN (Asia/Ho_Chi_Minh)',
       tips_cron_enabled: getSetting('vs_tips_cron_enabled') === 'true',
       weekend_cron_enabled: getSetting('vs_weekend_cron_enabled') === 'true',
+      publish_fb_enabled: (getSetting('vs_anthology_publish_fb_enabled') || 'true') !== 'false',
+      publish_yt_enabled: (getSetting('vs_anthology_publish_yt_enabled') || 'true') !== 'false',
+      yt_connected: isYoutubeConnected(),
+      yt_privacy: getSetting('vs_anthology_yt_privacy') || 'public',
+      fb_pages: fbPages,
+      fb_page_id_selected: fbPageId,
       today_pick: pickTodayCharacter(),
     });
   } catch (e: any) {
@@ -52,6 +62,27 @@ router.post('/toggle-cron', superadminOnly, (req: AuthRequest, res) => {
     const enabled = Boolean(req.body?.enabled);
     setSetting('vs_anthology_cron_enabled', enabled ? 'true' : 'false');
     res.json({ success: true, cron_enabled: enabled, note: 'Restart pm2 vp-mkt để cron mới apply' });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/publish-settings', superadminOnly, (req: AuthRequest, res) => {
+  try {
+    const body = req.body || {};
+    if (typeof body.publish_fb_enabled === 'boolean') {
+      setSetting('vs_anthology_publish_fb_enabled', body.publish_fb_enabled ? 'true' : 'false');
+    }
+    if (typeof body.publish_yt_enabled === 'boolean') {
+      setSetting('vs_anthology_publish_yt_enabled', body.publish_yt_enabled ? 'true' : 'false');
+    }
+    if (body.fb_page_id !== undefined) {
+      setSetting('vs_anthology_fb_page_id', String(body.fb_page_id || ''));
+    }
+    if (body.yt_privacy && ['public', 'unlisted', 'private'].includes(body.yt_privacy)) {
+      setSetting('vs_anthology_yt_privacy', body.yt_privacy);
+    }
+    res.json({ success: true });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e?.message });
   }
@@ -154,6 +185,25 @@ router.post('/episodes/:id/mark-published', superadminOnly, (req: AuthRequest, r
     const fbPostIds = Array.isArray(req.body?.fb_post_ids) ? req.body.fb_post_ids : undefined;
     const r = markPublished(id, fbPostIds);
     res.json({ success: r.ok, error: r.error });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/episodes/:id/publish-now', superadminOnly, async (req: AuthRequest, res) => {
+  try {
+    const id = Number(req.params.id);
+    const result = await publishEpisodeNow(id);
+    res.json({ success: result.any_published, ...result });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/publish-next', superadminOnly, async (_req: AuthRequest, res) => {
+  try {
+    const r = await publishNextScheduledEpisode();
+    res.json({ success: r.ok, ...r });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e?.message });
   }

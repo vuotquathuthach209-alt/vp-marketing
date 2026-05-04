@@ -2409,6 +2409,8 @@ try {
   if (!cols.includes('bgm_path')) db.exec(`ALTER TABLE story_episodes ADD COLUMN bgm_path TEXT`);
   if (!cols.includes('cost_cents')) db.exec(`ALTER TABLE story_episodes ADD COLUMN cost_cents INTEGER DEFAULT 0`);
   if (!cols.includes('updated_at')) db.exec(`ALTER TABLE story_episodes ADD COLUMN updated_at INTEGER`);
+  // V3.2 — multi-platform publish (FB Reels + YouTube Shorts)
+  if (!cols.includes('yt_video_id')) db.exec(`ALTER TABLE story_episodes ADD COLUMN yt_video_id TEXT`);
 } catch (e: any) { console.warn('[db] V3 alter story_episodes:', e?.message); }
 
 // ═══════════════════════════════════════════════════════════
