@@ -22,13 +22,15 @@ cd /opt/vp-marketing
 git pull --ff-only 2>&1
 echo '---npm---'
 npm install --silent 2>&1 | tail -5
+echo '---build (TS → dist/) ---'
+npm run build 2>&1 | tail -10
 echo '---restart---'
 pm2 restart vp-mkt 2>&1
-sleep 2
+sleep 3
 echo '---status---'
 pm2 list | grep vp-mkt
 echo '---tail logs---'
-pm2 logs vp-mkt --lines 15 --nostream 2>&1 | tail -25
+pm2 logs vp-mkt --lines 25 --nostream 2>&1 | tail -30
 """
 
 if not PASSWORD:
