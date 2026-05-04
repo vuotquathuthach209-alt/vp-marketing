@@ -2414,6 +2414,111 @@ try {
 } catch (e: any) { console.warn('[db] V3 alter story_episodes:', e?.message); }
 
 // ═══════════════════════════════════════════════════════════
+// V4 — SONDER CINEMA (long-form 5-7 phút, 1 tập/tuần)
+// TÁCH BIỆT 100% với Anthology — riêng tables, riêng infrastructure
+// Reference skill: sonder-cinema
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+CREATE TABLE IF NOT EXISTS cinema_series (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  series_slug TEXT UNIQUE NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'active',     -- active | paused
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cinema_episodes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  series_id INTEGER NOT NULL,
+  episode_no INTEGER NOT NULL,
+  title TEXT,                                 -- "Một Đêm Ở Sonder"
+  primary_character_slug TEXT,                -- linh | tuan | vy | khanh | ha | tai
+  secondary_chars_json TEXT,                  -- JSON array ["tuan"]
+  premise TEXT,                               -- 1-2 sentences concept
+  status TEXT NOT NULL DEFAULT 'draft',       -- draft | generating_script | storyboard
+                                              -- generating_video | synthesizing_voice |
+                                              -- composing | qc_review | approved |
+                                              -- published | failed
+  shot_count INTEGER,
+  total_duration_target_sec INTEGER,          -- 360 default
+  total_duration_actual_sec INTEGER,
+  total_words_vn INTEGER,
+  brand_values_used_json TEXT,                -- ["warm_like_home", "understand_local"]
+  bgm_mood TEXT,                              -- warm | calm | cinematic | intimate | uplifting
+  cold_open_text TEXT,
+  title_card_text TEXT,
+  closing_line TEXT,
+  caption_yt TEXT,
+  caption_fb_teaser TEXT,
+  hashtags_json TEXT,
+  script_json TEXT,                           -- full script (multi-act)
+  storyboard_json TEXT,                       -- 18-23 shots với tool routing
+  voice_segments_json TEXT,                   -- per-shot voice segments
+  final_video_url TEXT,                       -- YT-style 6 min full
+  teaser_video_url TEXT,                      -- 60s FB Reels cut
+  yt_video_id TEXT,
+  fb_video_id TEXT,
+  cost_cents_estimate INTEGER,                -- pre-flight estimate
+  cost_cents_actual INTEGER,                  -- sum from cinema_costs_log
+  cost_breakdown_json TEXT,                   -- {veo: 4500, hailuo: 2000, ...}
+  scheduled_at INTEGER,
+  generated_at INTEGER,
+  published_at INTEGER,
+  generated_by TEXT,
+  error TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER,
+  UNIQUE (series_id, episode_no)
+);
+CREATE INDEX IF NOT EXISTS idx_cinema_eps_status ON cinema_episodes(status, scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_cinema_eps_char ON cinema_episodes(primary_character_slug);
+
+CREATE TABLE IF NOT EXISTS cinema_shots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  episode_id INTEGER NOT NULL,
+  shot_no INTEGER NOT NULL,                   -- 1..23
+  act TEXT,                                   -- cold_open | title | act1 | act2 | act3 | outro
+  shot_type TEXT NOT NULL,                    -- HERO_ESTABLISHING | CHARACTER_SCENE
+                                              -- ATMOSPHERIC_BROLL | TALKING_HEAD
+  provider TEXT,                              -- veo | hailuo | seedance | hedra
+  prompt TEXT NOT NULL,                       -- ENG prompt cho video gen
+  voiceover_text TEXT,                        -- VN text (nếu shot này có VO)
+  voiceover_audio_path TEXT,                  -- local mp3 path
+  duration_target_sec REAL NOT NULL,
+  duration_actual_sec REAL,
+  generated_video_url TEXT,
+  generated_video_path TEXT,
+  cost_cents INTEGER DEFAULT 0,
+  retry_count INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'pending',              -- pending | generating | done | failed
+  error TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER,
+  UNIQUE (episode_id, shot_no)
+);
+CREATE INDEX IF NOT EXISTS idx_cinema_shots_ep ON cinema_shots(episode_id, shot_no);
+CREATE INDEX IF NOT EXISTS idx_cinema_shots_status ON cinema_shots(status);
+
+CREATE TABLE IF NOT EXISTS cinema_costs_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  episode_id INTEGER,                         -- nullable nếu standalone test
+  shot_id INTEGER,                            -- nullable nếu episode-level (voice)
+  provider TEXT NOT NULL,                     -- veo | hailuo | seedance | hedra | elevenlabs | claude
+  operation TEXT,                             -- video_gen | voice_synth | script_gen
+  duration_sec REAL,
+  units INTEGER,                              -- chars cho voice, seconds cho video
+  cost_cents INTEGER NOT NULL,
+  request_id TEXT,                            -- API request ID nếu có
+  notes TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cinema_costs_ep ON cinema_costs_log(episode_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_cinema_costs_provider ON cinema_costs_log(provider, created_at);
+`);
+console.log('[db] V4 Cinema tables ready (cinema_series + cinema_episodes + cinema_shots + cinema_costs_log)');
+
+// ═══════════════════════════════════════════════════════════
 // v23 — intent_logs: log mọi message qua Gemini Intent Classifier
 // Mục đích: analytics + training data cho tuning classifier + debug
 // ═══════════════════════════════════════════════════════════
