@@ -466,8 +466,9 @@ export function startBot() {
       pollLoop();
     })
     .catch((e) => {
-      console.error('[telegram] getMe fail:', e.message);
+      console.error('[telegram] getMe fail (retry in 30s):', e.message);
       running = false;
+      setTimeout(() => { startBot(); }, 30_000);
     });
 }
 

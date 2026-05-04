@@ -139,6 +139,7 @@ function switchTab(tab) {
   if (tab === 'knowledge-sync') loadKnowledgeSync();
   if (tab === 'training') loadTraining();
   if (tab === 'news') loadNews();
+  if (tab === 'series-story') loadStoriesUI();
   if (tab === 'playground') loadPlayground();
   if (tab === 'hotels') loadHotelsEditor();
   if (tab === 'conversations') loadConversations();
@@ -8634,3 +8635,193 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ====== Init ======
 checkAuth();
+
+
+// ═══════════════════════════════════════════════
+// Series Story tab — UI logic
+// ═══════════════════════════════════════════════
+
+async function loadStoriesUI() {
+  const root = document.querySelector('[data-panel="series-story"]');
+  if (!root) return;
+  const list = root.querySelector('#series-story-list');
+  const detail = root.querySelector('#series-story-detail');
+  const loading = root.querySelector('#series-story-loading');
+  loading.classList.remove('hidden');
+  detail.classList.add('hidden');
+  list.innerHTML = '';
+
+  try {
+    const r = await api('/stories');
+    if (!r.ok) throw new Error(r.error || 'fetch fail');
+    const series = r.series || [];
+
+    if (series.length === 0) {
+      list.innerHTML = '<div class="bg-amber-50 border border-amber-200 p-4 rounded text-sm">Chưa có series nào. Click <b>Tạo series tháng kế</b> để build manual, hoặc chờ cron 28 hằng tháng tự kích hoạt.</div>';
+      loading.classList.add('hidden');
+      return;
+    }
+
+    list.innerHTML = series.map(function(s) {
+      var statusBadge = (s.status === 'completed') ? 'bg-slate-200 text-slate-700' : 'bg-emerald-100 text-emerald-700';
+      return '<div class="bg-white rounded-lg border border-slate-200 p-4 mb-2 cursor-pointer hover:border-purple-400 transition" onclick="loadSeriesEpisodes(' + s.id + ')">' +
+        '<div class="flex items-start justify-between gap-3">' +
+          '<div class="flex-1">' +
+            '<div class="font-bold text-lg">' + storyEsc(s.title) + ' <span class="text-xs text-slate-500 font-normal">(' + s.month_slug + ')</span></div>' +
+            (s.subtitle ? '<div class="text-sm text-slate-600 mt-0.5">' + storyEsc(s.subtitle) + '</div>' : '') +
+            '<div class="text-xs text-slate-500 mt-1">' +
+              '<b>' + s.episodes_count + ' tập</b> · ' +
+              '<span class="text-emerald-600">' + s.published_count + ' đã đăng</span> · ' +
+              storyVnDate(s.first_sched) + ' → ' + storyVnDate(s.last_sched) +
+            '</div>' +
+          '</div>' +
+          '<div class="text-xs px-2 py-1 rounded ' + statusBadge + '">' + s.status + '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+
+    loading.classList.add('hidden');
+    if (series.length > 0) loadSeriesEpisodes(series[0].id);
+  } catch (e) {
+    list.innerHTML = '<div class="text-red-500 text-sm">Lỗi: ' + e.message + '</div>';
+    loading.classList.add('hidden');
+  }
+}
+
+async function loadSeriesEpisodes(seriesId) {
+  const detail = document.querySelector('#series-story-detail');
+  detail.classList.remove('hidden');
+  detail.innerHTML = '<div class="text-slate-500 text-sm py-4">Đang tải tập...</div>';
+
+  try {
+    const r = await api('/stories/' + seriesId + '/episodes');
+    if (!r.ok) throw new Error(r.error || 'fetch fail');
+    const eps = r.episodes || [];
+    const series = r.series;
+
+    detail.innerHTML =
+      '<h3 class="text-xl font-bold mt-6 mb-3 flex items-center gap-2">' +
+        '<i data-lucide="library" class="text-purple-500"></i>' +
+        storyEsc(series.title) + ' — 8 tập' +
+      '</h3>' +
+      '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' +
+        eps.map(function(ep) { return storyRenderEpCard(seriesId, ep); }).join('') +
+      '</div>';
+    if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
+  } catch (e) {
+    detail.innerHTML = '<div class="text-red-500 text-sm">Lỗi: ' + e.message + '</div>';
+  }
+}
+
+function storyRenderEpCard(seriesId, ep) {
+  const statusColor = ({
+    published: 'bg-emerald-100 text-emerald-700',
+    approved: 'bg-blue-100 text-blue-700',
+    publishing: 'bg-amber-100 text-amber-700',
+    failed: 'bg-red-100 text-red-700',
+    draft: 'bg-slate-100 text-slate-700',
+  })[ep.status] || 'bg-slate-100 text-slate-700';
+
+  const fbIds = JSON.parse(ep.fb_post_ids || '[]');
+  const fbLinks = fbIds.map(function(e) {
+    const parts = e.split(':');
+    return '<a href="https://www.facebook.com/' + parts[1] + '" target="_blank" class="text-blue-600 underline">FB page ' + parts[0] + '</a>';
+  }).join(' · ');
+
+  const captionPreview = (ep.caption || '').slice(0, 320);
+  const isCut = (ep.caption || '').length > 320;
+
+  return '<div class="bg-white rounded-lg border border-slate-200 overflow-hidden flex flex-col">' +
+    (ep.image_url
+      ? '<img src="' + storyEsc(ep.image_url) + '" alt="ep' + ep.episode_no + '" class="w-full h-48 object-cover bg-slate-100" loading="lazy">'
+      : '<div class="bg-slate-100 h-48 flex items-center justify-center text-slate-400 text-sm">Chưa có ảnh</div>'
+    ) +
+    '<div class="p-3 flex-1 flex flex-col">' +
+      '<div class="flex items-center justify-between mb-1 gap-2">' +
+        '<div class="font-semibold text-sm truncate">Tập ' + ep.episode_no + ': ' + storyEsc(ep.title || '') + '</div>' +
+        '<span class="text-[10px] px-2 py-0.5 rounded shrink-0 ' + statusColor + '">' + ep.status + '</span>' +
+      '</div>' +
+      '<div class="text-xs text-slate-500 mb-2">' +
+        '📅 ' + storyVnDate(ep.scheduled_at) + ' · ' + (ep.caption ? ep.caption.length : 0) + ' chars' +
+        (ep.published_at ? ' · 📤 ' + storyVnDate(ep.published_at) : '') +
+      '</div>' +
+      '<div class="text-sm text-slate-700 max-h-32 overflow-y-auto whitespace-pre-wrap mb-2 bg-slate-50 p-2 rounded text-xs">' +
+        storyEsc(captionPreview) + (isCut ? '...' : '') +
+      '</div>' +
+      (fbLinks ? '<div class="text-xs mb-2">' + fbLinks + (ep.blog_slug ? ' · <a href="https://sondervn.com/blog/' + ep.blog_slug + '" target="_blank" class="text-blue-600 underline">Blog Sondervn</a>' : '') + '</div>' : '') +
+      '<div class="flex flex-wrap gap-1 mt-auto pt-2 border-t border-slate-100">' +
+        '<button onclick="storyRegenImage(' + seriesId + ',' + ep.episode_no + ')" class="text-[11px] bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded">🎨 Regen ảnh</button>' +
+        '<button onclick="storyRegenCaption(' + seriesId + ',' + ep.episode_no + ')" class="text-[11px] bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded">✏️ Regen caption</button>' +
+        (ep.status === 'published'
+          ? '<button onclick="storyUnpublish(' + seriesId + ',' + ep.episode_no + ')" class="text-[11px] bg-red-50 hover:bg-red-100 text-red-700 px-2 py-1 rounded ml-auto">🗑️ Xóa post FB</button>'
+          : '<button onclick="storyPublishNow(' + seriesId + ',' + ep.episode_no + ')" class="text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-1 rounded ml-auto">📤 Đăng ngay</button>'
+        ) +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+async function storyRegenImage(sid, n) {
+  if (!confirm('Regen ảnh tập ' + n + '? (~10-30s)')) return;
+  const r = await api('/stories/' + sid + '/episodes/' + n + '/regen-image', { method: 'POST' });
+  alert(r.ok ? '✓ Đã regen ảnh' : 'Lỗi: ' + (r.error || 'unknown'));
+  loadSeriesEpisodes(sid);
+}
+
+async function storyRegenCaption(sid, n) {
+  const minC = prompt('Regen caption tập ' + n + '. Min chars (700-2500):', '1300');
+  if (!minC) return;
+  const maxC = prompt('Max chars:', '1700');
+  if (!maxC) return;
+  const extra = prompt('Hướng dẫn thêm cho AI (để trống nếu không cần):', '') || undefined;
+  const r = await api('/stories/' + sid + '/episodes/' + n + '/regen-caption', {
+    method: 'POST',
+    body: JSON.stringify({
+      minChars: parseInt(minC),
+      maxChars: parseInt(maxC),
+      extraInstruction: extra,
+    }),
+    headers: { 'Content-Type': 'application/json' },
+  });
+  alert(r.ok ? '✓ Đã regen caption (' + (r.episode && r.episode.length) + ' chars)' : 'Lỗi: ' + (r.error || 'unknown'));
+  loadSeriesEpisodes(sid);
+}
+
+async function storyPublishNow(sid, n) {
+  if (!confirm('Đăng tập ' + n + ' NGAY lên TẤT CẢ page + cross-post Sondervn blog?\\n(Override schedule, không thể undo trừ khi xóa post sau)')) return;
+  const r = await api('/stories/' + sid + '/episodes/' + n + '/publish-now', { method: 'POST' });
+  alert(r.ok ? '✓ Đã đăng lên ' + r.published_pages + ' page' : 'Lỗi: ' + (r.error || 'unknown'));
+  loadSeriesEpisodes(sid);
+}
+
+async function storyUnpublish(sid, n) {
+  if (!confirm('Xóa post tập ' + n + ' trên FB? (Reset status về approved, có thể đăng lại)')) return;
+  const r = await api('/stories/' + sid + '/episodes/' + n + '/unpublish', { method: 'POST' });
+  alert(r.ok ? '✓ Đã xóa ' + (r.deleted ? r.deleted.length : 0) + ' FB post' : 'Lỗi: ' + (r.error || 'unknown'));
+  loadSeriesEpisodes(sid);
+}
+
+async function storyBuildNext() {
+  const slug = prompt('Tháng cần build (YYYY-MM):', '2026-06');
+  if (!slug) return;
+  if (!/^\d{4}-\d{2}$/.test(slug)) { alert('Format sai. Phải YYYY-MM'); return; }
+  if (!confirm('AI Claude sẽ:\\n1. Đề xuất concept mới (city + nhân vật)\\n2. Generate 8 tập caption\\n3. Generate 8 ảnh\\n4. Schedule T5/T7 trong tháng ' + slug + '\\n\\nMất ~3-5 phút. Continue?')) return;
+  alert('Đang build... (xem console log để theo dõi). Dialog này tự đóng sau ~3 phút.');
+  const r = await api('/stories/build-month/' + slug, { method: 'POST' });
+  alert(r.ok ? '✓ Đã build series ' + slug + ' (id=' + r.series_id + ')' : 'Lỗi: ' + (r.error || 'unknown'));
+  loadStoriesUI();
+}
+
+function storyVnDate(epochMs) {
+  if (!epochMs) return '-';
+  const d = new Date(Number(epochMs));
+  const vn = new Date(d.getTime() + 7 * 3600000);
+  return vn.toISOString().slice(0, 16).replace('T', ' ');
+}
+
+function storyEsc(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"]/g, function(m) {
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[m];
+  });
+}

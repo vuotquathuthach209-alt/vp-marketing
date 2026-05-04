@@ -84,6 +84,35 @@
     </div>
   </div>
 
+  <!-- Social Auto-Publish Management -->
+  <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-100 mb-6">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-base font-semibold text-slate-700">📺 Social Auto-Publish</h2>
+      <a href="/api/admin/youtube/setup" target="_blank"
+         class="px-3 py-1.5 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-md">
+        ⚙️ Manage YouTube
+      </a>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3" x-data="ytStatus()" x-init="loadYt()">
+      <div class="border border-slate-200 rounded-lg p-3 bg-blue-50/50">
+        <div class="text-xs text-slate-500 mb-1">Facebook</div>
+        <div class="text-sm font-semibold text-blue-700">✓ Active</div>
+        <div class="text-xs text-slate-500 mt-1">Multi-page (đã có)</div>
+      </div>
+      <div class="border border-slate-200 rounded-lg p-3" :class="yt.connected ? 'bg-emerald-50/50' : 'bg-slate-50'">
+        <div class="text-xs text-slate-500 mb-1">YouTube Shorts</div>
+        <div class="text-sm font-semibold" :class="yt.connected ? 'text-emerald-700' : 'text-slate-400'"
+             x-text="yt.connected ? (yt.enabled ? '✓ Connected + ON' : '⚪ Connected (OFF)') : '✗ Not connected'"></div>
+        <div class="text-xs text-slate-500 mt-1" x-text="yt.connected && yt.granted_at_human ? ('Since: ' + new Date(yt.granted_at_human).toLocaleDateString('vi-VN')) : 'Click Manage để setup'"></div>
+      </div>
+      <div class="border border-slate-200 rounded-lg p-3 bg-slate-50">
+        <div class="text-xs text-slate-500 mb-1">Instagram Reel</div>
+        <div class="text-sm font-semibold text-slate-400">⚪ Step 2</div>
+        <div class="text-xs text-slate-500 mt-1">Cần CDN public</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Revenue Daily Chart + Funnel -->
   <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
     <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
@@ -255,6 +284,18 @@
 </div>
 
 <script>
+function ytStatus() {
+  return {
+    yt: { connected: false, enabled: false, granted_at_human: null },
+    async loadYt() {
+      try {
+        const r = await fetch('/api/admin/youtube/oauth/status', { credentials: 'include' });
+        if (r.ok) this.yt = await r.json();
+      } catch (e) { /* not logged in or error */ }
+    }
+  };
+}
+
 function dashboard() {
   return {
     loading: false,

@@ -113,6 +113,7 @@
             <button data-tab="media" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="image"></i><span>Thư viện media</span></button>
             <button data-tab="news" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="newspaper"></i><span>News → Post</span><span id="news-badge" class="ml-auto hidden text-xs bg-indigo-500 text-white px-1.5 py-0.5 rounded-full font-bold"></span></button>
             <button data-tab="room-images" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="camera"></i><span>Ảnh phòng</span></button>
+            <button data-tab="series-story" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="book-marked"></i><span>Series Story</span><span class="ml-auto text-[9px] bg-purple-500 text-white px-1 py-0.5 rounded font-bold">NEW</span></button>
           </div>
         </div>
 
@@ -224,6 +225,28 @@
       </div>
       <div class="p-8">
       <!-- DASHBOARD TAB -->
+            <!-- ═══ Series Story tab content ═══ -->
+      <section class="panel hidden" data-panel="series-story">
+        <div class="max-w-6xl mx-auto p-4">
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <h2 class="text-2xl font-bold flex items-center gap-2">
+                <i data-lucide="book-marked" class="text-purple-500"></i>
+                Series Story
+              </h2>
+              <p class="text-sm text-slate-600 mt-1">Câu chuyện 8 tập tự đăng <b>T5 + T7 19:00 VN</b> mỗi tháng. AI tự đề xuất concept tháng kế ngày 28 hằng tháng.</p>
+            </div>
+            <button onclick="storyBuildNext()" class="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded text-sm flex items-center gap-1">
+              <i data-lucide="sparkles" class="w-4 h-4"></i>Tạo series tháng kế
+            </button>
+          </div>
+
+          <div id="series-story-list" class="mb-4"></div>
+          <div id="series-story-detail" class="hidden"></div>
+          <div id="series-story-loading" class="text-slate-500 text-sm py-8 text-center">Đang tải...</div>
+        </div>
+      </section>
+
       <section data-panel="dashboard" class="panel">
         <h2 class="text-2xl font-bold mb-6">📊 Tong quan</h2>
         <div class="max-w-4xl space-y-6">

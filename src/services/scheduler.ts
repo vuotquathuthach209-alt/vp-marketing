@@ -885,5 +885,37 @@ export function startScheduler() {
     }
   });
 
+  
+  // ═══ Story Video — 1 video/3 ngày từ story episode ═══
+  cron.schedule('*/30 18-21 * * *', () => {
+    import('./story-to-video').then(m => m.runDueStoryVideos())
+      .then(r => { if (r.found > 0) console.log('[scheduler] story-video:', JSON.stringify(r)); })
+      .catch((e: any) => console.error('[scheduler] story-video err:', e?.message));
+  }, { timezone: 'Asia/Ho_Chi_Minh' });
+
+  // ═══ Story Engine — series 8 tập T5+T7 mỗi tháng ═══
+  cron.schedule('*/5 18-21 * * 4,6', () => {
+    import('./story-engine').then(m => m.runDueStoryEpisodes())
+      .then(r => { if (r.found > 0) console.log('[scheduler] story-publish:', JSON.stringify(r)); })
+      .catch((e: any) => console.error('[scheduler] story-publish err:', e?.message));
+  }, { timezone: 'Asia/Ho_Chi_Minh' });
+
+  // Monthly concept proposal — 28 mỗi tháng 9h sáng VN
+  cron.schedule('0 9 28 * *', async () => {
+    try {
+      const m = await import('./story-engine');
+      const now = new Date(Date.now() + 7*3600*1000);
+      let nm = now.getUTCMonth() + 2;
+      let ny = now.getUTCFullYear();
+      if (nm > 12) { nm -= 12; ny++; }
+      const slug = ny + '-' + String(nm).padStart(2, '0');
+      console.log('[scheduler] story-rotate: building', slug);
+      const r = await m.buildAndScheduleMonth(slug);
+      console.log('[scheduler] story-rotate result:', JSON.stringify(r).slice(0, 200));
+    } catch (e: any) {
+      console.error('[scheduler] story-rotate err:', e?.message);
+    }
+  }, { timezone: 'Asia/Ho_Chi_Minh' });
+
   console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h, zalo-refresh 20h, zalo-articles 2p, template-suggest CN 2h, auto-promote daily 3h');
 }

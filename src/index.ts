@@ -54,6 +54,7 @@ import outreachRouter from './routes/outreach';
 import attributionRouter from './routes/attribution';
 import multiPlatformRouter from './routes/multi-platform';
 import postsOpsRouter from './routes/posts-ops';
+import youtubeOauthRouter from './routes/youtube-oauth';
 import './services/agent-tools'; // init table + register tools
 import './services/ota-readonly-guard'; // self-test fires on boot (fail-fast if guard broken)
 // v8: Intent matcher self-test
@@ -158,6 +159,8 @@ app.use('/api/funnel', funnelAnalyticsRouter);
 app.use('/api/retention', retentionRouter);
 app.use('/api/knowledge', knowledgeRouter);
 app.use('/api/ota', otaRouter);
+// YouTube OAuth (Step 1) — mount BEFORE adminRouter để bypass admin auth middleware (callback từ Google không có cookie)
+app.use('/api/admin/youtube', youtubeOauthRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/onboarding', onboardingRouter);
 app.use('/api/monitoring', monitoringRouter);

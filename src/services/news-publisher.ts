@@ -155,7 +155,41 @@ export async function publishDraft(draftId: number): Promise<{ ok: boolean; fb_p
     ).run(now, draft.article_id);
     console.log(`[news-publish] OK draft #${draftId} → fb ${fbPostId} on page ${page.name}`);
 
-    // v24: Cross-post news FB → IG + Zalo (non-blocking)
+
+    // v28: Cross-post news → Sondervn OTA blog (non-blocking, idempotent)
+    try {
+      const { pushBlogPost, isEnabled } = require('./sonder-blog-bridge');
+      if (isEnabled()) {
+        const article = db.prepare(`SELECT title, summary, content, og_image, source, region FROM news_articles WHERE id = ?`).get(draft.article_id) as any;
+        const blogContent = (draft.edited_post || draft.draft_post || '').trim();
+        const articleTitle = (article?.title || message.split('\n')[0] || 'Bài viết tin tức').slice(0, 250);
+        const articleExcerpt = (article?.summary || '').slice(0, 500) || null;
+        // Slug: dùng article id + draft id để stable + unique cross-publish
+        const slug = `news-${draft.article_id}-d${draftId}`;
+
+        pushBlogPost({
+          slug,
+          title: articleTitle,
+          excerpt: articleExcerpt,
+          content: blogContent || message,
+          coverImage: (draft.image_url && /^https?:\/\//.test(draft.image_url)) ? draft.image_url : null,
+          category: article?.region ? `tin-${article.region}` : 'tin-tuc',
+          tags: article?.source ? [article.source] : ['tin-tuc'],
+          author: 'Sonder Marketing',
+          status: 'published',
+          publishedAt: new Date().toISOString(),
+        }, {
+          idempotencyKey: `blog-news-${draft.article_id}-d${draftId}`,
+        }).then((r: any) => {
+          if (r.ok) console.log(`[blog-bridge] OK draft #${draftId} → blog ${r.action}/${r.id || ''} (dup=${!!r.deduplicated})`);
+          else console.warn(`[blog-bridge] FAIL draft #${draftId}: ${r.error}`);
+        }).catch((e: any) => console.warn('[blog-bridge] err:', e?.message));
+      }
+    } catch (e: any) {
+      console.warn('[blog-bridge] dispatch err:', e?.message);
+    }
+
+        // v24: Cross-post news FB → IG + Zalo (non-blocking)
     try {
       const { crossPostToAllPlatforms } = require('./cross-post-sync');
       // Only cross-post if image is external HTTPS URL (IG + Zalo need public image)
