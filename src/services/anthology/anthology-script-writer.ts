@@ -440,13 +440,36 @@ function extractJSON(raw: string): any {
   let cleaned = raw.trim();
   cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
 
+  // Fallback to first { ... last } if there's wrapper text
+  const m = cleaned.match(/\{[\s\S]*\}/);
+  if (m) cleaned = m[0];
+
+  // Try parse directly first
   try {
     return JSON.parse(cleaned);
-  } catch {
-    // Fallback: find first { ... last }
-    const m = cleaned.match(/\{[\s\S]*\}/);
-    if (!m) throw new Error(`Cannot parse JSON. First 300 chars: ${raw.slice(0, 300)}`);
-    return JSON.parse(m[0]);
+  } catch (firstErr: any) {
+    // Aggressive cleanup pass:
+    // 1. Smart quotes → ASCII quotes (common in VN content)
+    // 2. Trailing commas before } or ]
+    // 3. Stray newlines inside strings (Claude sometimes does this)
+    let fixed = cleaned
+      .replace(/[‘’]/g, "'")     // smart single quotes → '
+      .replace(/[“”]/g, '"')     // smart double quotes → "
+      .replace(/,(\s*[}\]])/g, '$1');      // trailing commas
+
+    try {
+      return JSON.parse(fixed);
+    } catch (secondErr: any) {
+      // Log enough context to debug
+      const pos = Number((secondErr.message.match(/position (\d+)/) || [])[1]);
+      const errCtx = !isNaN(pos)
+        ? `\n... around position ${pos}: "${fixed.slice(Math.max(0, pos - 80), pos + 80)}"`
+        : '';
+      console.error(`[anth-script] JSON parse fail (after smart-quote+comma cleanup): ${secondErr.message}${errCtx}`);
+      console.error(`[anth-script] raw length=${raw.length}, first 500: ${raw.slice(0, 500)}`);
+      console.error(`[anth-script] last 300: ${raw.slice(-300)}`);
+      throw new Error(`Cannot parse JSON. ${secondErr.message}. First 200: ${raw.slice(0, 200)}`);
+    }
   }
 }
 
