@@ -919,6 +919,17 @@ export function startScheduler() {
       .catch((e: any) => console.error('[scheduler] tips-replenish err:', e?.message));
   }, { timezone: 'Asia/Ho_Chi_Minh' });
 
+  // ═══ V2.2 Weekend Special — CN 19:00 VN (cron auto-run, 1 video/tuần) ═══
+  cron.schedule('0 19 * * 0', () => {
+    import('./video-studio/weekend-orchestrator').then(m => m.runWeekendAuto({ skipPublish: false }))
+      .then(r => {
+        const tag = r.skipped ? `skipped:${r.skipped}` : (r.ok ? 'ok' : 'fail');
+        console.log(`[scheduler] weekend-auto: ${tag} theme=${r.theme_type} subject="${r.theme_subject}" steps=[${r.steps_completed.join(',')}]`);
+        if (!r.ok && !r.skipped) console.warn(`[scheduler] weekend-auto error: ${r.error}`);
+      })
+      .catch((e: any) => console.error('[scheduler] weekend-auto err:', e?.message));
+  }, { timezone: 'Asia/Ho_Chi_Minh' });
+
   // Monthly concept proposal — 28 mỗi tháng 9h sáng VN
   cron.schedule('0 9 28 * *', async () => {
     try {

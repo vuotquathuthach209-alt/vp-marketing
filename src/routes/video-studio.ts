@@ -626,4 +626,141 @@ router.post('/tips/ideas/generate', requireEnabled, superadminOnly, async (req: 
   }
 });
 
+// ═══════════════════════════════════════════════════════════
+// V2.2 Weekend Special routes (Rail C)
+// ═══════════════════════════════════════════════════════════
+
+router.get('/weekend/projects', requireEnabled, (req, res) => {
+  try {
+    const { listProjects } = require('../services/video-studio/weekend-orchestrator');
+    const projects = listProjects({
+      status: req.query.status as any,
+      theme: req.query.theme as any,
+      limit: Number(req.query.limit) || 50,
+    });
+    res.json({ success: true, data: projects });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.get('/weekend/projects/:id', requireEnabled, (req, res) => {
+  try {
+    const { getProject } = require('../services/video-studio/weekend-orchestrator');
+    const proj = getProject(Number(req.params.id));
+    if (!proj) return res.status(404).json({ success: false, error: 'not found' });
+
+    const script = proj.script_json ? JSON.parse(proj.script_json) : null;
+    const visuals = proj.visuals_json ? JSON.parse(proj.visuals_json) : [];
+    const voice = proj.voice_segments_json ? JSON.parse(proj.voice_segments_json) : [];
+    const hashtags = proj.hashtags_json ? JSON.parse(proj.hashtags_json) : [];
+    const fbPostIds = proj.fb_post_ids ? JSON.parse(proj.fb_post_ids) : [];
+
+    res.json({ success: true, data: { ...proj, script, visuals, voice, hashtags, fbPostIds } });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/weekend/projects', requireEnabled, (req: AuthRequest, res) => {
+  try {
+    const { createWeekendProject } = require('../services/video-studio/weekend-orchestrator');
+    const r = createWeekendProject({
+      ...(req.body || {}),
+      generated_by: req.user?.email || 'admin',
+    });
+    if ('error' in r) return res.status(400).json({ success: false, error: r.error });
+    res.json({ success: true, ...r });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/weekend/projects/:id/generate-script', requireEnabled, async (req: AuthRequest, res) => {
+  try {
+    const { generateScriptStep } = require('../services/video-studio/weekend-orchestrator');
+    const r = await generateScriptStep(Number(req.params.id));
+    res.json({ success: r.ok, error: r.error });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/weekend/projects/:id/fetch-visuals', requireEnabled, async (req: AuthRequest, res) => {
+  try {
+    const { fetchVisualsStep } = require('../services/video-studio/weekend-orchestrator');
+    const r = await fetchVisualsStep(Number(req.params.id));
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/weekend/projects/:id/synth-voice', requireEnabled, async (req: AuthRequest, res) => {
+  try {
+    const { synthesizeVoiceStep } = require('../services/video-studio/weekend-orchestrator');
+    const r = await synthesizeVoiceStep(Number(req.params.id));
+    res.json({ success: r.ok, error: r.error });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/weekend/projects/:id/compose', requireEnabled, async (req: AuthRequest, res) => {
+  try {
+    const { composeStep } = require('../services/video-studio/weekend-orchestrator');
+    const r = await composeStep(Number(req.params.id));
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/weekend/projects/:id/approve', requireEnabled, (req: AuthRequest, res) => {
+  try {
+    const { approveStep } = require('../services/video-studio/weekend-orchestrator');
+    const gate = (req.body?.gate as string) || 'gate3';
+    const r = approveStep(Number(req.params.id), gate as any);
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/weekend/projects/:id/publish', requireEnabled, async (req: AuthRequest, res) => {
+  try {
+    const { publishStep } = require('../services/video-studio/weekend-orchestrator');
+    const r = await publishStep(Number(req.params.id), req.body || {});
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/weekend/auto-run', requireEnabled, superadminOnly, async (req: AuthRequest, res) => {
+  try {
+    const { runWeekendAuto } = require('../services/video-studio/weekend-orchestrator');
+    const r = await runWeekendAuto({ skipPublish: req.body?.skipPublish === true });
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.get('/weekend/themes', requireEnabled, (_req, res) => {
+  try {
+    const { THEME_METADATA, getThemeForToday, getSundayOfMonth } = require('../services/video-studio/weekend-engine');
+    const todayTheme = getThemeForToday();
+    const sundayInfo = getSundayOfMonth();
+    res.json({
+      success: true,
+      themes: THEME_METADATA,
+      today_theme: todayTheme,
+      sunday_info: sundayInfo,
+    });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
 export default router;

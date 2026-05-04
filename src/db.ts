@@ -2197,6 +2197,99 @@ CREATE INDEX IF NOT EXISTS idx_tips_exp_video ON tips_hook_experiments(video_id)
 console.log('[db] V2.1 tips_videos + tips_ideas + tips_hook_experiments tables ready');
 
 // ═══════════════════════════════════════════════════════════
+// V2.2: Weekend Special Engine — Rail C (CN 19:00 1 video/tuần)
+// 4 themes rotation theo tuần-of-tháng (1st/2nd/3rd/4th Sunday)
+//   1. day_in_area      — "1 ngày ở [khu vực]" (Q1/Tân Bình/Bình Thạnh)
+//   2. inside_sonder    — "Trong phòng Sonder có gì?" (room features)
+//   3. guest_story      — "Khách [country] đến Sonder vì..."
+//   4. why_sonder       — "Why Sonder không giống KS thường"
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+CREATE TABLE IF NOT EXISTS weekend_videos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+  -- Theme identification
+  theme_type TEXT NOT NULL,               -- day_in_area | inside_sonder | guest_story | why_sonder
+  theme_subject TEXT,                     -- "Q1" | "Sonder Airport room 305" | "Korean guest" | "value pitch"
+
+  -- Content
+  topic TEXT NOT NULL,
+  hook_text TEXT,
+  cta_text TEXT,
+  caption_text TEXT,
+  hashtags_json TEXT,
+  script_json TEXT NOT NULL,              -- [{scene_idx, beat, text, visual_prompt, visual_query, mood, duration_sec}]
+  scenes_count INTEGER DEFAULT 8,
+  duration_sec REAL,
+
+  -- Voice (premium for weekend)
+  voice_id TEXT,
+  voice_audio_path TEXT,
+  voice_segments_json TEXT,
+
+  -- Visuals (mixed AI + stock)
+  visuals_json TEXT,                      -- [{type: 'ai'|'stock', source, local_path, scene_idx}]
+
+  -- Music
+  bgm_path TEXT,
+  bgm_mood TEXT DEFAULT 'cinematic',
+
+  -- Output
+  draft_video_url TEXT,
+  final_video_url TEXT,
+  thumbnail_url TEXT,                     -- Custom AI-gen thumbnail
+
+  -- Status
+  status TEXT DEFAULT 'draft',            -- same state machine as tips
+  scheduled_at INTEGER,
+  published_at INTEGER,
+
+  -- Multi-platform publish
+  fb_post_ids TEXT,
+  yt_video_id TEXT,
+  yt_video_url TEXT,
+  ig_media_id TEXT,
+
+  -- Engagement (denormalized cho fast query)
+  view_count INTEGER DEFAULT 0,
+  like_count INTEGER DEFAULT 0,
+  share_count INTEGER DEFAULT 0,
+  comment_count INTEGER DEFAULT 0,
+  save_count INTEGER DEFAULT 0,
+  click_count INTEGER DEFAULT 0,
+
+  -- Meta
+  cost_cents INTEGER DEFAULT 0,
+  error_log TEXT,
+  generated_by TEXT,
+  reviewed_at_gate1 INTEGER,              -- script approved
+  reviewed_at_gate3 INTEGER,              -- final approved
+
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_weekend_status ON weekend_videos(status, scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_weekend_theme ON weekend_videos(theme_type, created_at DESC);
+
+-- Theme schedule tracking (1 video/tuần, theme rotate by Sunday-of-month)
+CREATE TABLE IF NOT EXISTS weekend_theme_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  iso_week TEXT NOT NULL,                 -- "2026-W18"
+  sunday_date INTEGER NOT NULL,           -- Sunday epoch ms VN
+  sunday_of_month INTEGER NOT NULL,       -- 1, 2, 3, 4, 5
+  theme_type TEXT NOT NULL,
+  theme_subject TEXT,                     -- specific subject picked
+  video_id INTEGER,                       -- linked video_id
+  status TEXT DEFAULT 'planned',          -- planned | published | skipped
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (video_id) REFERENCES weekend_videos(id) ON DELETE SET NULL,
+  UNIQUE (iso_week)
+);
+CREATE INDEX IF NOT EXISTS idx_weekend_theme_log_date ON weekend_theme_log(sunday_date DESC);
+`);
+console.log('[db] V2.2 weekend_videos + weekend_theme_log tables ready');
+
+// ═══════════════════════════════════════════════════════════
 // v23 — intent_logs: log mọi message qua Gemini Intent Classifier
 // Mục đích: analytics + training data cho tuning classifier + debug
 // ═══════════════════════════════════════════════════════════
