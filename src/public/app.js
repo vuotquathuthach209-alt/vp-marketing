@@ -121,6 +121,8 @@ function switchTab(tab) {
   if (tab === 'vs-create') vsInitCreate();
   if (tab === 'vs-ideas') vsLoadIdeas();
   if (tab === 'vs-projects') vsLoadProjects();
+  if (tab === 'vs-tips') vsTipsLoadAll();
+  if (tab === 'vs-weekend') vsWeekendLoadAll();
   if (tab === 'vs-brand') vsLoadBrandKit();
   if (tab === 'vs-settings') vsLoadSettings();
   if (tab === 'wiki') loadWiki();
@@ -8825,3 +8827,549 @@ function storyEsc(s) {
     return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[m];
   });
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Daily Tips (Rail B) — V2.1 admin UI
+// ═══════════════════════════════════════════════════════════════════
+
+let _vsTipsCurrentId = null;
+
+async function vsTipsLoadAll() {
+  await Promise.all([vsTipsLoadStats(), vsTipsLoadList()]);
+  document.getElementById('vs-tips-detail-wrap')?.classList.add('hidden');
+  document.getElementById('vs-tips-list')?.classList.remove('hidden');
+}
+
+async function vsTipsLoadStats() {
+  try {
+    const r = await vsApi('/tips/projects?limit=200');
+    if (!r?.success) return;
+    const all = r.data || [];
+    const byStatus = {};
+    let totalCost = 0;
+    for (const p of all) {
+      byStatus[p.status] = (byStatus[p.status] || 0) + 1;
+      totalCost += p.cost_cents || 0;
+    }
+    const cards = [
+      { label: 'Total projects', value: all.length, color: 'slate' },
+      { label: 'Đang review', value: (byStatus.script_review || 0) + (byStatus.qc_review || 0), color: 'amber' },
+      { label: 'Published', value: byStatus.published || 0, color: 'emerald' },
+      { label: 'Total cost', value: '$' + (totalCost / 100).toFixed(2), color: 'indigo' },
+    ];
+    document.getElementById('vs-tips-stats').innerHTML = cards.map(c => `
+      <div class="bg-white rounded-lg border p-3">
+        <div class="text-xs text-slate-500">${c.label}</div>
+        <div class="text-2xl font-bold text-${c.color}-600 mt-1">${c.value}</div>
+      </div>
+    `).join('');
+  } catch {}
+}
+
+async function vsTipsLoadList() {
+  try {
+    const status = document.getElementById('vs-tips-filter-status')?.value || '';
+    const cat = document.getElementById('vs-tips-filter-category')?.value || '';
+    const path = '/tips/projects?limit=50' + (status ? `&status=${status}` : '');
+    const r = await vsApi(path);
+    if (!r?.success) return;
+
+    let projects = r.data || [];
+    if (cat) projects = projects.filter(p => p.category === cat);
+
+    document.getElementById('vs-tips-list').innerHTML = projects.length === 0
+      ? '<div class="bg-white rounded-lg border p-6 text-center text-slate-400">Chưa có project. Bấm "+ Manual create" hoặc đợi cron T2/T4/T6 19:00.</div>'
+      : projects.map(p => `
+        <div class="bg-white rounded-lg border p-3 hover:bg-slate-50 cursor-pointer" onclick="vsTipsOpenDetail(${p.id})">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-bold">${vsEsc(p.status)}</span>
+            <span class="text-[10px] bg-${p.category === 'booking_tips' ? 'sky' : p.category === 'sonder_areas' ? 'emerald' : 'amber'}-100 text-slate-700 px-1.5 py-0.5 rounded">${vsEsc(p.category)}</span>
+            <span class="text-xs text-slate-500">#${p.id} · ${p.duration_sec || 0}s · $${((p.cost_cents || 0) / 100).toFixed(2)}</span>
+          </div>
+          <div class="font-medium">${vsEsc(p.topic)}</div>
+          <div class="text-xs text-slate-400 mt-1">${new Date(p.updated_at).toLocaleString('vi-VN')}</div>
+        </div>
+      `).join('');
+  } catch (e) { console.error('[vs-tips] list:', e); }
+}
+
+async function vsTipsOpenDetail(id) {
+  _vsTipsCurrentId = id;
+  document.getElementById('vs-tips-list').classList.add('hidden');
+  document.getElementById('vs-tips-detail-wrap').classList.remove('hidden');
+  const content = document.getElementById('vs-tips-detail-content');
+  content.innerHTML = '<div class="text-slate-400">⏳ Loading...</div>';
+
+  try {
+    const r = await vsApi('/tips/projects/' + id);
+    if (!r?.success) { content.innerHTML = `<div class="text-rose-600">${vsEsc(r.error)}</div>`; return; }
+    content.innerHTML = vsTipsRenderDetail(r.data);
+  } catch (e) {
+    content.innerHTML = `<div class="text-rose-600">${vsEsc(e.message)}</div>`;
+  }
+}
+
+function vsTipsRenderDetail(p) {
+  const tips = p.tips || [];
+  const variants = p.hookVariants || {};
+  const hashtags = p.hashtags || [];
+
+  let html = `
+    <div class="mb-4">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-bold">${vsEsc(p.status)}</span>
+        <span class="text-xs text-slate-500">#${p.id} · ${p.duration_sec || 0}s · ${vsEsc(p.category)} · $${((p.cost_cents || 0) / 100).toFixed(2)}</span>
+      </div>
+      <h2 class="text-xl font-bold mt-1">${vsEsc(p.topic)}</h2>
+    </div>
+  `;
+
+  // Action buttons based on status
+  const actions = [];
+  if (p.status === 'draft') actions.push(`<button onclick="vsTipsAction(${p.id}, 'generate-script')" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm">▶ Generate script</button>`);
+  if (p.status === 'script_review') actions.push(`<button onclick="vsTipsAction(${p.id}, 'fetch-visuals')" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm">▶ Fetch visuals</button>`);
+  if (p.status === 'visuals' || (p.status === 'voice' && !p.voice_segments_json)) actions.push(`<button onclick="vsTipsAction(${p.id}, 'synth-voice')" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm">▶ Synth voice</button>`);
+  if (p.status === 'composing' || (p.status === 'voice' && p.voice_segments_json)) actions.push(`<button onclick="vsTipsAction(${p.id}, 'compose')" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm">▶ Compose video</button>`);
+  if (p.status === 'qc_review') actions.push(`<button onclick="vsTipsAction(${p.id}, 'approve')" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm">✓ Approve</button>`);
+  if (p.status === 'approved') actions.push(`<button onclick="vsTipsAction(${p.id}, 'publish')" class="px-3 py-1.5 bg-violet-500 hover:bg-violet-600 text-white rounded text-sm">📤 Publish</button>`);
+
+  if (actions.length > 0) {
+    html += `<div class="mb-4 flex gap-2 flex-wrap">${actions.join('')}</div>`;
+  }
+
+  // Video preview
+  if (p.draft_video_url || p.final_video_url) {
+    const url = p.final_video_url || p.draft_video_url;
+    html += `<div class="mb-4">
+      <video src="${vsEsc(url)}" controls class="rounded border max-w-sm" style="max-height: 600px"></video>
+    </div>`;
+  }
+
+  // Hook variants A/B
+  if (variants.A || variants.B) {
+    html += `<div class="bg-white rounded-lg border p-4 mb-4">
+      <h3 class="font-bold mb-2">🪝 Hook A/B variants</h3>
+      <div class="text-sm space-y-2">
+        <div><strong class="text-emerald-600">A:</strong> ${vsEsc(variants.A || '')}</div>
+        <div><strong class="text-amber-600">B:</strong> ${vsEsc(variants.B || '')}</div>
+      </div>
+    </div>`;
+  }
+
+  // 5 tips list
+  if (tips.length > 0) {
+    html += '<h3 class="font-bold mb-2">5 tips</h3><div class="space-y-2">';
+    for (const t of tips) {
+      html += `
+        <div class="bg-white rounded-lg border p-3">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-2xl font-bold text-orange-500 bg-orange-100 rounded-full w-10 h-10 flex items-center justify-center">${t.number}</span>
+            <span class="font-bold">${vsEsc(t.title)}</span>
+          </div>
+          <div class="text-sm text-slate-700 mb-1">${vsEsc(t.text)}</div>
+          <div class="text-xs text-slate-500"><strong>Pexels query:</strong> ${vsEsc(t.visual_query)}</div>
+          ${t.visual_url ? `<details class="mt-2"><summary class="text-xs text-indigo-600 cursor-pointer">🎨 Xem clip</summary><video src="${vsEsc(t.visual_url)}" controls class="mt-2 max-w-xs rounded"></video></details>` : ''}
+        </div>
+      `;
+    }
+    html += '</div>';
+  }
+
+  // CTA + caption
+  if (p.cta_text || p.caption_text) {
+    html += `<div class="bg-white rounded-lg border p-4 mt-4">
+      ${p.cta_text ? `<div class="mb-2"><strong>CTA:</strong> ${vsEsc(p.cta_text)}</div>` : ''}
+      ${p.caption_text ? `<div class="text-sm text-slate-600">${vsEsc(p.caption_text)}</div>` : ''}
+      ${hashtags.length > 0 ? `<div class="text-xs text-indigo-600 mt-2">${hashtags.map(h => vsEsc(h)).join(' ')}</div>` : ''}
+    </div>`;
+  }
+
+  if (p.error_log) {
+    html += `<div class="mt-4 bg-rose-50 border border-rose-300 rounded p-3 text-sm text-rose-700">⚠ ${vsEsc(p.error_log)}</div>`;
+  }
+
+  return html;
+}
+
+async function vsTipsAction(id, action) {
+  if (!confirm(`Run "${action}" cho project #${id}?`)) return;
+  try {
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = '⏳ Running...';
+    const r = await vsApi(`/tips/projects/${id}/${action}`, { method: 'POST', body: JSON.stringify({}) });
+    btn.disabled = false;
+    if (r.ok || r.success) {
+      alert('✅ Done. Status updated.');
+    } else {
+      alert('❌ ' + (r.error || 'failed'));
+    }
+    vsTipsOpenDetail(id);
+    vsTipsLoadStats();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function vsTipsManualCreate() {
+  const cat = prompt('Category (booking_tips / sonder_areas / seasonal_trends):', 'booking_tips');
+  if (!cat) return;
+  const topic = prompt('Topic (để trống để auto pick từ ideas):', '');
+  try {
+    const r = await vsApi('/tips/projects', {
+      method: 'POST',
+      body: JSON.stringify({ category: cat, topic: topic || undefined }),
+    });
+    if (r.success) {
+      alert(`✅ Project #${r.id} created. Topic: ${r.topic}`);
+      vsTipsOpenDetail(r.id);
+    } else {
+      alert('❌ ' + (r.error || 'failed'));
+    }
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function vsTipsAutoRun() {
+  if (!confirm('Run cron auto NGAY (gen 1 video Tips full pipeline ~3 phút, có cost)?')) return;
+  try {
+    const btn = document.getElementById('vs-tips-auto-run');
+    btn.disabled = true;
+    btn.textContent = '⏳ Running...';
+    const r = await vsApi('/tips/auto-run', { method: 'POST', body: JSON.stringify({ skipPublish: true }) });
+    btn.disabled = false;
+    btn.textContent = '▶ Run now (cron simulation)';
+    if (r.ok) {
+      alert(`✅ Auto run done!\nProject #${r.project_id}\nCategory: ${r.category}\nTopic: ${r.topic}\nDuration: ${r.duration_sec?.toFixed(1)}s\nSteps: ${r.steps_completed?.join(', ')}`);
+    } else {
+      alert(`❌ ${r.error}`);
+    }
+    vsTipsLoadAll();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function vsTipsReplenish() {
+  try {
+    const btn = document.getElementById('vs-tips-replenish');
+    btn.disabled = true; btn.textContent = '⏳ Generating...';
+    const r = await vsApi('/tips/ideas/replenish', { method: 'POST' });
+    btn.disabled = false; btn.textContent = '🔄 Replenish ideas';
+    if (r.success) {
+      alert(`✅ Generated: ${r.generated} new ideas across categories: ${r.categories?.join(', ')}`);
+    }
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function vsTipsIdeasGen() {
+  const cat = document.getElementById('vs-tips-ideas-cat').value;
+  try {
+    const btn = document.getElementById('vs-tips-ideas-gen');
+    btn.disabled = true; btn.textContent = '⏳';
+    const r = await vsApi('/tips/ideas/generate', { method: 'POST', body: JSON.stringify({ category: cat, count: 8 }) });
+    btn.disabled = false; btn.textContent = 'Generate 8 ideas';
+    if (r.success) {
+      alert(`✅ Generated ${r.generated} ideas for ${cat} (saved=${r.saved})`);
+      vsTipsIdeasLoad();
+    }
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function vsTipsIdeasLoad() {
+  const cat = document.getElementById('vs-tips-ideas-cat').value;
+  try {
+    const r = await vsApi('/tips/ideas?category=' + cat);
+    if (!r.success) return;
+    const list = document.getElementById('vs-tips-ideas-list');
+    list.innerHTML = (r.data || []).map(idea => `
+      <div class="bg-white rounded border p-2 text-sm flex items-center gap-2">
+        <span class="text-[10px] bg-${idea.used_video_id ? 'slate' : 'emerald'}-100 text-${idea.used_video_id ? 'slate' : 'emerald'}-700 px-1.5 py-0.5 rounded">${idea.used_video_id ? 'used' : 'unused'}</span>
+        <span class="text-xs text-slate-500">${idea.hook_pattern || 'n/a'}</span>
+        <span class="text-xs text-slate-500">score=${(idea.relevance_score * 0.6 + idea.trending_score * 0.4).toFixed(2)}</span>
+        <span class="flex-1">${vsEsc(idea.topic)}</span>
+      </div>
+    `).join('') || '<div class="text-slate-400">Chưa có idea. Bấm "Generate 8 ideas".</div>';
+  } catch {}
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Weekend Special (Rail C) — V2.2 admin UI
+// ═══════════════════════════════════════════════════════════════════
+
+let _vsWeekendCurrentId = null;
+
+async function vsWeekendLoadAll() {
+  await Promise.all([vsWeekendLoadStats(), vsWeekendLoadList()]);
+  document.getElementById('vs-weekend-detail-wrap')?.classList.add('hidden');
+  document.getElementById('vs-weekend-list')?.classList.remove('hidden');
+}
+
+async function vsWeekendLoadStats() {
+  try {
+    const r = await vsApi('/weekend/projects?limit=200');
+    if (!r?.success) return;
+    const all = r.data || [];
+    const byStatus = {};
+    let totalCost = 0;
+    for (const p of all) {
+      byStatus[p.status] = (byStatus[p.status] || 0) + 1;
+      totalCost += p.cost_cents || 0;
+    }
+    const cards = [
+      { label: 'Total projects', value: all.length, color: 'slate' },
+      { label: 'Đang review', value: (byStatus.script_review || 0) + (byStatus.qc_review || 0), color: 'amber' },
+      { label: 'Published', value: byStatus.published || 0, color: 'emerald' },
+      { label: 'Total cost', value: '$' + (totalCost / 100).toFixed(2), color: 'indigo' },
+    ];
+    document.getElementById('vs-weekend-stats').innerHTML = cards.map(c => `
+      <div class="bg-white rounded-lg border p-3">
+        <div class="text-xs text-slate-500">${c.label}</div>
+        <div class="text-2xl font-bold text-${c.color}-600 mt-1">${c.value}</div>
+      </div>
+    `).join('');
+  } catch {}
+}
+
+async function vsWeekendLoadList() {
+  try {
+    const status = document.getElementById('vs-weekend-filter-status')?.value || '';
+    const theme = document.getElementById('vs-weekend-filter-theme')?.value || '';
+    const params = [];
+    if (status) params.push(`status=${status}`);
+    if (theme) params.push(`theme=${theme}`);
+    const path = '/weekend/projects?limit=50' + (params.length ? '&' + params.join('&') : '');
+    const r = await vsApi(path);
+    if (!r?.success) return;
+
+    const themeColor = {
+      day_in_area: 'sky',
+      inside_sonder: 'violet',
+      guest_story: 'amber',
+      why_sonder: 'emerald',
+    };
+
+    document.getElementById('vs-weekend-list').innerHTML = (r.data || []).length === 0
+      ? '<div class="bg-white rounded-lg border p-6 text-center text-slate-400">Chưa có project. Bấm "+ Manual create" hoặc đợi cron CN 19:00.</div>'
+      : r.data.map(p => `
+        <div class="bg-white rounded-lg border p-3 hover:bg-slate-50 cursor-pointer" onclick="vsWeekendOpenDetail(${p.id})">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-bold">${vsEsc(p.status)}</span>
+            <span class="text-[10px] bg-${themeColor[p.theme_type] || 'slate'}-100 text-${themeColor[p.theme_type] || 'slate'}-700 px-1.5 py-0.5 rounded">${vsEsc(p.theme_type)}</span>
+            <span class="text-xs text-slate-500">#${p.id} · ${p.duration_sec || 0}s · $${((p.cost_cents || 0) / 100).toFixed(2)}</span>
+          </div>
+          <div class="font-medium">${vsEsc(p.theme_subject || p.topic)}</div>
+          <div class="text-xs text-slate-400 mt-1">${new Date(p.updated_at).toLocaleString('vi-VN')}</div>
+        </div>
+      `).join('');
+  } catch (e) { console.error('[vs-weekend] list:', e); }
+}
+
+async function vsWeekendOpenDetail(id) {
+  _vsWeekendCurrentId = id;
+  document.getElementById('vs-weekend-list').classList.add('hidden');
+  document.getElementById('vs-weekend-detail-wrap').classList.remove('hidden');
+  const content = document.getElementById('vs-weekend-detail-content');
+  content.innerHTML = '<div class="text-slate-400">⏳ Loading...</div>';
+
+  try {
+    const r = await vsApi('/weekend/projects/' + id);
+    if (!r?.success) { content.innerHTML = `<div class="text-rose-600">${vsEsc(r.error)}</div>`; return; }
+    content.innerHTML = vsWeekendRenderDetail(r.data);
+  } catch (e) {
+    content.innerHTML = `<div class="text-rose-600">${vsEsc(e.message)}</div>`;
+  }
+}
+
+function vsWeekendRenderDetail(p) {
+  const script = p.script || {};
+  const scenes = script.scenes || [];
+  const visuals = p.visuals || [];
+  const hashtags = p.hashtags || [];
+
+  let html = `
+    <div class="mb-4">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-bold">${vsEsc(p.status)}</span>
+        <span class="text-xs text-slate-500">#${p.id} · ${p.duration_sec || 0}s · ${vsEsc(p.theme_type)} · $${((p.cost_cents || 0) / 100).toFixed(2)}</span>
+      </div>
+      <h2 class="text-xl font-bold mt-1">${vsEsc(p.theme_subject || p.topic)}</h2>
+      <div class="text-sm text-slate-600">${vsEsc(p.topic)}</div>
+    </div>
+  `;
+
+  // Action buttons
+  const actions = [];
+  if (p.status === 'draft') actions.push(`<button onclick="vsWeekendAction(${p.id}, 'generate-script')" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm">▶ Generate script</button>`);
+  if (p.status === 'script_review') actions.push(`<button onclick="vsWeekendAction(${p.id}, 'fetch-visuals')" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm">▶ Fetch visuals</button>`);
+  if (p.status === 'visuals' || (p.status === 'voice' && !p.voice_segments_json)) actions.push(`<button onclick="vsWeekendAction(${p.id}, 'synth-voice')" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm">▶ Synth voice</button>`);
+  if (p.status === 'composing' || p.status === 'voice') actions.push(`<button onclick="vsWeekendAction(${p.id}, 'compose')" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm">▶ Compose</button>`);
+  if (p.status === 'qc_review') actions.push(`<button onclick="vsWeekendAction(${p.id}, 'approve')" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm">✓ Approve</button>`);
+  if (p.status === 'approved') actions.push(`<button onclick="vsWeekendAction(${p.id}, 'publish')" class="px-3 py-1.5 bg-violet-500 hover:bg-violet-600 text-white rounded text-sm">📤 Publish</button>`);
+
+  if (actions.length > 0) html += `<div class="mb-4 flex gap-2 flex-wrap">${actions.join('')}</div>`;
+
+  if (p.draft_video_url || p.final_video_url) {
+    const url = p.final_video_url || p.draft_video_url;
+    html += `<div class="mb-4"><video src="${vsEsc(url)}" controls class="rounded border max-w-sm" style="max-height: 600px"></video></div>`;
+  }
+
+  if (p.thumbnail_url) {
+    html += `<div class="mb-4"><strong>Thumbnail:</strong> <img src="${vsEsc(p.thumbnail_url)}" class="max-w-xs rounded border mt-2"></div>`;
+  }
+
+  if (p.hook_text) {
+    html += `<div class="bg-white rounded-lg border p-4 mb-4">
+      <h3 class="font-bold mb-2">🪝 Hook</h3>
+      <div class="text-sm">${vsEsc(p.hook_text)}</div>
+    </div>`;
+  }
+
+  // Scenes
+  if (scenes.length > 0) {
+    html += '<h3 class="font-bold mb-2">📋 Scenes</h3><div class="space-y-2">';
+    for (let i = 0; i < scenes.length; i++) {
+      const s = scenes[i];
+      const v = visuals[i];
+      html += `
+        <div class="bg-white rounded-lg border p-3">
+          <div class="flex items-center gap-2 mb-1 flex-wrap">
+            <span class="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-bold">scene ${s.scene_idx} · ${s.beat}</span>
+            ${s.overlay_text ? `<span class="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">${vsEsc(s.overlay_text)}</span>` : ''}
+            <span class="text-xs text-slate-500">${s.duration_sec}s · ${s.mood} · ${s.camera}</span>
+            ${v ? `<span class="text-[10px] bg-${v.type === 'ai' ? 'violet' : 'emerald'}-100 text-${v.type === 'ai' ? 'violet' : 'emerald'}-700 px-1.5 py-0.5 rounded">${v.type}</span>` : ''}
+          </div>
+          <div class="text-sm text-slate-700 mb-1">${vsEsc(s.text)}</div>
+          <details class="text-xs">
+            <summary class="cursor-pointer text-indigo-600">Xem visual prompts</summary>
+            <div class="mt-1 text-slate-500"><strong>AI prompt:</strong> ${vsEsc(s.visual_prompt)}</div>
+            <div class="text-slate-500"><strong>Pexels query:</strong> ${vsEsc(s.visual_query)}</div>
+            ${v?.relative_url ? (v.type === 'ai' ? `<img src="${vsEsc(v.relative_url)}" class="mt-2 max-w-xs rounded">` : `<video src="${vsEsc(v.relative_url)}" controls class="mt-2 max-w-xs rounded"></video>`) : ''}
+          </details>
+        </div>
+      `;
+    }
+    html += '</div>';
+  }
+
+  // CTA + caption
+  if (p.cta_text || p.caption_text) {
+    html += `<div class="bg-white rounded-lg border p-4 mt-4">
+      ${p.cta_text ? `<div class="mb-2"><strong>CTA:</strong> ${vsEsc(p.cta_text)}</div>` : ''}
+      ${p.caption_text ? `<div class="text-sm text-slate-600">${vsEsc(p.caption_text)}</div>` : ''}
+      ${hashtags.length > 0 ? `<div class="text-xs text-indigo-600 mt-2">${hashtags.map(h => vsEsc(h)).join(' ')}</div>` : ''}
+    </div>`;
+  }
+
+  if (p.error_log) {
+    html += `<div class="mt-4 bg-rose-50 border border-rose-300 rounded p-3 text-sm text-rose-700">⚠ ${vsEsc(p.error_log)}</div>`;
+  }
+
+  return html;
+}
+
+async function vsWeekendAction(id, action) {
+  if (!confirm(`Run "${action}" cho project #${id}?`)) return;
+  try {
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = '⏳ Running...';
+    const r = await vsApi(`/weekend/projects/${id}/${action}`, { method: 'POST', body: JSON.stringify({}) });
+    btn.disabled = false;
+    if (r.ok || r.success) alert('✅ Done.');
+    else alert('❌ ' + (r.error || 'failed'));
+    vsWeekendOpenDetail(id);
+    vsWeekendLoadStats();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function vsWeekendManualCreate() {
+  const theme = prompt('Theme (day_in_area / inside_sonder / guest_story / why_sonder):', 'day_in_area');
+  if (!theme) return;
+  const subject = prompt('Subject (để trống để auto pick):', '');
+  try {
+    const r = await vsApi('/weekend/projects', {
+      method: 'POST',
+      body: JSON.stringify({ theme_type: theme, theme_subject: subject || undefined }),
+    });
+    if (r.success) {
+      alert(`✅ Project #${r.id} created\nTheme: ${r.theme_type}\nSubject: ${r.theme_subject}`);
+      vsWeekendOpenDetail(r.id);
+    } else {
+      alert('❌ ' + (r.error || 'failed'));
+    }
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function vsWeekendAutoRun() {
+  if (!confirm('Run cron auto NGAY (gen 1 video Weekend full pipeline ~4 phút, có cost)?')) return;
+  try {
+    const btn = document.getElementById('vs-weekend-auto-run');
+    btn.disabled = true;
+    btn.textContent = '⏳ Running...';
+    const r = await vsApi('/weekend/auto-run', { method: 'POST', body: JSON.stringify({ skipPublish: true }) });
+    btn.disabled = false;
+    btn.textContent = '▶ Run now';
+    if (r.ok) {
+      alert(`✅ Auto run done!\nProject #${r.project_id}\nTheme: ${r.theme_type}\nSubject: ${r.theme_subject}\nDuration: ${r.duration_sec?.toFixed(1)}s\nSteps: ${r.steps_completed?.join(', ')}`);
+    } else if (r.skipped) {
+      alert(`Skipped: ${r.skipped}`);
+    } else {
+      alert(`❌ ${r.error}`);
+    }
+    vsWeekendLoadAll();
+  } catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+async function vsWeekendShowThemes() {
+  try {
+    const r = await vsApi('/weekend/themes');
+    if (!r?.success) return;
+    const themes = r.themes || {};
+    const todayTheme = r.today_theme;
+    const sundayInfo = r.sunday_info;
+
+    const content = document.getElementById('vs-weekend-themes-content');
+    let html = `<div class="bg-amber-50 border border-amber-300 rounded p-3 mb-3 text-sm">
+      <strong>Hôm nay:</strong> ${sundayInfo.isSunday ? `Sunday #${sundayInfo.sundayNum} → theme=${todayTheme?.theme}` : 'Not Sunday — next Sunday will rotate'}
+    </div>`;
+
+    for (const [key, meta] of Object.entries(themes)) {
+      html += `<div class="bg-white border rounded p-3 mb-2">
+        <div class="font-bold">${vsEsc(meta.label)} <span class="text-xs text-slate-500">[${vsEsc(key)}]</span></div>
+        <div class="text-xs text-slate-600 mt-1">${vsEsc(meta.description)}</div>
+        <div class="text-xs text-slate-500 mt-1">📊 ${meta.scenes_target} scenes · ${meta.duration_target_sec}s · voice=${vsEsc(meta.voice_style)} · bgm=${vsEsc(meta.bgm_mood)}</div>
+        <details class="mt-2 text-xs">
+          <summary class="cursor-pointer text-indigo-600">${meta.subjects.length} subjects pool</summary>
+          <ul class="mt-1 ml-4 list-disc">${meta.subjects.map(s => `<li>${vsEsc(s)}</li>`).join('')}</ul>
+        </details>
+      </div>`;
+    }
+    content.innerHTML = html;
+  } catch {}
+}
+
+// Wire events for Tips + Weekend tabs
+document.addEventListener('DOMContentLoaded', () => {
+  // Tips
+  const e = (id, evt, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(evt, fn); };
+  e('vs-tips-refresh', 'click', vsTipsLoadAll);
+  e('vs-tips-filter-status', 'change', vsTipsLoadList);
+  e('vs-tips-filter-category', 'change', vsTipsLoadList);
+  e('vs-tips-back', 'click', () => {
+    document.getElementById('vs-tips-detail-wrap').classList.add('hidden');
+    document.getElementById('vs-tips-list').classList.remove('hidden');
+  });
+  e('vs-tips-manual', 'click', vsTipsManualCreate);
+  e('vs-tips-auto-run', 'click', vsTipsAutoRun);
+  e('vs-tips-replenish', 'click', vsTipsReplenish);
+  e('vs-tips-ideas-gen', 'click', vsTipsIdeasGen);
+  e('vs-tips-ideas-load', 'click', vsTipsIdeasLoad);
+
+  // Weekend
+  e('vs-weekend-refresh', 'click', vsWeekendLoadAll);
+  e('vs-weekend-filter-status', 'change', vsWeekendLoadList);
+  e('vs-weekend-filter-theme', 'change', vsWeekendLoadList);
+  e('vs-weekend-back', 'click', () => {
+    document.getElementById('vs-weekend-detail-wrap').classList.add('hidden');
+    document.getElementById('vs-weekend-list').classList.remove('hidden');
+  });
+  e('vs-weekend-manual', 'click', vsWeekendManualCreate);
+  e('vs-weekend-auto-run', 'click', vsWeekendAutoRun);
+  e('vs-weekend-themes', 'click', vsWeekendShowThemes);
+});
