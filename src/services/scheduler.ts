@@ -984,6 +984,64 @@ export function startScheduler() {
     console.log('[scheduler] V3 Anthology cron DISABLED (vs_anthology_cron_enabled=false)');
   }
 
+  // ═══ V4 Sonder Cinema — 1 tập/tuần T7 long-form 5-7 phút ═══
+  // Stage A: T7 12:00 VN — generate (15-25 shots × 4-15s mỗi shot, ~30-45 phút)
+  // Stage B: T7 20:30 VN — publish YT long-form + FB Reels 60s teaser
+  // 8 tiếng buffer (12h gen → 20h30 publish) đảm bảo Cinema render xong (lâu hơn Anthology nhiều)
+  // Default ENABLED. Disable: setting `cinema_cron_enabled = 'false'`.
+  // Reference skill: sonder-cinema
+  if ((require('../db').getSetting('cinema_cron_enabled') || 'true') !== 'false') {
+    // STAGE A — T7 12:00 VN generate
+    cron.schedule('0 12 * * 6', async () => {
+      try {
+        const { runFullCinemaPipeline } = await import('./cinema/cinema-orchestrator');
+        // Cron mode: pick rotating character across weeks; for POC start with linh
+        const charRotation = ['linh', 'tuan', 'vy', 'khanh', 'ha', 'tai'];
+        const weekOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / (7 * 24 * 3600 * 1000));
+        const character = charRotation[weekOfYear % charRotation.length];
+
+        // Generic premise that respects continuity (script writer reads Anthology facts)
+        const r = await runFullCinemaPipeline({
+          primary_character: character,
+          episode_idea: `Cinema episode tuần này: ${character}. Long-form deep-dive về moment đáng nhớ ở Sonder. Chia sẻ continuity từ Anthology gần đây nếu phù hợp. 5-7 phút multi-act.`,
+          generatedBy: 'cron-T7-12h-generate',
+          autoApprove: true,
+        });
+
+        if (r.ok) {
+          console.log(`[scheduler] cinema-generate ✅ ep#${r.episode_id} no=${r.episode_no} | "${r.script?.title}" | ${r.duration_sec?.toFixed(1)}s | cost=$${((r.cost_cents || 0) / 100).toFixed(2)} → APPROVED for 20h30 publish`);
+        } else if (r.budget_exceeded) {
+          console.warn(`[scheduler] cinema-generate 💰 BUDGET EXCEEDED ep#${r.episode_id || '?'}: ${r.error}`);
+        } else {
+          console.warn(`[scheduler] cinema-generate ❌ step=${r.step_failed} ep#${r.episode_id || '?'}: ${r.error}`);
+        }
+      } catch (e: any) {
+        console.error('[scheduler] cinema-generate err:', e?.message);
+      }
+    }, { timezone: 'Asia/Ho_Chi_Minh' });
+
+    // STAGE B — T7 20:30 VN publish
+    cron.schedule('30 20 * * 6', async () => {
+      try {
+        const { publishNextScheduledCinemaEpisode } = await import('./cinema/cinema-publisher');
+        const r = await publishNextScheduledCinemaEpisode();
+        if (r.skipped) {
+          console.log(`[scheduler] cinema-publish ⏭ skipped: ${r.skipped}`);
+        } else if (r.ok && r.result) {
+          console.log(`[scheduler] cinema-publish ✅ ep#${r.result.episode_id} | YT=${r.result.yt.ok ? r.result.yt.url : '✗ ' + r.result.yt.error} | FB=${r.result.fb.ok ? r.result.fb.post_id : '✗ ' + r.result.fb.error}`);
+        } else {
+          console.warn(`[scheduler] cinema-publish ❌ ${r.error}`);
+        }
+      } catch (e: any) {
+        console.error('[scheduler] cinema-publish err:', e?.message);
+      }
+    }, { timezone: 'Asia/Ho_Chi_Minh' });
+
+    console.log('[scheduler] V4 Cinema 2-stage cron ENABLED (T7 12h generate → T7 20h30 publish VN, 1 tập/tuần long-form)');
+  } else {
+    console.log('[scheduler] V4 Cinema cron DISABLED (cinema_cron_enabled=false)');
+  }
+
   // Monthly concept proposal — 28 mỗi tháng 9h sáng VN
   cron.schedule('0 9 28 * *', async () => {
     try {
@@ -1001,5 +1059,5 @@ export function startScheduler() {
     }
   }, { timezone: 'Asia/Ho_Chi_Minh' });
 
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h, zalo-refresh 20h, zalo-articles 2p, template-suggest CN 2h, auto-promote daily 3h, anthology generate 17h → publish 19h VN');
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h, zalo-refresh 20h, zalo-articles 2p, template-suggest CN 2h, auto-promote daily 3h, anthology daily 17h→19h VN, cinema T7 12h→20h30 VN');
 }

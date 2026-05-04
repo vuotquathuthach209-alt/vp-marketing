@@ -129,6 +129,7 @@
             <button data-tab="vs-ideas" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="lightbulb"></i><span>Ideas library</span><span id="vs-ideas-badge" class="ml-auto hidden text-[9px] bg-amber-500 text-slate-900 px-1 py-0.5 rounded font-bold"></span></button>
             <button data-tab="vs-projects" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="video"></i><span>Video Projects</span></button>
             <button data-tab="vs-anthology" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="book-marked"></i><span>Sonder Stories</span><span class="ml-auto text-[9px] bg-rose-500 text-white px-1 py-0.5 rounded font-bold">v3</span></button>
+            <button data-tab="vs-cinema" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="clapperboard"></i><span>Sonder Cinema</span><span class="ml-auto text-[9px] bg-purple-500 text-white px-1 py-0.5 rounded font-bold">v4</span></button>
             <button data-tab="vs-tips" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm opacity-50"><i data-lucide="zap"></i><span>Daily Tips</span><span class="ml-auto text-[9px] bg-slate-500 text-white px-1 py-0.5 rounded font-bold">deprecated</span></button>
             <button data-tab="vs-weekend" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm opacity-50"><i data-lucide="calendar-days"></i><span>Weekend</span><span class="ml-auto text-[9px] bg-slate-500 text-white px-1 py-0.5 rounded font-bold">deprecated</span></button>
             <button data-tab="vs-brand" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="palette"></i><span>Brand Kit</span></button>
@@ -954,6 +955,165 @@
         <div id="vs-anth-detail-wrap" class="hidden mt-4">
           <button id="vs-anth-back" class="text-sm text-rose-600 hover:underline mb-3">← Back to list</button>
           <div id="vs-anth-detail-content"></div>
+        </div>
+      </section>
+
+      <!-- ═══ V4 SONDER CINEMA — Long-form 5-7 phút ═══ -->
+      <section data-panel="vs-cinema" class="panel hidden">
+        <div class="mb-4 flex items-center justify-between">
+          <div>
+            <h2 class="text-2xl font-bold mb-1">🎬 Sonder Cinema <span class="text-xs ml-2 bg-purple-500 text-white px-2 py-0.5 rounded">v4 long-form</span></h2>
+            <p class="text-slate-500 text-sm">5-7 phút premium • 1 tập/tuần T7 20:30 VN • Veo + Hailuo + Seedance + Hedra • $80/tập budget</p>
+          </div>
+          <div class="flex gap-2">
+            <button id="vs-cin-budget" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-sm">💰 Budget</button>
+            <button id="vs-cin-estimate" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-sm">📊 Estimate</button>
+            <button id="vs-cin-generate" class="px-3 py-1.5 bg-purple-500 hover:bg-purple-600 text-white rounded text-sm">▶ Generate POC</button>
+            <button id="vs-cin-refresh" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-sm">🔄</button>
+          </div>
+        </div>
+
+        <div id="vs-cin-status-banner" class="mb-4 px-4 py-3 bg-purple-50 border border-purple-200 rounded text-sm"></div>
+
+        <div id="vs-cin-budget-card" class="grid grid-cols-4 gap-3 max-w-6xl mb-4"></div>
+
+        <!-- Subtabs -->
+        <div class="flex gap-2 mb-3 text-sm border-b">
+          <button class="vs-cin-subtab px-3 py-2 border-b-2 border-purple-500 font-semibold" data-subtab="episodes">📺 Episodes</button>
+          <button class="vs-cin-subtab px-3 py-2 border-b-2 border-transparent text-slate-600 hover:text-slate-900" data-subtab="settings">⚙️ Settings</button>
+        </div>
+
+        <!-- Episodes -->
+        <div class="vs-cin-content" data-subtab-content="episodes">
+          <div class="flex gap-2 mb-3 text-sm">
+            <select id="vs-cin-filter-status" class="border rounded px-2 py-1">
+              <option value="">Tất cả status</option>
+              <option value="draft">draft</option>
+              <option value="generating_script">generating_script</option>
+              <option value="storyboard">storyboard</option>
+              <option value="budget_exceeded">budget_exceeded</option>
+              <option value="synthesizing_voice">synthesizing_voice</option>
+              <option value="generating_video">generating_video</option>
+              <option value="composing">composing</option>
+              <option value="qc_review">qc_review</option>
+              <option value="approved">approved</option>
+              <option value="published">published</option>
+              <option value="failed">failed</option>
+            </select>
+          </div>
+          <div id="vs-cin-episodes-list" class="space-y-2 max-w-6xl"></div>
+        </div>
+
+        <!-- Settings -->
+        <div class="vs-cin-content hidden" data-subtab-content="settings">
+          <div class="max-w-2xl bg-white rounded-lg border p-5 space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b">
+              <div>
+                <div class="font-semibold">Cron 2-stage T7 (12h gen → 20h30 publish)</div>
+                <div class="text-xs text-slate-500">1 tập/tuần long-form • 8h buffer cho 18-23 shots render</div>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="vs-cin-cron-toggle" class="sr-only peer">
+                <div class="w-11 h-6 bg-slate-300 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-500 rounded-full"></div>
+              </label>
+            </div>
+
+            <div class="flex items-center justify-between pb-3 border-b">
+              <div>
+                <div class="font-semibold">📺 Auto-publish YouTube (long-form, không Shorts)</div>
+                <div class="text-xs text-slate-500" id="vs-cin-yt-status">YT OAuth status...</div>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="vs-cin-pub-yt" class="sr-only peer">
+                <div class="w-11 h-6 bg-slate-300 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-500 rounded-full"></div>
+              </label>
+            </div>
+
+            <div class="flex items-center justify-between pb-3 border-b">
+              <div>
+                <div class="font-semibold">📘 Auto-publish FB Reels teaser (60s)</div>
+                <div class="text-xs text-slate-500">Cut từ Act II climax — link sang YT full</div>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="vs-cin-pub-fb" class="sr-only peer">
+                <div class="w-11 h-6 bg-slate-300 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500 rounded-full"></div>
+              </label>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-semibold">FB Page</label>
+                <select id="vs-cin-fb-page" class="border rounded px-2 py-2 w-full text-sm mt-1"></select>
+              </div>
+              <div>
+                <label class="text-xs font-semibold">YT Privacy</label>
+                <select id="vs-cin-yt-privacy" class="border rounded px-2 py-2 w-full text-sm mt-1">
+                  <option value="public">Public</option>
+                  <option value="unlisted">Unlisted</option>
+                  <option value="private">Private</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 pt-3 border-t">
+              <div>
+                <label class="text-xs font-semibold">Max cost / tập (USD)</label>
+                <input type="number" id="vs-cin-cap-ep" value="80" step="10" min="20" class="border rounded px-2 py-2 w-full text-sm mt-1">
+                <div class="text-[11px] text-slate-500 mt-1">Pre-flight ABORT nếu vượt</div>
+              </div>
+              <div>
+                <label class="text-xs font-semibold">Max budget / tháng (USD)</label>
+                <input type="number" id="vs-cin-cap-month" value="400" step="50" min="100" class="border rounded px-2 py-2 w-full text-sm mt-1">
+                <div class="text-[11px] text-slate-500 mt-1">~4 tập/tháng</div>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-3 border-t">
+              <div>
+                <div class="font-semibold">Veo Fast mode</div>
+                <div class="text-xs text-slate-500">$0.15/s thay vì $0.40/s (chất lượng giảm nhẹ)</div>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="vs-cin-veo-fast" class="sr-only peer">
+                <div class="w-11 h-6 bg-slate-300 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500 rounded-full"></div>
+              </label>
+            </div>
+
+            <div class="pt-3 border-t space-y-2">
+              <div>
+                <label class="text-xs font-semibold">FAL.ai API key</label>
+                <input type="password" id="vs-cin-fal-key" placeholder="fal_..." class="border rounded px-3 py-2 w-full text-sm mt-1">
+                <div class="text-[11px] text-slate-500 mt-1">Cần cho Veo + Hailuo + Seedance. Đăng ký fal.ai/dashboard/keys</div>
+              </div>
+              <div>
+                <label class="text-xs font-semibold">Hedra API key</label>
+                <input type="password" id="vs-cin-hedra-key" placeholder="hedra_..." class="border rounded px-3 py-2 w-full text-sm mt-1">
+                <div class="text-[11px] text-slate-500 mt-1">Cần cho TALKING_HEAD shots. hedra.com/api</div>
+              </div>
+            </div>
+
+            <button id="vs-cin-save-settings" class="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded text-sm font-semibold w-full">💾 Lưu settings</button>
+
+            <div class="text-xs text-slate-600 leading-relaxed pt-3 border-t">
+              <strong>Tool stack (LOCKED skill):</strong><br>
+              HERO_ESTABLISHING → Veo 3.1 ($0.40/s w/audio)<br>
+              CHARACTER_SCENE → Hailuo 2.3 Pro ($0.49/video)<br>
+              ATMOSPHERIC_BROLL → Seedance 2.0 Fast ($0.022/s)<br>
+              TALKING_HEAD → Hedra Character-3 ($0.05/min)<br>
+            </div>
+            <div class="text-xs text-slate-500">
+              📚 Skill ref: <code>.claude/skills/sonder-cinema/SKILL.md</code><br>
+              📖 Format: 3-act 18-23 shots (vs Anthology 6-layer)<br>
+              🎙 Voice: ElevenLabs Multilingual v2 + Hedra lip-sync<br>
+              📺 Output: YT long-form + FB Reels 60s teaser cut
+            </div>
+          </div>
+        </div>
+
+        <!-- Detail view -->
+        <div id="vs-cin-detail-wrap" class="hidden mt-4">
+          <button id="vs-cin-back" class="text-sm text-purple-600 hover:underline mb-3">← Back to list</button>
+          <div id="vs-cin-detail-content"></div>
         </div>
       </section>
 
