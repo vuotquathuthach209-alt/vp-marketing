@@ -88,7 +88,11 @@ function authHeaders(): Record<string, string> {
 // ═══════════════════════════════════════════════════════════
 
 /**
- * Submit job to FAL queue. Returns request_id.
+ * Submit job to FAL queue. Returns request_id + URLs FAL gave us back.
+ *
+ * IMPORTANT: For multi-slash model IDs (e.g. fal-ai/bytedance/seedance/v2/text-to-video),
+ * the polling URL is /fal-ai/requests/{id}/status (just owner part), NOT the full path.
+ * Always use the status_url + response_url returned by FAL in the submit response.
  */
 export async function falSubmit(modelId: string, input: any): Promise<FalSubmitResult> {
   const url = `${QUEUE_BASE}/${modelId}`;
@@ -113,17 +117,32 @@ export async function falSubmit(modelId: string, input: any): Promise<FalSubmitR
 }
 
 /**
- * Poll status until COMPLETED or FAILED.
+ * Build owner-only base for polling (FAL returns URLs but we may need fallback).
+ * fal-ai/veo3 → fal-ai
+ * fal-ai/bytedance/seedance/v2/text-to-video → fal-ai
  */
-export async function falPoll(modelId: string, requestId: string, opts: { intervalMs?: number; timeoutMs?: number } = {}): Promise<FalStatusResult> {
-  const intervalMs = opts.intervalMs || 5000;     // 5s default
-  const timeoutMs = opts.timeoutMs || 600_000;    // 10 min default for video gen
+function ownerOnly(modelId: string): string {
+  const parts = modelId.split('/');
+  return parts[0];                                // first segment = owner
+}
+
+/**
+ * Poll status. Prefer status_url returned by FAL (correct URL for any model),
+ * fallback to constructed URL using owner-only path.
+ */
+export async function falPoll(submitResult: FalSubmitResult, modelId: string, opts: { intervalMs?: number; timeoutMs?: number } = {}): Promise<FalStatusResult> {
+  const intervalMs = opts.intervalMs || 5000;
+  const timeoutMs = opts.timeoutMs || 600_000;
   const start = Date.now();
   let lastStatus: FalStatusResult | null = null;
 
+  // Prefer FAL-returned status_url; fallback to owner-only construction
+  const statusUrl = submitResult.status_url
+    || `${QUEUE_BASE}/${ownerOnly(modelId)}/requests/${submitResult.request_id}/status`;
+
   while (Date.now() - start < timeoutMs) {
     try {
-      const r = await axios.get(`${QUEUE_BASE}/${modelId}/requests/${requestId}/status`, {
+      const r = await axios.get(statusUrl, {
         headers: authHeaders(),
         timeout: 30_000,
       });
@@ -132,8 +151,7 @@ export async function falPoll(modelId: string, requestId: string, opts: { interv
         return lastStatus;
       }
     } catch (e: any) {
-      // Transient errors — keep polling
-      console.warn(`[fal-poll] ${modelId} ${requestId} transient err:`, e?.message);
+      console.warn(`[fal-poll] ${modelId} ${submitResult.request_id} transient err:`, e?.message);
     }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
@@ -142,11 +160,14 @@ export async function falPoll(modelId: string, requestId: string, opts: { interv
 }
 
 /**
- * Fetch final result after status COMPLETED.
+ * Fetch final result. Prefer response_url returned by FAL; fallback owner-only.
  */
-export async function falFetchResult<T = any>(modelId: string, requestId: string): Promise<T> {
+export async function falFetchResult<T = any>(submitResult: FalSubmitResult, modelId: string): Promise<T> {
+  const responseUrl = submitResult.response_url
+    || `${QUEUE_BASE}/${ownerOnly(modelId)}/requests/${submitResult.request_id}`;
+
   try {
-    const r = await axios.get(`${QUEUE_BASE}/${modelId}/requests/${requestId}`, {
+    const r = await axios.get(responseUrl, {
       headers: authHeaders(),
       timeout: 30_000,
     });
@@ -197,9 +218,9 @@ export async function runFalVideoJob(opts: RunFalOpts): Promise<{ ok: boolean; v
     return { ok: false, error: e.message };
   }
 
-  console.log(`[fal] ${opts.modelId} submitted req=${submitR.request_id}`);
+  console.log(`[fal] ${opts.modelId} submitted req=${submitR.request_id} status_url=${submitR.status_url || '(constructed)'}`);
 
-  const status = await falPoll(opts.modelId, submitR.request_id, {
+  const status = await falPoll(submitR, opts.modelId, {
     intervalMs: opts.pollIntervalMs,
     timeoutMs: opts.pollTimeoutMs,
   });
@@ -211,7 +232,7 @@ export async function runFalVideoJob(opts: RunFalOpts): Promise<{ ok: boolean; v
 
   let result: any;
   try {
-    result = await falFetchResult(opts.modelId, submitR.request_id);
+    result = await falFetchResult(submitR, opts.modelId);
   } catch (e: any) {
     return { ok: false, request_id: submitR.request_id, error: e.message };
   }
