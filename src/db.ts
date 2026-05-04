@@ -2400,6 +2400,15 @@ try {
   if (!cols.includes('slot')) db.exec(`ALTER TABLE story_episodes ADD COLUMN slot TEXT`);
   if (!cols.includes('hook_surface')) db.exec(`ALTER TABLE story_episodes ADD COLUMN hook_surface TEXT`);
   if (!cols.includes('hook_arc')) db.exec(`ALTER TABLE story_episodes ADD COLUMN hook_arc TEXT`);
+  // V3.1 — anthology video output metadata
+  if (!cols.includes('final_video_url')) db.exec(`ALTER TABLE story_episodes ADD COLUMN final_video_url TEXT`);
+  if (!cols.includes('video_duration_sec')) db.exec(`ALTER TABLE story_episodes ADD COLUMN video_duration_sec INTEGER`);
+  if (!cols.includes('anthology_script_json')) db.exec(`ALTER TABLE story_episodes ADD COLUMN anthology_script_json TEXT`);
+  if (!cols.includes('anthology_voice_json')) db.exec(`ALTER TABLE story_episodes ADD COLUMN anthology_voice_json TEXT`);
+  if (!cols.includes('anthology_visuals_json')) db.exec(`ALTER TABLE story_episodes ADD COLUMN anthology_visuals_json TEXT`);
+  if (!cols.includes('bgm_path')) db.exec(`ALTER TABLE story_episodes ADD COLUMN bgm_path TEXT`);
+  if (!cols.includes('cost_cents')) db.exec(`ALTER TABLE story_episodes ADD COLUMN cost_cents INTEGER DEFAULT 0`);
+  if (!cols.includes('updated_at')) db.exec(`ALTER TABLE story_episodes ADD COLUMN updated_at INTEGER`);
 } catch (e: any) { console.warn('[db] V3 alter story_episodes:', e?.message); }
 
 // ═══════════════════════════════════════════════════════════
