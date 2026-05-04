@@ -2079,6 +2079,124 @@ CREATE INDEX IF NOT EXISTS idx_video_cost_proj ON video_cost_ledger(project_id);
 console.log('[db] Video Studio module tables ready (isolated block)');
 
 // ═══════════════════════════════════════════════════════════
+// V2.1: Daily Tips Engine — Rail B (T2/T4/T6 1 video/ngày)
+// Tách biệt với Story Engine (Rail A T5/T7) và Weekend Special (Rail C CN)
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+CREATE TABLE IF NOT EXISTS tips_videos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+  -- Content
+  category TEXT NOT NULL,             -- booking_tips | sonder_areas | seasonal_trends
+  topic TEXT NOT NULL,                -- "5 sai lầm khi đặt vé máy bay"
+  hook_pattern TEXT,                  -- number | authority | question | time | contradiction
+  hook_text TEXT NOT NULL,            -- final hook (winner if A/B done)
+  hook_variants_json TEXT,            -- {A: "...", B: "..."} for A/B test
+  selected_variant TEXT,              -- 'A' | 'B' (winner key)
+
+  -- Script structure
+  tips_json TEXT NOT NULL,            -- [{number, title, text, visual_query, ...}]
+  cta_text TEXT,
+  caption_text TEXT,                  -- final caption for FB/IG/YT
+  hashtags_json TEXT,
+  duration_sec REAL,
+
+  -- Voice
+  voice_id TEXT,                      -- ElevenLabs voice (default: energetic)
+  voice_audio_path TEXT,              -- single concatenated audio
+  voice_segments_json TEXT,           -- [{tip_idx, audio_path, duration}]
+
+  -- Music
+  bgm_path TEXT,
+  bgm_mood TEXT DEFAULT 'energetic',
+
+  -- Output
+  video_url TEXT,
+  thumbnail_url TEXT,
+  draft_video_url TEXT,               -- pre-approve preview
+  final_video_url TEXT,               -- post-approve final
+
+  -- Status (state machine — same pattern as story/video-studio)
+  status TEXT DEFAULT 'draft',        -- draft|generating|script_review|visuals|voice|composing|qc_review|approved|scheduled|published|failed
+  scheduled_at INTEGER,
+  published_at INTEGER,
+
+  -- Multi-platform publish tracking
+  fb_post_ids TEXT,                   -- JSON array [{page_id, post_id, published_at}]
+  yt_video_id TEXT,
+  yt_video_url TEXT,
+  ig_media_id TEXT,
+  zalo_article_id TEXT,
+
+  -- Engagement analytics
+  view_count INTEGER DEFAULT 0,
+  view_through_3s INTEGER DEFAULT 0,
+  view_through_25 INTEGER DEFAULT 0,
+  view_through_50 INTEGER DEFAULT 0,
+  view_through_75 INTEGER DEFAULT 0,
+  view_through_complete INTEGER DEFAULT 0,
+  like_count INTEGER DEFAULT 0,
+  share_count INTEGER DEFAULT 0,
+  comment_count INTEGER DEFAULT 0,
+  save_count INTEGER DEFAULT 0,
+  click_count INTEGER DEFAULT 0,
+  conversion_count INTEGER DEFAULT 0,
+
+  -- Meta
+  cost_cents INTEGER DEFAULT 0,
+  error_log TEXT,
+  generated_by TEXT,                  -- 'cron' | 'manual:email'
+  reviewed_at_gate1 INTEGER,          -- script approved
+  reviewed_at_gate2 INTEGER,          -- voice approved
+  reviewed_at_gate3 INTEGER,          -- final approved
+
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tips_status ON tips_videos(status, scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_tips_category ON tips_videos(category, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tips_published ON tips_videos(published_at DESC);
+
+-- Tips ideas pool (generated once via Claude, picked by cron rotation)
+CREATE TABLE IF NOT EXISTS tips_ideas (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  category TEXT NOT NULL,             -- booking_tips | sonder_areas | seasonal_trends
+  topic TEXT NOT NULL,
+  description TEXT,
+  hook_pattern TEXT,                  -- preferred pattern
+  target_audience TEXT,
+  relevance_score REAL DEFAULT 0.7,
+  trending_score REAL DEFAULT 0.5,
+  seasonal_tag TEXT,                  -- evergreen | tet | summer | holiday
+  used_video_id INTEGER,              -- NULL = unused
+  discovered_at INTEGER NOT NULL,
+  used_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_tips_ideas_unused ON tips_ideas(used_video_id, category, relevance_score DESC);
+
+-- Hook variants A/B testing
+CREATE TABLE IF NOT EXISTS tips_hook_experiments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  video_id INTEGER NOT NULL,
+  variant_key TEXT NOT NULL,          -- 'A' | 'B'
+  hook_text TEXT NOT NULL,
+  hook_pattern TEXT,
+  -- Per-platform metrics (denormalized for fast query)
+  fb_view_count INTEGER DEFAULT 0,
+  fb_ctr REAL DEFAULT 0,
+  yt_view_count INTEGER DEFAULT 0,
+  yt_avg_view_dur REAL DEFAULT 0,
+  total_score REAL DEFAULT 0,         -- composite engagement
+  is_winner INTEGER DEFAULT 0,
+  promoted_at INTEGER,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (video_id) REFERENCES tips_videos(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_tips_exp_video ON tips_hook_experiments(video_id);
+`);
+console.log('[db] V2.1 tips_videos + tips_ideas + tips_hook_experiments tables ready');
+
+// ═══════════════════════════════════════════════════════════
 // v23 — intent_logs: log mọi message qua Gemini Intent Classifier
 // Mục đích: analytics + training data cho tuning classifier + debug
 // ═══════════════════════════════════════════════════════════

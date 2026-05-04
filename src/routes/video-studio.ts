@@ -469,4 +469,161 @@ router.get('/dashboard/summary', requireEnabled, (_req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════
+// V2.1: Daily Tips Engine routes (Rail B)
+// ═══════════════════════════════════════════════════════════
+
+router.get('/tips/projects', requireEnabled, (req, res) => {
+  try {
+    const { listProjects } = require('../services/video-studio/tips-orchestrator');
+    const projects = listProjects({
+      status: req.query.status as any,
+      limit: Number(req.query.limit) || 50,
+    });
+    res.json({ success: true, data: projects });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.get('/tips/projects/:id', requireEnabled, (req, res) => {
+  try {
+    const { getProject } = require('../services/video-studio/tips-orchestrator');
+    const proj = getProject(Number(req.params.id));
+    if (!proj) return res.status(404).json({ success: false, error: 'not found' });
+
+    // Parse JSON fields
+    const tips = proj.tips_json ? JSON.parse(proj.tips_json) : [];
+    const hookVariants = proj.hook_variants_json ? JSON.parse(proj.hook_variants_json) : null;
+    const hashtags = proj.hashtags_json ? JSON.parse(proj.hashtags_json) : [];
+    const fbPostIds = proj.fb_post_ids ? JSON.parse(proj.fb_post_ids) : [];
+
+    res.json({ success: true, data: { ...proj, tips, hookVariants, hashtags, fbPostIds } });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/tips/projects', requireEnabled, (req: AuthRequest, res) => {
+  try {
+    const { createTipsProject } = require('../services/video-studio/tips-orchestrator');
+    const r = createTipsProject({
+      ...(req.body || {}),
+      generated_by: req.user?.email || 'admin',
+    });
+    if ('error' in r) return res.status(400).json({ success: false, error: r.error });
+    res.json({ success: true, ...r });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/tips/projects/:id/generate-script', requireEnabled, async (req: AuthRequest, res) => {
+  try {
+    const { generateScriptStep } = require('../services/video-studio/tips-orchestrator');
+    const r = await generateScriptStep(Number(req.params.id));
+    res.json({ success: r.ok, error: r.error });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/tips/projects/:id/fetch-visuals', requireEnabled, async (req: AuthRequest, res) => {
+  try {
+    const { fetchVisualsStep } = require('../services/video-studio/tips-orchestrator');
+    const r = await fetchVisualsStep(Number(req.params.id));
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/tips/projects/:id/synth-voice', requireEnabled, async (req: AuthRequest, res) => {
+  try {
+    const { synthesizeVoiceStep } = require('../services/video-studio/tips-orchestrator');
+    const r = await synthesizeVoiceStep(Number(req.params.id));
+    res.json({ success: r.ok, error: r.error });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/tips/projects/:id/compose', requireEnabled, async (req: AuthRequest, res) => {
+  try {
+    const { composeStep } = require('../services/video-studio/tips-orchestrator');
+    const r = await composeStep(Number(req.params.id));
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/tips/projects/:id/approve', requireEnabled, (req: AuthRequest, res) => {
+  try {
+    const { approveStep } = require('../services/video-studio/tips-orchestrator');
+    const gate = (req.body?.gate as string) || 'gate3';
+    const r = approveStep(Number(req.params.id), gate as any);
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/tips/projects/:id/publish', requireEnabled, async (req: AuthRequest, res) => {
+  try {
+    const { publishStep } = require('../services/video-studio/tips-orchestrator');
+    const r = await publishStep(Number(req.params.id), req.body || {});
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/tips/auto-run', requireEnabled, superadminOnly, async (req: AuthRequest, res) => {
+  try {
+    const { runDailyTipsAuto } = require('../services/video-studio/tips-orchestrator');
+    const r = await runDailyTipsAuto({ skipPublish: req.body?.skipPublish === true });
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.get('/tips/ideas', requireEnabled, (req, res) => {
+  try {
+    const category = req.query.category as string;
+    const rows = category
+      ? db.prepare(`SELECT * FROM tips_ideas WHERE category = ? ORDER BY relevance_score DESC LIMIT 100`).all(category)
+      : db.prepare(`SELECT * FROM tips_ideas ORDER BY discovered_at DESC LIMIT 100`).all();
+    res.json({ success: true, data: rows });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/tips/ideas/replenish', requireEnabled, superadminOnly, async (_req, res) => {
+  try {
+    const { replenishIdeasIfLow } = require('../services/video-studio/tips-engine');
+    const r = await replenishIdeasIfLow();
+    res.json({ success: true, ...r });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+router.post('/tips/ideas/generate', requireEnabled, superadminOnly, async (req: AuthRequest, res) => {
+  try {
+    const { generateIdeas, saveIdeas } = require('../services/video-studio/tips-engine');
+    const category = req.body?.category;
+    const count = Math.min(15, Number(req.body?.count) || 8);
+    if (!category) return res.status(400).json({ success: false, error: 'category required' });
+
+    const ideas = await generateIdeas(category, count);
+    const saved = saveIdeas(ideas);
+    res.json({ success: true, generated: ideas.length, ...saved });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
 export default router;

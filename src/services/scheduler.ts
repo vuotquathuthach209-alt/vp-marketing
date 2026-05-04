@@ -900,6 +900,25 @@ export function startScheduler() {
       .catch((e: any) => console.error('[scheduler] story-publish err:', e?.message));
   }, { timezone: 'Asia/Ho_Chi_Minh' });
 
+  // ═══ V2.1 Daily Tips — T2/T4/T6 19:00 VN (cron auto-run) ═══
+  cron.schedule('0 19 * * 1,3,5', () => {
+    import('./video-studio/tips-orchestrator').then(m => m.runDailyTipsAuto({ skipPublish: false }))
+      .then(r => {
+        console.log(`[scheduler] daily-tips: ok=${r.ok} category=${r.category} topic="${(r.topic || '').substring(0, 60)}" steps=[${r.steps_completed.join(',')}]`);
+        if (!r.ok) console.warn(`[scheduler] daily-tips error: ${r.error}`);
+      })
+      .catch((e: any) => console.error('[scheduler] daily-tips err:', e?.message));
+  }, { timezone: 'Asia/Ho_Chi_Minh' });
+
+  // ═══ V2.1 Tips ideas replenishment — Sunday 8h sáng VN ═══
+  cron.schedule('0 8 * * 0', () => {
+    import('./video-studio/tips-engine').then(m => m.replenishIdeasIfLow())
+      .then(r => {
+        if (r.generated > 0) console.log(`[scheduler] tips-replenish: generated=${r.generated} categories=[${r.categories.join(',')}]`);
+      })
+      .catch((e: any) => console.error('[scheduler] tips-replenish err:', e?.message));
+  }, { timezone: 'Asia/Ho_Chi_Minh' });
+
   // Monthly concept proposal — 28 mỗi tháng 9h sáng VN
   cron.schedule('0 9 28 * *', async () => {
     try {
