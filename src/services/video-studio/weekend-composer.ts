@@ -20,6 +20,8 @@ import type { WeekendScene, WeekendThemeType } from './weekend-engine';
 import type { WeekendVisual } from './weekend-visuals';
 import { THEME_METADATA } from './weekend-engine';
 
+const FormData = require('form-data');
+
 const MEDIA_DIR = '/opt/vp-marketing/data/media';
 const WEEKEND_VOICE_DIR = path.join(MEDIA_DIR, 'weekend-voices');
 const WEEKEND_OUT_DIR = path.join(MEDIA_DIR, 'weekend-out');
@@ -43,49 +45,74 @@ interface VoiceSegment {
   duration_sec: number;
 }
 
-function pickVoiceIdForTheme(theme: WeekendThemeType): string {
-  // Per-theme voice (allow setting override)
+function pickVoiceIdForTheme(theme: WeekendThemeType): string | undefined {
+  // Per-theme voice (allow setting override).
+  // Pattern: dùng STS với voice Ngân (a3AkyqGG4v8Pg7SWQ0Y3) cho mọi theme.
+  // Nếu admin muốn voice khác cho theme cụ thể, set vs_elevenlabs_voice_id_{style}.
   const meta = THEME_METADATA[theme];
   const settingKey = `vs_elevenlabs_voice_id_${meta.voice_style}`;
-  const fromSetting = getSetting(settingKey);
-  if (fromSetting) return fromSetting;
-
-  // Defaults — admin có thể override qua settings
-  const defaults: Record<string, string> = {
-    professional: getSetting('vs_elevenlabs_voice_id_professional') || 'pFZP5JQG7iQjIQuC4Bku',  // Lily
-    warm: getSetting('vs_elevenlabs_voice_id') || 'XB0fDUnXU5powFXDhCwa',                        // Charlotte
-    storytelling: getSetting('vs_elevenlabs_voice_id_owner') || getSetting('vs_elevenlabs_voice_id') || 'XB0fDUnXU5powFXDhCwa',
-  };
-
-  return defaults[meta.voice_style] || defaults.warm;
+  return getSetting(settingKey)
+    || getSetting('vs_elevenlabs_voice_id_owner')      // Ngân clone (preferred — same as story)
+    || getSetting('vs_elevenlabs_voice_id')
+    || undefined;
 }
 
-async function synthesizeSegment(text: string, voiceId: string, outPath: string): Promise<{ ok: boolean; error?: string }> {
+// ═══════════════════════════════════════════════════════════
+// Edge-TTS Vietnamese → ElevenLabs Speech-to-Speech (Ngân)
+// Same pattern as story-to-video, gives chuẩn VN pronunciation + natural voice
+// ═══════════════════════════════════════════════════════════
+
+async function edgeTtsVietnamese(text: string, outPath: string): Promise<{ ok: boolean; error?: string }> {
+  const voice = getSetting('vs_edge_tts_voice') || 'vi-VN-HoaiMyNeural';
+  const rate = getSetting('vs_edge_tts_rate') || '-3%';
+  const pitch = getSetting('vs_edge_tts_pitch') || '+3Hz';
+
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      const r = spawnSync('python3', [
+        '-m', 'edge_tts',
+        `--voice=${voice}`,
+        `--rate=${rate}`,
+        `--pitch=${pitch}`,
+        `--text`, text,
+        `--write-media`, outPath,
+      ], { encoding: 'utf8', timeout: 120_000 });
+
+      if (r.status !== 0) throw new Error('edge-tts: ' + (r.stderr || '').slice(-200));
+      if (!fs.existsSync(outPath) || fs.statSync(outPath).size < 1000) throw new Error('empty edge audio');
+      return { ok: true };
+    } catch (e: any) {
+      if (attempt < 4) await new Promise(r => setTimeout(r, attempt * 2000));
+      else return { ok: false, error: e?.message };
+    }
+  }
+  return { ok: false, error: 'edge-tts max retries' };
+}
+
+async function elevenLabsStsVietnamese(refAudioPath: string, voiceId: string, outPath: string): Promise<{ ok: boolean; error?: string }> {
   const apiKey = getSetting('elevenlabs_api_key') || getSetting('vs_elevenlabs_api_key');
   if (!apiKey) return { ok: false, error: 'no_elevenlabs_key' };
 
   try {
+    const form = new FormData();
+    form.append('audio', fs.createReadStream(refAudioPath), { filename: 'source.mp3', contentType: 'audio/mpeg' });
+    form.append('model_id', 'eleven_multilingual_sts_v2');
+    form.append('voice_settings', JSON.stringify({
+      stability: 0.5,
+      similarity_boost: 0.85,
+      style: 0.3,
+      use_speaker_boost: true,
+    }));
+
     const resp = await axios.post(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+      `https://api.elevenlabs.io/v1/speech-to-speech/${voiceId}`,
+      form,
       {
-        text,
-        model_id: 'eleven_multilingual_v2',
-        voice_settings: {
-          stability: 0.55,            // Mid (between energetic 0.45 and calm 0.65)
-          similarity_boost: 0.80,
-          style: 0.40,                // Warm + slight expressivity
-          use_speaker_boost: true,
-        },
-      },
-      {
-        headers: {
-          'xi-api-key': apiKey,
-          'Content-Type': 'application/json',
-          'Accept': 'audio/mpeg',
-        },
+        headers: { 'xi-api-key': apiKey, ...form.getHeaders(), 'Accept': 'audio/mpeg' },
         responseType: 'arraybuffer',
-        timeout: 60000,
-      },
+        timeout: 180_000,
+        maxContentLength: 50 * 1024 * 1024,
+      }
     );
     fs.writeFileSync(outPath, Buffer.from(resp.data));
     return { ok: true };
@@ -93,6 +120,30 @@ async function synthesizeSegment(text: string, voiceId: string, outPath: string)
     const errBody = e.response?.data ? Buffer.from(e.response.data).toString('utf8').substring(0, 300) : e.message;
     return { ok: false, error: errBody };
   }
+}
+
+async function synthesizeSegment(text: string, voiceId: string | undefined, outPath: string): Promise<{ ok: boolean; error?: string; mode: 'sts' | 'edge_only' | 'none' }> {
+  const ts = Date.now() + Math.floor(Math.random() * 1000);
+  const edgeRefPath = path.join(WEEKEND_VOICE_DIR, `edge-ref-${ts}.mp3`);
+
+  // Step 1: Edge-TTS Vietnamese reference
+  const edgeR = await edgeTtsVietnamese(text, edgeRefPath);
+  if (!edgeR.ok) return { ok: false, error: 'edge-tts: ' + edgeR.error, mode: 'none' };
+
+  // Step 2: STS với voice Ngân
+  if (voiceId) {
+    const stsR = await elevenLabsStsVietnamese(edgeRefPath, voiceId, outPath);
+    if (stsR.ok) {
+      try { fs.unlinkSync(edgeRefPath); } catch {}
+      return { ok: true, mode: 'sts' };
+    }
+    console.warn(`[weekend-composer] STS fail, fallback Edge: ${stsR.error?.substring(0, 100)}`);
+  }
+
+  // Fallback Edge-only
+  fs.copyFileSync(edgeRefPath, outPath);
+  try { fs.unlinkSync(edgeRefPath); } catch {}
+  return { ok: true, mode: 'edge_only' };
 }
 
 function ffprobeDuration(filePath: string): number {
@@ -110,12 +161,14 @@ export async function synthesizeWeekendVoice(
   const voiceId = pickVoiceIdForTheme(theme);
   const ts = Date.now();
   const segments: VoiceSegment[] = [];
+  const modes: string[] = [];
 
   for (let i = 0; i < scenes.length; i++) {
     const sc = scenes[i];
     const audioPath = path.join(WEEKEND_VOICE_DIR, `weekend-${projectId}-${ts}-s${i}.mp3`);
     const r = await synthesizeSegment(sc.text, voiceId, audioPath);
     if (!r.ok) throw new Error(`scene ${i + 1} synth fail: ${r.error}`);
+    modes.push(r.mode);
     segments.push({
       scene_idx: sc.scene_idx,
       text: sc.text,
@@ -123,6 +176,9 @@ export async function synthesizeWeekendVoice(
       duration_sec: ffprobeDuration(audioPath),
     });
   }
+
+  const stsCount = modes.filter(m => m === 'sts').length;
+  console.log(`[weekend-composer] voice synth: ${segments.length} segments (${stsCount} STS, ${modes.length - stsCount} edge-only) for theme=${theme}`);
 
   return segments;
 }
