@@ -241,7 +241,23 @@ OUTPUT FORMAT (JSON only — không markdown fence, không text ngoài JSON):
 QUY TẮC FINAL:
 - Tổng word count voiceover ALL 6 layers: ~150-220 từ VN.
 - Closing line PHẢI poetic, KHÔNG CTA, KHÔNG mention Sonder.
-- Output JSON only. Không giải thích. Không markdown.`;
+- Output JSON only. Không giải thích. Không markdown.
+
+═══════════════════════════════════════════════════════════════
+JSON SAFETY RULES (BẮT BUỘC để output parse được):
+═══════════════════════════════════════════════════════════════
+
+✅ Inside string values, dùng dấu nháy đơn ' hoặc em-dash — cho dialogue/quotation.
+   ✅ "voiceover_text": "Chú nói: 'Phở Ba Tám. Đường Hoàng Văn Thụ.'"
+   ✅ "voiceover_text": "Chú nói — Phở Ba Tám, Đường Hoàng Văn Thụ."
+
+❌ KHÔNG dùng dấu nháy kép " bên trong string value (sẽ phá JSON).
+   ❌ "voiceover_text": "Chú nói: \"Phở Ba Tám\""   ← escape OK nhưng tránh
+   ❌ "voiceover_text": "Chú nói: "Phở Ba Tám""    ← BREAK JSON tuyệt đối
+
+✅ KHÔNG dùng smart quotes " " ' ' (curly) — chỉ dùng straight ASCII.
+✅ KHÔNG có trailing comma trước } hoặc ].
+✅ Ngắt dòng trong string PHẢI dùng \\n (literal escape), không dùng newline thật.`;
 
 // ═══════════════════════════════════════════════════════════
 // Build user prompt — inject ALL continuity context
@@ -435,6 +451,32 @@ async function callClaude(system: string, user: string, maxTokens = 4500): Promi
 // JSON extraction helper (robust)
 // ═══════════════════════════════════════════════════════════
 
+/**
+ * Try to escape unescaped inner double-quotes inside string values.
+ *
+ * This is a heuristic — works for common Claude mistakes where it writes
+ * dialogue with inner quotes inside a JSON string value.
+ *
+ * Strategy: find lines like `  "key": "value with "inner" quote"` and
+ * escape the middle quotes. Conservative: only operates within property
+ * values that start with `"key": "` and end with `",\n` or `"\n}` patterns.
+ */
+function repairInnerQuotes(jsonText: string): string {
+  // Match: "key": "...content..."  followed by , or } at line/whitespace boundary
+  // Group 1: prefix `"key": "`
+  // Group 2: content (greedy)
+  // Group 3: suffix `"` followed by , or } or ] at end-of-value
+  // We escape any " inside content that's not already escaped.
+  return jsonText.replace(
+    /("(?:[a-z_][a-z_0-9]*)"\s*:\s*")([\s\S]*?)("\s*(?=[,}\]\n]))/gi,
+    (_match, prefix: string, content: string, suffix: string) => {
+      // Escape any unescaped " inside content
+      const fixed = content.replace(/(?<!\\)"/g, '\\"');
+      return prefix + fixed + suffix;
+    },
+  );
+}
+
 function extractJSON(raw: string): any {
   // Strip markdown fences nếu Claude quên
   let cleaned = raw.trim();
@@ -448,27 +490,29 @@ function extractJSON(raw: string): any {
   try {
     return JSON.parse(cleaned);
   } catch (firstErr: any) {
-    // Aggressive cleanup pass:
-    // 1. Smart quotes → ASCII quotes (common in VN content)
-    // 2. Trailing commas before } or ]
-    // 3. Stray newlines inside strings (Claude sometimes does this)
+    // Pass 1: smart quotes + trailing commas
     let fixed = cleaned
-      .replace(/[‘’]/g, "'")     // smart single quotes → '
-      .replace(/[“”]/g, '"')     // smart double quotes → "
-      .replace(/,(\s*[}\]])/g, '$1');      // trailing commas
+      .replace(/[‘’]/g, "'")
+      .replace(/[“”]/g, '"')
+      .replace(/,(\s*[}\]])/g, '$1');
 
     try {
       return JSON.parse(fixed);
-    } catch (secondErr: any) {
-      // Log enough context to debug
-      const pos = Number((secondErr.message.match(/position (\d+)/) || [])[1]);
-      const errCtx = !isNaN(pos)
-        ? `\n... around position ${pos}: "${fixed.slice(Math.max(0, pos - 80), pos + 80)}"`
-        : '';
-      console.error(`[anth-script] JSON parse fail (after smart-quote+comma cleanup): ${secondErr.message}${errCtx}`);
-      console.error(`[anth-script] raw length=${raw.length}, first 500: ${raw.slice(0, 500)}`);
-      console.error(`[anth-script] last 300: ${raw.slice(-300)}`);
-      throw new Error(`Cannot parse JSON. ${secondErr.message}. First 200: ${raw.slice(0, 200)}`);
+    } catch {
+      // Pass 2: aggressive — escape inner double quotes in string values
+      const repaired = repairInnerQuotes(fixed);
+      try {
+        return JSON.parse(repaired);
+      } catch (thirdErr: any) {
+        const pos = Number((thirdErr.message.match(/position (\d+)/) || [])[1]);
+        const errCtx = !isNaN(pos)
+          ? `\n... around position ${pos}: "${repaired.slice(Math.max(0, pos - 80), pos + 80)}"`
+          : '';
+        console.error(`[anth-script] JSON parse fail (3 passes): ${thirdErr.message}${errCtx}`);
+        console.error(`[anth-script] raw length=${raw.length}, first 500: ${raw.slice(0, 500)}`);
+        console.error(`[anth-script] last 300: ${raw.slice(-300)}`);
+        throw new Error(`Cannot parse JSON. ${thirdErr.message}. First 200: ${raw.slice(0, 200)}`);
+      }
     }
   }
 }
