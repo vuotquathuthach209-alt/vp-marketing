@@ -36,11 +36,20 @@ export interface CinemaShot {
   stock_query?: string;                 // ENG keywords cho Pexels search (if applicable)
 }
 
+export type CinemaHookPattern =
+  | 'textural_visual'        // Pattern A: macro texture, no VO
+  | 'object_character'       // Pattern B: object → reveal owner
+  | 'time_anchor';           // Pattern C: time + wide establishing
+
 export interface CinemaScript {
   // Identity
   title: string;                        // "Một Đêm Ở Sonder"
   primary_character: string;            // linh | tuan | vy | khanh | ha | tai
   secondary_characters?: string[];
+  /** Cold open viral hook pattern (Cinema-specific 3 patterns) */
+  hook_pattern?: CinemaHookPattern;
+  /** Outro shot visual ECHO cold open (loop reward) */
+  loop_reward_visual?: string;
 
   // 3-Act story
   premise: string;                      // 1-2 sentences concept
@@ -196,6 +205,52 @@ TRIẾT LÝ CINEMA (BẤT KHẢ XÂM PHẠM):
 ${structureSection}
 
 ═══════════════════════════════════════════════════════════════
+🔥 VIRAL HOOK PATTERNS (research 2026 — long-form retention critical):
+═══════════════════════════════════════════════════════════════
+
+Cold open shot 1 (0-6s) PHẢI pick 1 trong 3 patterns:
+
+  Pattern A — TEXTURAL VISUAL HOOK ⭐ default Cinema
+    voiceover_text="" (NO VO 0-6s)
+    visual_prompt: macro/extreme close-up texture
+    Examples:
+      ✅ "Hơi nóng bay lên từ ly trà gừng, extreme macro, slow motion"
+      ✅ "Tay viết chữ vào nhật ký, mực chảy nhẹ, close-up macro"
+      ✅ "Hạt mưa lăn dài trên cửa kính, ánh đèn vàng phản chiếu"
+    Why: Silent vlog 2026 trend, 50%+ mute viewers, ASMR-adjacent
+
+  Pattern B — OBJECT-AS-CHARACTER ⭐ Sonder logo bonus
+    First 3-6s: close-up 1 vật → reveal chủ nhân ở Act I
+    Examples:
+      ✅ Cuốn nhật ký mở (3s) → Linh cầm bút Act I shot 2
+      ✅ Tag "Tuấn + Sonder logo" close-up (3s) → mặt Tuấn
+      ✅ Chìa khoá đồng (3s) → Linh nhận ở quầy
+    Why: Aesthetic-first feed + curiosity. Logo SUBTLE qua object.
+
+  Pattern C — TIME ANCHOR + WIDE ESTABLISHING
+    First 3-6s: Wide cinematic + 1 line VO ngắn 5-8 từ
+    Examples:
+      ✅ "Đêm thứ 3 tại Sài Gòn." + drone shot Sonder Bình Thạnh
+      ✅ "5 giờ sáng. Mưa lớn." + alley wide
+    Why: Brain anchor cụ thể, set scene fast
+
+LONG-FORM RETENTION RULE — Mỗi 30s phải có 1 mini-hook:
+  - 0:30 mini-hook: visual cut + new sensory detail
+  - 1:00 mini-hook: dialogue beat hoặc reveal
+  - 1:30 mini-hook: location shift hoặc emotional beat
+  → Audience không scroll khi mỗi 30s có "thưởng" mới
+
+LOOP REWARD (Outro shot) ⭐ viral retention critical:
+  visual_prompt PHẢI ECHO cold open visual.
+  Examples:
+    Cold open: ly trà đầy bốc khói
+    Outro:     ly trà cạn nửa, hơi nóng nhẹ
+
+    Cold open: chìa khoá xoay vào ổ
+    Outro:     chìa khoá đặt xuống bàn cạnh sổ
+  Why: Viewer rewatch loop → algorithm boost YT long-form CTR.
+
+═══════════════════════════════════════════════════════════════
 HYBRID COST OPTIMIZATION (BẮT BUỘC mỗi shot):
 ═══════════════════════════════════════════════════════════════
 
@@ -320,8 +375,10 @@ OUTPUT FORMAT (JSON only, không markdown fence):
   "title": "<4-7 từ VN>",
   "primary_character": "<slug>",
   "secondary_characters": ["<slug>", ...],
+  "hook_pattern": "<1 trong: textural_visual|object_character|time_anchor>",
+  "loop_reward_visual": "<outro shot visual ECHO cold open visual — vd: 'ly trà cạn nửa, hơi nóng nhẹ' nếu cold open là 'ly trà đầy bốc khói'>",
   "premise": "<1-2 sentence concept>",
-  "cold_open_text": "<optional VO 8-12 từ HOẶC empty string>",
+  "cold_open_text": "<optional VO 8-12 từ HOẶC empty string — Pattern A/B = empty, Pattern C = 5-8 từ>",
   "title_card_text": "Sonder Cinema #N: <title>",
   "closing_line": "<poetic 1 sentence VN>",
   "shots": [
@@ -644,6 +701,9 @@ function normalizeScript(parsed: any, primaryChar: string): CinemaScript {
     title: String(parsed.title || 'Cinema Episode').slice(0, 100).trim(),
     primary_character: parsed.primary_character || primaryChar,
     secondary_characters: Array.isArray(parsed.secondary_characters) ? parsed.secondary_characters.slice(0, 3) : [],
+    hook_pattern: ['textural_visual', 'object_character', 'time_anchor'].includes(parsed.hook_pattern)
+      ? parsed.hook_pattern as CinemaHookPattern : undefined,
+    loop_reward_visual: parsed.loop_reward_visual ? String(parsed.loop_reward_visual).slice(0, 300) : undefined,
     premise: String(parsed.premise || '').slice(0, 500),
     cold_open_text: parsed.cold_open_text ? String(parsed.cold_open_text).slice(0, 200) : undefined,
     title_card_text: String(parsed.title_card_text || `Sonder Cinema: ${parsed.title || ''}`).slice(0, 100),

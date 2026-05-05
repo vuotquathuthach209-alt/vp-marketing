@@ -43,6 +43,15 @@ export interface AnthologyLayer {
   notes?: string;                   // optional director note
 }
 
+export type ViralHookPattern =
+  | 'time_action'           // P1: time + action specific
+  | 'textural_visual'       // P2: macro texture, no VO 0-3s
+  | 'observational'         // P3: micro-detail observation
+  | 'expectation_reality'   // P4: expectation vs reality
+  | 'numerical_serial'      // P5: ngày/tuần thứ N
+  | 'object_character'      // P6: object reveals character
+  | 'callback_arc';         // P7: reference previous episode
+
 export interface AnthologyScript {
   // Identity
   title: string;                    // 4-7 từ (bí ẩn, không spoil)
@@ -50,6 +59,10 @@ export interface AnthologyScript {
   secondary_characters?: CharacterSlug[];
   location_slug: string;
   is_crossover: boolean;
+  /** Viral hook pattern used for L1 (research 2026) */
+  hook_pattern?: ViralHookPattern;
+  /** Loop reward — visual echo of L1 hook for L6 closing (viral retention) */
+  loop_reward_visual?: string;
 
   // Arc info
   arc_slug?: string;
@@ -126,10 +139,37 @@ TRIẾT LÝ CỐT LÕI (BẤT KHẢ XÂM PHẠM):
 6-LAYER STRUCTURE (BẮT BUỘC đầy đủ — total 60-90s):
 ═══════════════════════════════════════════════════════════════
 
-LAYER 1 — HOOK (3-5s | 8-12 từ):
-  1 detail CỤ THỂ (giờ + hành động + vật).
-  ✅ "11 giờ đêm. Mình bấm chuông phòng 305 lần thứ ba."
-  ❌ "Sài Gòn đẹp lắm các bạn ạ"
+LAYER 1 — HOOK (3-5s | 8-12 từ) — VIRAL PATTERN BẮT BUỘC:
+
+Pick 1 trong 7 patterns (research 2026 viral retention 75-85%):
+
+  Pattern 1 — TIME + ACTION SPECIFIC ⭐ default
+    "5h45 sáng. Mình dậy sớm hơn dự định."
+    "11h đêm. Mình bấm chuông phòng 305 lần thứ ba."
+
+  Pattern 2 — TEXTURAL VISUAL HOOK (no VO 0-3s)
+    voiceover_text="" + visual_prompt = macro texture (trà bốc khói, mưa kính)
+    Silent vlog 2026 trend, ASMR-adjacent, 50% mute viewers
+
+  Pattern 3 — OBSERVATIONAL MICRO-DETAIL
+    "Chú lễ tân không hỏi mình từ đâu đến."
+    "Ly trà đặt sẵn trên bàn. Không ai nói gì."
+
+  Pattern 4 — EXPECTATION vs REALITY
+    "Mình đến để bắt đầu lại. Đêm đầu, mình ngủ sớm hơn dự định."
+
+  Pattern 5 — NUMERICAL ANCHOR SERIAL
+    "Đêm thứ 3 tại Sài Gòn. Mình chưa gọi điện về nhà."
+
+  Pattern 6 — OBJECT-AS-CHARACTER (logo subtle bonus)
+    visual_prompt: macro chiếc chìa khoá đồng + Sonder logo (3s)
+    voiceover_text: "" hoặc 1 line ngắn
+
+  Pattern 7 — CALLBACK ARC (cho loyal viewer)
+    "Hôm nay không gặp Tuấn ở quầy như mọi đêm."
+    Reference event/object/dialogue từ tập trước (đọc continuity facts)
+
+  ❌ TRÁNH: "Sài Gòn đẹp lắm", "5 sai lầm...", "Top 3...", high-energy
 
 LAYER 2 — CONTEXT (10-15s):
   Personal stake + conflict nhẹ + sensory ground.
@@ -150,8 +190,19 @@ LAYER 5 — REFLECTION (10-15s) ★ Ý TỰ THÀNH ★:
   KHÔNG mention "Sonder", KHÔNG kết luận quá rõ.
   ✅ "Mình tưởng mình cần lý do mới đến chỗ lạ. Hoá ra mình chỉ cần ai đó biết mình sẽ đến."
 
-LAYER 6 — CLOSING (5-8s):
+LAYER 6 — CLOSING (5-8s) ★ LOOP REWARD ⭐ (viral retention critical):
   Poetic, không CTA, không "Sonder".
+
+  LOOP REWARD RULE: visual_prompt PHẢI ECHO Layer 1 hook visual.
+  Examples:
+    L1 hook visual: "ly trà gừng đầy, hơi nóng bốc lên"
+    L6 closing visual: "ly trà cạn nửa, hơi nóng nhẹ" ← echo same prop, different state
+
+    L1 hook visual: "hạt mưa lớn lăn cửa kính"
+    L6 closing visual: "hạt mưa nhỏ giọt cuối, kính khô dần" ← same element, time progressed
+
+  Why: Viewer rewatch loop → algorithm boost. Saves rate ↑.
+
   ✅ "Đêm đầu Sài Gòn. Mình ngủ sớm hơn dự định."
 
 ═══════════════════════════════════════════════════════════════
@@ -216,8 +267,10 @@ OUTPUT FORMAT (JSON only — không markdown fence, không text ngoài JSON):
   "arc_slug": "<slug>",                              // nếu thuộc arc
   "arc_episode_no": <number>,                        // tập thứ N trong arc
   "arc_beat": "inciting|escalation|midpoint|climax|resolution|standalone",
-  "hook_surface": "<surface hook 8-12 từ>",
+  "hook_pattern": "<1 trong: time_action|textural_visual|observational|expectation_reality|numerical_serial|object_character|callback_arc>",
+  "hook_surface": "<surface hook 8-12 từ — ÁP DỤNG hook_pattern đã chọn>",
   "hook_arc": "<arc hook callback - có thể trùng surface nếu standalone>",
+  "loop_reward_visual": "<L6 closing visual ECHO L1 hook visual — vd: 'ly trà cạn nửa, hơi nóng nhẹ' nếu L1 là 'ly trà đầy bốc khói'>",
   "layers": [
     { "layer_no": 1, "layer_name": "hook",       "voiceover_text": "...", "visual_prompt": "...", "duration_target_sec": 4 },
     { "layer_no": 2, "layer_name": "context",    "voiceover_text": "...", "visual_prompt": "...", "duration_target_sec": 12 },
@@ -621,6 +674,9 @@ function normalizeScript(parsed: any, pick: TodayPick, location: any, activeArc:
       : (pick.secondary || []),
     location_slug: parsed.location_slug || location.slug,
     is_crossover: pick.is_crossover,
+    hook_pattern: ['time_action', 'textural_visual', 'observational', 'expectation_reality', 'numerical_serial', 'object_character', 'callback_arc']
+      .includes(parsed.hook_pattern) ? parsed.hook_pattern as ViralHookPattern : undefined,
+    loop_reward_visual: parsed.loop_reward_visual ? String(parsed.loop_reward_visual).slice(0, 300) : undefined,
     arc_slug: parsed.arc_slug || activeArc?.arc_slug || pick.arc_slug,
     arc_episode_no: Number(parsed.arc_episode_no) || (activeArc ? (activeArc.episodes_published || 0) + 1 : undefined),
     arc_beat: parsed.arc_beat || 'standalone',

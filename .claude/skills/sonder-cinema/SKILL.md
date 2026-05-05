@@ -136,6 +136,80 @@ Mỗi shot có 1 trong 4 types — auto-route đến tool tốt nhất:
 
 ---
 
+## 🔥 VIRAL HOOK PATTERNS (research 2026 — adapted cho long-form)
+
+Cinema hook khác Anthology: cold open KHÔNG có voiceover, chỉ visual. Trong
+3 giây đầu PHẢI grab attention. Pick 1 trong 3 patterns sau:
+
+### Pattern A — TEXTURAL VISUAL HOOK ⭐ default cho Cinema
+```
+First 3-6 seconds: Macro/extreme close-up texture, NO voiceover.
+Examples:
+  ✅ Hơi nóng bay lên từ ly trà gừng (extreme close)
+  ✅ Tay viết chữ vào nhật ký, mực chảy nhẹ
+  ✅ Hạt mưa lăn dài trên cửa kính
+  ✅ Chìa khoá xoay trong ổ khoá đồng cũ
+Why: Silent vlog 2026 trend — 50%+ users xem mute
+```
+
+### Pattern B — OBJECT-AS-CHARACTER HOOK
+```
+First 3s: Close-up 1 vật + reveal chủ nhân muộn hơn (Act I shot 2)
+Examples:
+  ✅ Cuốn nhật ký mở (3s) → Linh cầm bút (Act I)
+  ✅ Tag "Tuấn + Sonder logo" (3s) → mặt Tuấn (Act I)
+  ✅ Chìa khoá đồng (3s) → Linh nhận ở quầy
+Why: Aesthetic hook + curiosity. Logo SUBTLE qua object.
+```
+
+### Pattern C — TIME ANCHOR + WIDE ESTABLISHING
+```
+First 3-6s: Wide cinematic shot + 1 line VO ngắn 5-8 từ
+Examples:
+  ✅ "Đêm thứ 3 tại Sài Gòn." + drone shot Sonder Bình Thạnh
+  ✅ "5 giờ sáng. Mưa lớn." + alley wide shot
+Why: Brain anchor cụ thể, set scene fast
+```
+
+## ⏱ RETENTION ENGINEERING — Cinema 6 phút (PILOT 60s khác)
+
+```
+Cinema FULL 6 phút:
+  Mỗi 30 giây phải có 1 mini-hook (re-grab attention)
+  - 0:00-0:15  Cold open (Pattern A/B/C)
+  - 0:15-0:25  Title card (5-10s)
+  - 0:25-1:55  Act I (90s) — 2 mini-hooks tại 0:50, 1:25
+  - 1:55-4:55  Act II (180s) — 4 mini-hooks every 45s
+  - 4:55-6:25  Act III (90s) — payoff cumulative
+  - 6:25-6:40  Outro (LOOP REWARD: visual echo cold open)
+
+Cinema PILOT 60s:
+  - 0:00-0:06  Cold open (Pattern A texture)
+  - 0:06-0:24  Act I (18s)
+  - 0:24-0:48  Act II core moment (24s)
+  - 0:48-0:60  Act III + LOOP REWARD (12s)
+```
+
+**LOOP REWARD field**: Mỗi episode PHẢI có shot cuối ECHO visual cold open
+(ly trà cạn nửa → cạn hết, mưa hạt → mưa nhỏ giọt). Composer apply matching
+fade style + sound bridge.
+
+## 🚫 KHÔNG được làm (giữ ý tự thành — same as Anthology)
+
+```
+❌ Aggressive curiosity gap "5 sai lầm..."
+❌ Hard CTA "Subscribe để xem tập sau"
+❌ Sensational "They don't want you to know..."
+❌ High-energy delivery (Cinema = SLOW intentional)
+❌ Numbered list narration
+❌ POV "các bạn" thay "mình"
+
+VIRAL ≠ SENSATIONAL. Cinema VẪN là LITERATURE/POETRY.
+Patterns chỉ ARRANGE cold open + transitions + loop, KHÔNG đổi VOICE.
+```
+
+---
+
 ## 💎 BRAND VALUES (cùng pool với Anthology — share philosophy)
 
 Cinema thấm 1-2 values per episode (giống Anthology), nhưng DEEPER vì có 5+ phút để show:

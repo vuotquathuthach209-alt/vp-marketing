@@ -392,6 +392,149 @@ Tổng audio duration: 60-90s sau khi đọc Edge-TTS rate -3%
 
 ---
 
+## 🔥 VIRAL HOOK PATTERNS — 7 patterns LOCKED (research 2026)
+
+Hook (Layer 1) PHẢI pick 1 trong 7 patterns sau. Đã verify viral retention 75-85% trên short-form 2026.
+
+### Pattern 1: **TIME + ACTION SPECIFIC** ⭐ default
+```
+Format: <thời gian cực cụ thể> + <hành động đời thường>
+Examples:
+  ✅ "5h45 sáng. Mình dậy sớm hơn dự định."
+  ✅ "11h đêm. Mình bấm chuông phòng 305 lần thứ ba."
+  ✅ "Đêm thứ 3 ở Sài Gòn. Trời đổ mưa lúc gần sáng."
+Why: Brain anchor cụ thể → cảm giác thật → giảm scroll
+```
+
+### Pattern 2: **TEXTURAL VISUAL HOOK (no VO 0-3s)** ⭐ silent vlog align
+```
+First 3 seconds: KHÔNG voiceover. Macro/extreme close-up texture.
+Examples:
+  ✅ Hơi nóng bay lên từ ly trà gừng (3s macro)
+  ✅ Tay viết chữ vào nhật ký
+  ✅ Hạt mưa lăn dài trên cửa kính
+  ✅ Chìa khoá xoay trong ổ khoá đồng
+Why: 50%+ users xem mute → silent hook bait, ASMR-adjacent
+```
+
+### Pattern 3: **OBSERVATIONAL MICRO-DETAIL** ⭐ literature feel
+```
+Format: Quan sát 1 chi tiết bình thường người khác bỏ qua
+Examples:
+  ✅ "Chú lễ tân không hỏi mình từ đâu đến."
+  ✅ "Ly trà đặt sẵn trên bàn. Không ai nói gì."
+  ✅ "Đèn hành lang vàng. Không có đèn LED."
+Why: Curiosity gap NHẸ — không sensational
+```
+
+### Pattern 4: **EXPECTATION vs REALITY** (subtle)
+```
+Format: <Expectation>. Nhưng <unexpected reality>.
+Examples:
+  ✅ "Mình đến để bắt đầu lại. Đêm đầu, mình ngủ sớm hơn dự định."
+  ✅ "Tưởng đêm SG ồn. Hoá ra phòng này yên hơn nhà cũ."
+  ✅ "Định không nói chuyện với ai. Chú Tuấn đẩy ly trà — không hỏi gì."
+Why: Cognitive dissonance hook. KHÔNG có "lesson", chỉ có observation
+```
+
+### Pattern 5: **NUMERICAL ANCHOR SERIAL** ⭐ binge-worthy
+```
+Format: "Ngày/Tuần/Đêm thứ N tại <địa điểm>. <hành động>."
+Examples:
+  ✅ "Đêm thứ 3 tại Sài Gòn. Mình chưa gọi điện về nhà."
+  ✅ "Ngày 5. Lần đầu mình ăn phở 1 mình mà không thấy lẻ loi."
+  ✅ "Tuần thứ 2 ở Sonder. Chú Tuấn đã nhớ tên mình."
+Why: Serial format → audience theo arc, algorithm boost CTR
+```
+
+### Pattern 6: **OBJECT-AS-CHARACTER** ⭐ Sonder logo bonus
+```
+Format: First 3s là close-up 1 vật → tiết lộ chủ nhân muộn hơn
+Examples:
+  ✅ Macro chiếc chìa khoá đồng (3s) → cut tới Linh cầm chìa
+  ✅ Cuốn nhật ký mở (3s) → cut tới tay Linh cầm bút
+  ✅ Tag áo "Tuấn" + Sonder logo (3s) → cut tới mặt Tuấn
+Why: Aesthetic-first feed + curiosity. Logo SUBTLE qua object.
+```
+
+### Pattern 7: **CALLBACK ARC** (cho loyal viewer)
+```
+Format: Reference event/object/dialogue từ tập trước
+Examples:
+  ✅ "Hôm nay không gặp Tuấn ở quầy như mọi đêm."
+       (callback ep#13 Tuấn pha trà mỗi tối)
+  ✅ "Chiếc dù xanh treo cạnh cửa. Mình cầm nó mỗi tối."
+Why: Loyal viewer comment + new viewer click profile binge
+Cần: story_continuity facts (đã có sẵn V3)
+```
+
+**Hook selection rule**: Mỗi tập pick 1 pattern. Rotation:
+- T2/T4/T6 (Linh main): Pattern 1, 2, hoặc 5
+- T3 (Tuấn): Pattern 3 hoặc 6
+- T5 (Vy): Pattern 3 hoặc 4
+- T7 (Crossover): Pattern 7 (callback) BẮT BUỘC
+- CN (rotate): Pattern 1 hoặc 4
+
+---
+
+## ⏱ RETENTION ENGINEERING — Anatomy 60s viral Reel
+
+```
+0:00-0:03  HOOK (visual + 1 line)
+  • Pick 1 trong 7 viral patterns trên
+  • KHÔNG explain, KHÔNG title card
+  • Pass scroll-off threshold (>71% pass = boost)
+
+0:03-0:15  CONTEXT (12s)
+  • POV "mình" intimate VO bắt đầu
+  • Sensory grounding 1-2 chi tiết
+  • Set up Pattern 4 expectation
+
+0:15-0:45  CORE MOMENT (30s) ★★★ PEAK
+  • Encounter chính
+  • Brand value qua hành động
+  • Logo placement subtle 1-2 lần
+
+0:45-0:55  REFLECTION (10s) ★ Ý TỰ THÀNH
+  • Inner monologue 1-2 câu
+  • POETIC, không CTA
+  • Pattern 4 payoff
+
+0:55-1:00  LOOP REWARD (5s) ⭐ VIRAL CRITICAL
+  • Visual ECHO opening shot
+    → ly trà cạn nửa (hook) → cạn hết (closing)
+    → mưa rơi (hook) → mưa nhẹ (closing)
+  • Sound bridge match (opening sound reappears)
+  • Logo Sonder fade in slowly
+  • Closing line reference opening
+  
+  WHY: Viewer rewatch → algorithm boost
+       Saves rate ↑ (Save = strong signal)
+       Comment "có connection..." = engagement
+```
+
+**Loop reward field**: Mỗi tập PHẢI có `loop_reward_visual` field — describe
+visual element ở Layer 6 (closing) match Layer 1 (hook). Composer sẽ apply
+slow fade-in 0-3s + fade-out cùng style.
+
+---
+
+## 🚫 KHÔNG được làm (giữ ý tự thành)
+
+```
+❌ Hook curiosity gap aggressive: "5 sai lầm 99% mắc..."
+❌ Sensational: "They don't want you to know..."
+❌ Hard CTA cuối: "Save bài này!" / "Inbox đặt phòng"
+❌ Problem → Solution preachy
+❌ High-energy delivery / numbered list "Top 3..."
+❌ POV "các bạn" thay "mình" (mất intimate)
+
+VIRAL ≠ SENSATIONAL. Sonder VẪN là LITERATURE.
+Patterns chỉ ARRANGE câu mở + visual + loop, KHÔNG đổi VOICE/PHILOSOPHY.
+```
+
+---
+
 ## 🎨 LOGO PLACEMENT LIBRARY (visual brand presence)
 
 Logo Sonder XUẤT HIỆN 3-5 lần/tập nhưng KHÔNG là focus:
