@@ -2411,6 +2411,8 @@ try {
   if (!cols.includes('updated_at')) db.exec(`ALTER TABLE story_episodes ADD COLUMN updated_at INTEGER`);
   // V3.2 — multi-platform publish (FB Reels + YouTube Shorts)
   if (!cols.includes('yt_video_id')) db.exec(`ALTER TABLE story_episodes ADD COLUMN yt_video_id TEXT`);
+  // V3.3 — idempotency cho postPublishBookkeeping (prevent dup facts on re-publish)
+  if (!cols.includes('bookkept_at')) db.exec(`ALTER TABLE story_episodes ADD COLUMN bookkept_at INTEGER`);
 } catch (e: any) { console.warn('[db] V3 alter story_episodes:', e?.message); }
 
 // ═══════════════════════════════════════════════════════════

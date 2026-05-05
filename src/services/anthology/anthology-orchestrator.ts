@@ -367,6 +367,15 @@ export async function composeVideoStep(
 
 export function postPublishBookkeeping(episodeId: number, script: AnthologyScript): void {
   try {
+    // IDEMPOTENCY GUARD — prevent dup facts/counters on re-publish
+    // (post 2026-05-05 BGM violation: re-publish ep#14 fired bookkeeping twice,
+    // creating dup facts + over-bumped counters)
+    const ep = db.prepare(`SELECT bookkept_at FROM story_episodes WHERE id = ?`).get(episodeId) as any;
+    if (ep?.bookkept_at) {
+      console.log(`[anth-orch] ep#${episodeId} bookkeeping SKIP — already done at ${new Date(ep.bookkept_at).toISOString()}`);
+      return;
+    }
+
     // 1. Persist new facts → story_continuity
     const factsCount = persistNewFacts(script, episodeId);
 
@@ -411,7 +420,15 @@ export function postPublishBookkeeping(episodeId: number, script: AnthologyScrip
       }
     }
 
-    console.log(`[anth-orch] bookkeeping ep#${episodeId}: ${factsCount} facts saved, counters bumped`);
+    // Mark bookkept (idempotency anchor)
+    try {
+      db.prepare(`UPDATE story_episodes SET bookkept_at = ?, updated_at = ? WHERE id = ?`)
+        .run(Date.now(), Date.now(), episodeId);
+    } catch (e: any) {
+      console.warn(`[anth-orch] bookkept_at update fail ep#${episodeId}: ${e?.message}`);
+    }
+
+    console.log(`[anth-orch] bookkeeping ep#${episodeId}: ${factsCount} facts saved, counters bumped, marked bookkept`);
   } catch (e: any) {
     console.warn(`[anth-orch] bookkeeping fail ep#${episodeId}: ${e?.message}`);
   }
