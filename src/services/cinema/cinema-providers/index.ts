@@ -74,28 +74,28 @@ export function pickProvidersForShot(ctx: ShotContext): ProviderId[] {
     return ['hailuo'];
   }
 
-  // CHARACTER_SCENE non-money: Wan acceptable (face less critical wide)
+  // CHARACTER_SCENE non-money: Hailuo (Wan disabled — fetch URL broken on FAL)
   if (ctx.shot_type === 'CHARACTER_SCENE') {
-    return ['wan', 'hailuo'];
+    return ['hailuo', 'seedance'];
   }
 
-  // HERO_ESTABLISHING + has_character: probably wants face, Wan first
+  // HERO_ESTABLISHING + has_character: Hailuo (best face) → Seedance fallback
   if (ctx.shot_type === 'HERO_ESTABLISHING' && ctx.has_character) {
-    return ['wan', 'luma', 'veo', 'hailuo'];
+    return ['hailuo', 'seedance'];
   }
 
   // HERO_ESTABLISHING no character: stock preferred (FREE!)
   if (ctx.shot_type === 'HERO_ESTABLISHING') {
-    return ['stock', 'luma', 'wan', 'veo'];
+    return ['stock', 'seedance', 'hailuo'];
   }
 
-  // ATMOSPHERIC_BROLL: stock preferred (FREE!), Seedance fallback
+  // ATMOSPHERIC_BROLL: stock preferred (FREE!), Seedance cheap fallback
   if (ctx.shot_type === 'ATMOSPHERIC_BROLL') {
-    return ['stock', 'luma', 'seedance', 'wan'];
+    return ['stock', 'seedance'];
   }
 
   // Default fallback
-  return ['stock', 'wan', 'seedance'];
+  return ['stock', 'seedance', 'hailuo'];
 }
 
 // ═══════════════════════════════════════════════════════════
