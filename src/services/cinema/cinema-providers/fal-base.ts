@@ -94,6 +94,19 @@ function authHeaders(): Record<string, string> {
  * the polling URL is /fal-ai/requests/{id}/status (just owner part), NOT the full path.
  * Always use the status_url + response_url returned by FAL in the submit response.
  */
+/**
+ * Custom error class for FAL balance exhaustion.
+ * Detected via HTTP 403 with "Exhausted balance" message.
+ * Orchestrator catches this and aborts pipeline gracefully (no retry).
+ */
+export class FalBalanceExhaustedError extends Error {
+  isBalanceExhausted = true;
+  constructor(public modelId: string, public detail?: string) {
+    super(`FAL balance exhausted (${modelId}): ${detail || 'top up at fal.ai/dashboard/billing'}`);
+    this.name = 'FalBalanceExhaustedError';
+  }
+}
+
 export async function falSubmit(modelId: string, input: any): Promise<FalSubmitResult> {
   const url = `${QUEUE_BASE}/${modelId}`;
   try {
@@ -111,8 +124,54 @@ export async function falSubmit(modelId: string, input: any): Promise<FalSubmitR
     };
   } catch (e: any) {
     const ax = e as AxiosError<any>;
+    const status = ax?.response?.status;
     const msg = ax?.response?.data?.detail || ax?.response?.data?.error || ax?.message;
-    throw new Error(`fal_submit_fail (${modelId}): ${typeof msg === 'string' ? msg : JSON.stringify(msg).slice(0, 200)}`);
+    const msgStr = typeof msg === 'string' ? msg : JSON.stringify(msg).slice(0, 200);
+
+    // 403 + "Exhausted balance" or "User is locked" → balance issue, not transient
+    if (status === 403 && /exhaust|locked|balance|insufficient/i.test(msgStr)) {
+      throw new FalBalanceExhaustedError(modelId, msgStr);
+    }
+
+    throw new Error(`fal_submit_fail (${modelId}): ${msgStr}`);
+  }
+}
+
+/**
+ * Quick FAL account health check. Returns { healthy, balance, message }.
+ * Calls a cheap endpoint to detect 403 lock state.
+ */
+export async function checkFalHealth(): Promise<{ healthy: boolean; locked: boolean; balance_usd?: number; message: string }> {
+  try {
+    // Try the user/me-style endpoint. FAL's billing API isn't documented publicly,
+    // so fall back to a probe submit (just checking if 403 fires immediately).
+    // We use a tiny dry-run probe via Seedance Fast (cheapest), checking only the auth/balance gate.
+    // IMPORTANT: this DOES create a queued job at $0.022 worst-case if balance is healthy.
+    // Cancel immediately after.
+    const r = await axios.post(
+      `${QUEUE_BASE}/fal-ai/bytedance/seedance/v2/text-to-video`,
+      { prompt: 'health check', duration: 4, aspect_ratio: '9:16', resolution: '720p' },
+      { headers: authHeaders(), timeout: 30_000, validateStatus: () => true },
+    );
+
+    if (r.status === 403) {
+      const detail = r.data?.detail || JSON.stringify(r.data).slice(0, 200);
+      return { healthy: false, locked: true, message: `403 — ${detail}` };
+    }
+    if (r.status === 200 && r.data?.request_id) {
+      // Submitted successfully — cancel to avoid charge
+      try {
+        await axios.put(
+          `${QUEUE_BASE}/fal-ai/bytedance/requests/${r.data.request_id}/cancel`,
+          {},
+          { headers: authHeaders(), timeout: 15_000, validateStatus: () => true },
+        );
+      } catch { /* best-effort cancel */ }
+      return { healthy: true, locked: false, message: 'OK — balance available' };
+    }
+    return { healthy: false, locked: false, message: `unexpected status ${r.status}` };
+  } catch (e: any) {
+    return { healthy: false, locked: false, message: e?.message || 'unknown error' };
   }
 }
 

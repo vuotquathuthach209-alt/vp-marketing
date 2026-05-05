@@ -26,6 +26,7 @@ import {
   type Provider,
 } from '../services/cinema/cinema-cost-tracker';
 import { isYoutubeConnected } from '../services/youtube-publisher';
+import { checkFalHealth } from '../services/cinema/cinema-providers/fal-base';
 
 const router = Router();
 router.use(authMiddleware);
@@ -65,6 +66,88 @@ router.get('/budget-report', (_req, res) => {
   try {
     const report = getMonthlyBudgetReport();
     res.json({ success: true, ...report });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message });
+  }
+});
+
+/**
+ * Health check — pings all providers + reports auth/balance status.
+ * Caches result 60s to avoid spam.
+ */
+let healthCache: { at: number; data: any } | null = null;
+
+router.get('/health', async (_req, res) => {
+  try {
+    if (healthCache && Date.now() - healthCache.at < 60_000) {
+      return res.json({ success: true, cached: true, ...healthCache.data });
+    }
+
+    const checks: Record<string, any> = {};
+
+    // FAL — full balance check
+    checks.fal = await checkFalHealth();
+
+    // YouTube OAuth
+    checks.youtube = {
+      configured: isYoutubeConnected(),
+      message: isYoutubeConnected() ? 'OAuth connected' : 'OAuth not setup',
+    };
+
+    // ElevenLabs (just key presence)
+    checks.elevenlabs = {
+      configured: !!getSetting('elevenlabs_api_key'),
+      message: getSetting('elevenlabs_api_key') ? 'API key set' : 'API key missing',
+    };
+
+    // Anthropic Claude
+    checks.claude = {
+      configured: !!getSetting('anthropic_api_key'),
+      message: getSetting('anthropic_api_key') ? 'API key set' : 'API key missing',
+    };
+
+    // Hedra (optional — falls back to Hailuo)
+    checks.hedra = {
+      configured: !!getSetting('hedra_api_key'),
+      message: getSetting('hedra_api_key') ? 'API key set' : 'optional — fallback to Hailuo',
+    };
+
+    // FB Pages
+    const fbPages = db.prepare(`SELECT COUNT(*) as n FROM pages`).get() as any;
+    checks.facebook = {
+      configured: fbPages.n > 0,
+      pages_count: fbPages.n,
+      message: fbPages.n > 0 ? `${fbPages.n} page(s)` : 'no pages configured',
+    };
+
+    // BGM library
+    const fs = require('fs');
+    const path = require('path');
+    const bgmDir = '/opt/vp-marketing/data/bgm';
+    let bgmStatus = { configured: false, verified_count: 0, message: 'no licenses file' };
+    try {
+      const licenses = JSON.parse(fs.readFileSync(path.join(bgmDir, 'bgm-licenses.json'), 'utf-8'));
+      const verified = Object.values(licenses.tracks || {}).filter((t: any) => t.verified === true).length;
+      bgmStatus = {
+        configured: verified > 0,
+        verified_count: verified,
+        message: `${verified} verified BGM track${verified !== 1 ? 's' : ''}`,
+      };
+    } catch {}
+    checks.bgm_library = bgmStatus;
+
+    const overall = checks.fal.healthy && checks.claude.configured && checks.elevenlabs.configured && checks.facebook.configured;
+
+    const data = {
+      overall_healthy: overall,
+      cinema_ready: checks.fal.healthy && checks.youtube.configured,
+      anthology_ready: checks.claude.configured && checks.elevenlabs.configured && checks.bgm_library.verified_count >= 5,
+      checks,
+      timestamp: Date.now(),
+    };
+
+    healthCache = { at: Date.now(), data };
+    res.json({ success: true, cached: false, ...data });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e?.message });
   }

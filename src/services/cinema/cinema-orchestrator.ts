@@ -62,7 +62,7 @@ const PUBLIC_BASE = 'https://app.sondervn.com';
 
 export type CinemaStatus =
   | 'draft' | 'generating_script' | 'storyboard'
-  | 'budget_exceeded'
+  | 'budget_exceeded' | 'fal_balance_exhausted'
   | 'synthesizing_voice' | 'generating_video'
   | 'composing' | 'qc_review' | 'approved'
   | 'published' | 'failed';
@@ -328,6 +328,13 @@ async function generateOneShot(
       error: r.error,
     };
   } catch (e: any) {
+    // Check if FAL balance exhausted — propagate up so orchestrator aborts whole batch
+    if (e?.isBalanceExhausted) {
+      db.prepare(`UPDATE cinema_shots SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
+        .run(e?.message || 'fal_balance_exhausted', Date.now(), shotDbId);
+      throw e;                                  // re-throw so orchestrator catches
+    }
+
     db.prepare(`UPDATE cinema_shots SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
       .run(e?.message || 'unknown', Date.now(), shotDbId);
     return {
@@ -345,7 +352,7 @@ export async function generateShotsStep(
   storyboard: Storyboard,
   voiceSegments: CinemaVoiceSegment[],
   opts: { batchSize?: number } = {},
-): Promise<{ ok: boolean; results?: ShotResult[]; error?: string }> {
+): Promise<{ ok: boolean; results?: ShotResult[]; error?: string; balance_exhausted?: boolean }> {
   setStatus(episodeId, 'generating_video');
   const batchSize = opts.batchSize || 4;     // 4 concurrent calls — respect FAL rate limits
 
@@ -358,7 +365,7 @@ export async function generateShotsStep(
 
   console.log(`[cinema-orch] generating ${shots.length} shots in batches of ${batchSize}`);
 
-  // Process in batches
+  // Process in batches — abort early if FAL balance exhausted
   for (let i = 0; i < shots.length; i += batchSize) {
     const batch = shots.slice(i, i + batchSize);
     const batchPromises = batch.map((shot) => {
@@ -368,7 +375,19 @@ export async function generateShotsStep(
       return generateOneShot(shot, voice, episodeId, shotDbId);
     });
 
-    const batchResults = await Promise.all(batchPromises);
+    let batchResults: ShotResult[];
+    try {
+      batchResults = await Promise.all(batchPromises);
+    } catch (e: any) {
+      // FAL balance exhausted bubble up — abort ALL remaining batches
+      if (e?.isBalanceExhausted) {
+        setStatus(episodeId, 'fal_balance_exhausted', `FAL balance exhausted at batch ${i / batchSize + 1}: ${e.message}`);
+        console.error(`[cinema-orch] 💸 FAL BALANCE EXHAUSTED — aborting ep#${episodeId}. Top up at fal.ai/dashboard/billing`);
+        return { ok: false, results, error: 'fal_balance_exhausted', balance_exhausted: true };
+      }
+      throw e;                                  // re-throw other errors
+    }
+
     results.push(...batchResults);
 
     const okCount = batchResults.filter((r) => r.ok).length;
@@ -485,6 +504,7 @@ export interface RunCinemaResult {
   error?: string;
   step_failed?: string;
   budget_exceeded?: boolean;
+  balance_exhausted?: boolean;
 }
 
 export async function runFullCinemaPipeline(input: RunCinemaInput): Promise<RunCinemaResult> {
@@ -533,7 +553,13 @@ export async function runFullCinemaPipeline(input: RunCinemaInput): Promise<RunC
   // Step 5: Generate shots
   const shotsR = await generateShotsStep(episode_id, sbR.storyboard, voiceR.segments);
   if (!shotsR.ok || !shotsR.results) {
-    return { ok: false, episode_id, error: shotsR.error, step_failed: 'video_gen' };
+    return {
+      ok: false,
+      episode_id,
+      error: shotsR.error,
+      step_failed: 'video_gen',
+      balance_exhausted: shotsR.balance_exhausted,
+    };
   }
 
   // Step 6: Compose

@@ -9394,6 +9394,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ═══ V4 Cinema ═══
   e('vs-cin-refresh', 'click', vsCinLoadAll);
+  e('vs-cin-health', 'click', vsCinShowHealth);
   e('vs-cin-budget', 'click', vsCinShowBudget);
   e('vs-cin-estimate', 'click', vsCinShowEstimate);
   e('vs-cin-generate', 'click', vsCinGeneratePOC);
@@ -10106,6 +10107,51 @@ async function vsCinShowBudget() {
     msg += `  ${k}: $${v.cost_usd.toFixed(2)} (${v.calls} calls)\n`;
   }
   alert(msg);
+}
+
+async function vsCinShowHealth() {
+  const banner = document.getElementById('vs-cin-health-banner');
+  banner.classList.remove('hidden');
+  banner.innerHTML = '<span class="text-slate-500">🩺 Đang check tất cả providers...</span>';
+  try {
+    const r = await fetch('/api/cinema/health', { credentials: 'include' });
+    const d = await r.json();
+    if (!d.success) { banner.innerHTML = `<span class="text-rose-600">Error: ${d.error}</span>`; return; }
+
+    const cinemaReady = d.cinema_ready;
+    const anthologyReady = d.anthology_ready;
+    const overall = d.overall_healthy;
+
+    const fmt = (c) => c.healthy === false || c.configured === false
+      ? `<span class="text-rose-600">✗</span>`
+      : `<span class="text-emerald-600">✓</span>`;
+
+    const falStatus = d.checks.fal.locked
+      ? `<span class="text-rose-600 font-semibold">LOCKED — Top up at <a href="https://fal.ai/dashboard/billing" target="_blank" class="underline">fal.ai/billing</a></span>`
+      : d.checks.fal.healthy
+        ? `<span class="text-emerald-600">healthy</span>`
+        : `<span class="text-amber-600">${d.checks.fal.message}</span>`;
+
+    banner.innerHTML = `
+      <div class="space-y-2">
+        <div class="flex items-center gap-3">
+          <span class="text-base font-bold ${overall ? 'text-emerald-700' : 'text-amber-700'}">${overall ? '✅ Tất cả OK' : '⚠ Một số provider có vấn đề'}</span>
+          <span class="text-xs text-slate-500">Cinema ready: ${cinemaReady ? '✅' : '✗'} | Anthology ready: ${anthologyReady ? '✅' : '✗'}</span>
+          ${d.cached ? '<span class="text-xs text-slate-400">(cached)</span>' : ''}
+        </div>
+        <div class="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
+          <div>${fmt(d.checks.fal)} <strong>FAL.ai:</strong> ${falStatus}</div>
+          <div>${fmt(d.checks.youtube)} <strong>YouTube:</strong> ${d.checks.youtube.message}</div>
+          <div>${fmt(d.checks.elevenlabs)} <strong>ElevenLabs:</strong> ${d.checks.elevenlabs.message}</div>
+          <div>${fmt(d.checks.claude)} <strong>Claude:</strong> ${d.checks.claude.message}</div>
+          <div>${fmt(d.checks.facebook)} <strong>Facebook:</strong> ${d.checks.facebook.message}</div>
+          <div>${fmt(d.checks.bgm_library)} <strong>BGM Library:</strong> ${d.checks.bgm_library.message}</div>
+          <div>${fmt(d.checks.hedra)} <strong>Hedra:</strong> ${d.checks.hedra.message}</div>
+        </div>
+      </div>`;
+  } catch (e) {
+    banner.innerHTML = `<span class="text-rose-600">Health check fail: ${e.message}</span>`;
+  }
 }
 
 async function vsCinGeneratePOC() {
