@@ -12,9 +12,11 @@
 import { db } from '../../db';
 import type { CinemaScript, CinemaShot } from './cinema-script-writer';
 import {
-  pickProviderForShot,
-  estimateShotCostByType,
+  pickProvidersForShot,
+  estimateProviderCost,
   type ShotType,
+  type ProviderId,
+  type ShotContext,
 } from './cinema-providers';
 import {
   estimateEpisodeCost,
@@ -29,7 +31,8 @@ import {
 // ═══════════════════════════════════════════════════════════
 
 export interface StoryboardShot extends CinemaShot {
-  provider: Provider;                   // routed
+  provider: Provider;                   // legacy (primary tier)
+  provider_cascade: ProviderId[];       // Plan B cascade list (try in order)
   estimated_cost_cents: number;
   // Image-to-video shots cần reference image generated trước
   needs_reference_image: boolean;
@@ -51,25 +54,40 @@ export interface Storyboard {
 // Build storyboard from script
 // ═══════════════════════════════════════════════════════════
 
-const PROVIDER_MAP: Record<ShotType, Provider> = {
-  HERO_ESTABLISHING: 'veo',
-  CHARACTER_SCENE: 'hailuo',
-  ATMOSPHERIC_BROLL: 'seedance',
-  TALKING_HEAD: 'hedra',
-};
+// Map cascade ProviderId → cost-tracker Provider enum (some are aliases for tracking)
+function providerIdToTrackerEnum(id: ProviderId): Provider {
+  switch (id) {
+    case 'stock': return 'seedance';                // free, logged as 0-cost line in tracker
+    case 'luma': return 'kling_fallback';            // free tier, repurpose enum
+    case 'wan': return 'kling_fallback';             // cheap paid, repurpose enum
+    case 'seedance': return 'seedance';
+    case 'hailuo': return 'hailuo';
+    case 'hedra': return 'hedra';
+    case 'veo': return 'veo';
+  }
+}
 
 export function buildStoryboard(script: CinemaScript, episodeId: number, episodeNo: number): Storyboard {
   const shots: StoryboardShot[] = script.shots.map((s) => {
-    const provider = PROVIDER_MAP[s.shot_type as ShotType] || 'seedance';
-    const estimated_cost_cents = estimateShotCostByType(s.shot_type as ShotType, s.duration_target_sec);
+    // Build shot context for cascade routing (Plan B)
+    const ctx: ShotContext = {
+      shot_type: s.shot_type as ShotType,
+      has_character: s.has_character ?? (s.shot_type === 'CHARACTER_SCENE' || s.shot_type === 'TALKING_HEAD'),
+      money_shot: s.money_shot ?? false,
+      duration_sec: s.duration_target_sec,
+    };
+    const cascade = pickProvidersForShot(ctx);
+    const primaryId = cascade[0];
+    const provider = providerIdToTrackerEnum(primaryId);
+    const estimated_cost_cents = estimateProviderCost(primaryId, s.duration_target_sec);
 
     return {
       ...s,
       provider,
+      provider_cascade: cascade,
       estimated_cost_cents,
-      // Hailuo + Hedra cần reference image to maintain character consistency
-      needs_reference_image: provider === 'hailuo' || provider === 'hedra',
-      needs_talking_head_pipeline: provider === 'hedra',
+      needs_reference_image: primaryId === 'hailuo' || primaryId === 'hedra',
+      needs_talking_head_pipeline: primaryId === 'hedra',
     };
   });
 

@@ -10140,13 +10140,15 @@ async function vsCinShowHealth() {
           ${d.cached ? '<span class="text-xs text-slate-400">(cached)</span>' : ''}
         </div>
         <div class="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
-          <div>${fmt(d.checks.fal)} <strong>FAL.ai:</strong> ${falStatus}</div>
-          <div>${fmt(d.checks.youtube)} <strong>YouTube:</strong> ${d.checks.youtube.message}</div>
-          <div>${fmt(d.checks.elevenlabs)} <strong>ElevenLabs:</strong> ${d.checks.elevenlabs.message}</div>
-          <div>${fmt(d.checks.claude)} <strong>Claude:</strong> ${d.checks.claude.message}</div>
-          <div>${fmt(d.checks.facebook)} <strong>Facebook:</strong> ${d.checks.facebook.message}</div>
-          <div>${fmt(d.checks.bgm_library)} <strong>BGM Library:</strong> ${d.checks.bgm_library.message}</div>
-          <div>${fmt(d.checks.hedra)} <strong>Hedra:</strong> ${d.checks.hedra.message}</div>
+          <div>${fmt(d.checks.pexels)} <strong>🟢 Pexels (TIER 0 FREE):</strong> ${d.checks.pexels.message}</div>
+          <div>${fmt(d.checks.luma)} <strong>🟡 LumaLabs (TIER 0.5):</strong> ${d.checks.luma.message}</div>
+          <div>${fmt(d.checks.fal)} <strong>🟠 FAL.ai (TIER 1-3):</strong> ${falStatus}</div>
+          <div>${fmt(d.checks.hedra)} <strong>🔴 Hedra:</strong> ${d.checks.hedra.message}</div>
+          <div>${fmt(d.checks.youtube)} <strong>📺 YouTube:</strong> ${d.checks.youtube.message}</div>
+          <div>${fmt(d.checks.facebook)} <strong>📘 Facebook:</strong> ${d.checks.facebook.message}</div>
+          <div>${fmt(d.checks.elevenlabs)} <strong>🎙 ElevenLabs:</strong> ${d.checks.elevenlabs.message}</div>
+          <div>${fmt(d.checks.claude)} <strong>🤖 Claude:</strong> ${d.checks.claude.message}</div>
+          <div>${fmt(d.checks.bgm_library)} <strong>🎵 BGM Library:</strong> ${d.checks.bgm_library.message}</div>
         </div>
       </div>`;
   } catch (e) {
@@ -10212,8 +10214,12 @@ async function vsCinSaveSettings() {
     };
     const fal = document.getElementById('vs-cin-fal-key').value.trim();
     const hedra = document.getElementById('vs-cin-hedra-key').value.trim();
+    const luma = document.getElementById('vs-cin-luma-key')?.value?.trim();
+    const pexels = document.getElementById('vs-cin-pexels-key')?.value?.trim();
     if (fal) body.fal_api_key = fal;
     if (hedra) body.hedra_api_key = hedra;
+    if (luma) body.luma_api_key = luma;
+    if (pexels) body.pexels_api_key = pexels;
 
     const r = await fetch('/api/cinema/settings', {
       method: 'POST', credentials: 'include',
@@ -10225,6 +10231,10 @@ async function vsCinSaveSettings() {
       alert('Saved Cinema settings');
       document.getElementById('vs-cin-fal-key').value = '';
       document.getElementById('vs-cin-hedra-key').value = '';
+      const lumaEl = document.getElementById('vs-cin-luma-key');
+      const pexelsEl = document.getElementById('vs-cin-pexels-key');
+      if (lumaEl) lumaEl.value = '';
+      if (pexelsEl) pexelsEl.value = '';
       vsCinLoadStatus();
     } else alert('Error: ' + d.error);
   } catch (e) { alert('Error: ' + e.message); }

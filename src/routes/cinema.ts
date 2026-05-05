@@ -27,6 +27,7 @@ import {
 } from '../services/cinema/cinema-cost-tracker';
 import { isYoutubeConnected } from '../services/youtube-publisher';
 import { checkFalHealth } from '../services/cinema/cinema-providers/fal-base';
+import { getLumaQuotaStatus } from '../services/cinema/cinema-providers/luma-client';
 
 const router = Router();
 router.use(authMiddleware);
@@ -110,6 +111,31 @@ router.get('/health', async (_req, res) => {
     checks.hedra = {
       configured: !!getSetting('hedra_api_key'),
       message: getSetting('hedra_api_key') ? 'API key set' : 'optional — fallback to Hailuo',
+    };
+
+    // LumaLabs free tier (Plan B)
+    const lumaConfigured = !!getSetting('luma_api_key');
+    if (lumaConfigured) {
+      const quota = getLumaQuotaStatus();
+      checks.luma = {
+        configured: true,
+        quota_used: quota.used,
+        quota_total: quota.quota,
+        quota_remaining: quota.remaining,
+        message: `${quota.remaining}/${quota.quota} free gens remaining this month`,
+      };
+    } else {
+      checks.luma = {
+        configured: false,
+        message: 'optional — adds 30 free gens/tháng (lumalabs.ai)',
+      };
+    }
+
+    // Pexels stock (free, always healthy if API key set)
+    const pexelsKey = getSetting('pexels_api_key') || process.env.PEXELS_API_KEY;
+    checks.pexels = {
+      configured: !!pexelsKey,
+      message: pexelsKey ? '$0 free stock TIER 0 ✓' : 'API key missing — TIER 0 disabled',
     };
 
     // FB Pages
@@ -201,6 +227,12 @@ router.post('/settings', superadminOnly, (req: AuthRequest, res) => {
     }
     if (body.hedra_api_key !== undefined && typeof body.hedra_api_key === 'string') {
       updates.hedra_api_key = body.hedra_api_key;
+    }
+    if (body.luma_api_key !== undefined && typeof body.luma_api_key === 'string') {
+      updates.luma_api_key = body.luma_api_key;
+    }
+    if (body.pexels_api_key !== undefined && typeof body.pexels_api_key === 'string') {
+      updates.pexels_api_key = body.pexels_api_key;
     }
 
     for (const [k, v] of Object.entries(updates)) setSetting(k, v);

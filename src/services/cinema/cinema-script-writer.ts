@@ -30,6 +30,10 @@ export interface CinemaShot {
   visual_prompt: string;                // ENG cho video gen
   duration_target_sec: number;
   director_note?: string;
+  /** PLAN B HYBRID FLAGS — drive cost-optimized provider routing */
+  has_character?: boolean;              // shot có nhân vật close-up?
+  money_shot?: boolean;                 // shot critical face quality (Hailuo locked)?
+  stock_query?: string;                 // ENG keywords cho Pexels search (if applicable)
 }
 
 export interface CinemaScript {
@@ -192,6 +196,39 @@ TRIẾT LÝ CINEMA (BẤT KHẢ XÂM PHẠM):
 ${structureSection}
 
 ═══════════════════════════════════════════════════════════════
+HYBRID COST OPTIMIZATION (BẮT BUỘC mỗi shot):
+═══════════════════════════════════════════════════════════════
+
+Mỗi shot PHẢI có 3 flags để route đến tool rẻ nhất phù hợp:
+
+1. has_character (boolean):
+   • true  = shot có nhân vật (Linh, Tuấn, Vy...) close-up hoặc medium shot
+   • false = wide cảnh ngoại, atmospheric, b-roll macro, không có khuôn mặt cụ thể
+
+2. money_shot (boolean):
+   • true  = shot face critical (Hailuo Pro locked — best face consistency)
+   • false = shot bình thường (có thể dùng Wan rẻ hơn)
+   • LIMIT: max 1-2 money_shot/episode để tiết kiệm chi phí
+
+3. stock_query (string, OPTIONAL):
+   • Set khi has_character=false: ENG keywords để search Pexels free stock
+   • Ví dụ: "saigon street rain night", "vietnamese tea cup macro", "hotel lobby warm light"
+   • LEAVE EMPTY nếu shot phải AI gen (có character, action cụ thể)
+
+ROUTING RESULT (auto-pick by storyboard):
+  has_character=false + stock_query   → Pexels FREE → Luma free → Wan paid
+  has_character=true + money_shot=true → Hailuo Pro $0.49 (locked, no fallback)
+  has_character=true + money_shot=false → Wan cheap → Hailuo fallback
+  TALKING_HEAD shots                   → Hedra (lip-sync required)
+  ATMOSPHERIC_BROLL                    → Pexels FREE → Seedance fallback
+
+GUIDELINE PILOT 60s (5-7 shots):
+  - 2-3 shots NO character (cold open + 1-2 b-roll + outro) → set stock_query
+  - 1 money_shot character close-up → has_character=true, money_shot=true
+  - 1-2 character action wide → has_character=true, money_shot=false
+  - 0-1 talking head dialogue → shot_type=TALKING_HEAD
+
+═══════════════════════════════════════════════════════════════
 SHOT TYPE ROUTING (BẮT BUỘC chọn 1 type/shot):
 ═══════════════════════════════════════════════════════════════
 
@@ -293,7 +330,10 @@ OUTPUT FORMAT (JSON only, không markdown fence):
       "voiceover_text": "",
       "visual_prompt": "<ENG detailed cinematic prompt>",
       "duration_target_sec": 12,
-      "director_note": "no VO, ambient SG night sound"
+      "director_note": "no VO, ambient SG night sound",
+      "has_character": false,
+      "money_shot": false,
+      "stock_query": "saigon hotel lobby night warm amber"
     },
     ... ${profile.shots.min}-${profile.shots.max} shots total ...
     { "shot_no": <last>, "act": "${profile.is_pilot ? 'act3' : 'outro'}", "shot_type": "ATMOSPHERIC_BROLL",
@@ -591,6 +631,10 @@ function normalizeScript(parsed: any, primaryChar: string): CinemaScript {
     visual_prompt: String(s.visual_prompt || '').trim(),
     duration_target_sec: Number(s.duration_target_sec) || 8,
     director_note: s.director_note ? String(s.director_note).slice(0, 300) : undefined,
+    /** Plan B hybrid flags — default safe values if Claude omits */
+    has_character: typeof s.has_character === 'boolean' ? s.has_character : (s.shot_type === 'CHARACTER_SCENE' || s.shot_type === 'TALKING_HEAD'),
+    money_shot: typeof s.money_shot === 'boolean' ? s.money_shot : false,
+    stock_query: s.stock_query ? String(s.stock_query).slice(0, 200) : undefined,
   }));
 
   const totalDur = Number(parsed.total_duration_target_sec) || shots.reduce((a, s) => a + s.duration_target_sec, 0);

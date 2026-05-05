@@ -47,6 +47,10 @@ import {
   generateHailuoShot,
   generateSeedanceShot,
   generateHedraShot,
+  generateWanShot,
+  generateLumaShot,
+  generateStockShot,
+  resetStockUsedIds,
   type VideoGenResult,
 } from './cinema-providers';
 import {
@@ -224,6 +228,98 @@ interface ShotResult {
   error?: string;
 }
 
+/**
+ * Try ONE provider for a shot. Returns null if not available (e.g. Pexels miss,
+ * Luma quota exhausted) — caller cascades to next provider.
+ *
+ * Throws FalBalanceExhaustedError on FAL 403 lock — caller bubbles up to abort.
+ */
+async function tryProvider(
+  providerId: string,
+  shot: StoryboardShot,
+  episodeId: number,
+  shotDbId: number,
+): Promise<{ result: VideoGenResult | null; hasEmbeddedAudio: boolean }> {
+  switch (providerId) {
+    case 'stock': {
+      const r = await generateStockShot({
+        episode_id: episodeId,
+        shot_id: shotDbId,
+        visual_query: shot.stock_query || shot.visual_prompt,
+        duration_target_sec: shot.duration_target_sec,
+        aspect_ratio: '9:16',
+      });
+      return { result: r, hasEmbeddedAudio: false };
+    }
+    case 'luma': {
+      const r = await generateLumaShot({
+        prompt: shot.visual_prompt,
+        duration_sec: shot.duration_target_sec,
+        aspect_ratio: '9:16',
+        episode_id: episodeId,
+        shot_id: shotDbId,
+      });
+      return { result: r, hasEmbeddedAudio: false };
+    }
+    case 'wan': {
+      const r = await generateWanShot({
+        prompt: shot.visual_prompt,
+        duration_sec: shot.duration_target_sec,
+        aspect_ratio: '9:16',
+        episode_id: episodeId,
+        shot_id: shotDbId,
+      });
+      return { result: r.ok ? r : null, hasEmbeddedAudio: false };
+    }
+    case 'seedance': {
+      const r = await generateSeedanceShot({
+        prompt: shot.visual_prompt,
+        duration_sec: shot.duration_target_sec,
+        aspect_ratio: '9:16',
+        resolution: '720p',
+        episode_id: episodeId,
+        shot_id: shotDbId,
+      });
+      return { result: r.ok ? r : null, hasEmbeddedAudio: false };
+    }
+    case 'hailuo': {
+      const r = await generateHailuoShot({
+        prompt: shot.visual_prompt,
+        duration_sec: shot.duration_target_sec,
+        aspect_ratio: '9:16',
+        episode_id: episodeId,
+        shot_id: shotDbId,
+      });
+      return { result: r.ok ? r : null, hasEmbeddedAudio: false };
+    }
+    case 'veo': {
+      const r = await generateVeoShot({
+        prompt: shot.visual_prompt,
+        duration_sec: shot.duration_target_sec,
+        aspect_ratio: '9:16',
+        audio: true,
+        episode_id: episodeId,
+        shot_id: shotDbId,
+      });
+      return { result: r.ok ? r : null, hasEmbeddedAudio: r.ok };
+    }
+    case 'hedra': {
+      // Hedra requires reference image + audio — defer to Hailuo for POC
+      console.warn(`[cinema-orch] shot ${shot.shot_no} Hedra needs reference image — fallback to Hailuo with portrait prompt`);
+      const r = await generateHailuoShot({
+        prompt: shot.visual_prompt + ', close-up portrait, talking expression',
+        duration_sec: shot.duration_target_sec,
+        aspect_ratio: '9:16',
+        episode_id: episodeId,
+        shot_id: shotDbId,
+      });
+      return { result: r.ok ? r : null, hasEmbeddedAudio: false };
+    }
+    default:
+      return { result: null, hasEmbeddedAudio: false };
+  }
+}
+
 async function generateOneShot(
   shot: StoryboardShot,
   voice: CinemaVoiceSegment | null,
@@ -234,65 +330,37 @@ async function generateOneShot(
   db.prepare(`UPDATE cinema_shots SET status = 'generating', updated_at = ? WHERE id = ?`).run(Date.now(), shotDbId);
 
   try {
-    let r: VideoGenResult;
+    let r: VideoGenResult | null = null;
     let hasEmbeddedAudio = false;
+    let providerUsed: string | undefined;
 
-    switch (shot.provider) {
-      case 'veo': {
-        r = await generateVeoShot({
-          prompt: shot.visual_prompt,
-          duration_sec: shot.duration_target_sec,
-          aspect_ratio: '9:16',
-          audio: true,                      // Veo audio-native mode
-          episode_id: episodeId,
-          shot_id: shotDbId,
-        });
-        hasEmbeddedAudio = r.ok;            // Veo with audio
-        break;
-      }
-      case 'hailuo': {
-        r = await generateHailuoShot({
-          prompt: shot.visual_prompt,
-          duration_sec: shot.duration_target_sec,
-          aspect_ratio: '9:16',
-          episode_id: episodeId,
-          shot_id: shotDbId,
-        });
-        break;
-      }
-      case 'seedance': {
-        r = await generateSeedanceShot({
-          prompt: shot.visual_prompt,
-          duration_sec: shot.duration_target_sec,
-          aspect_ratio: '9:16',
-          resolution: '720p',
-          episode_id: episodeId,
-          shot_id: shotDbId,
-        });
-        break;
-      }
-      case 'hedra': {
-        // Hedra needs reference image + audio
-        // For POC: use generated character profile image OR fallback to image gen
-        // TODO Phase 2: train FLUX LoRA → use that. For now use Hailuo first frame.
-        if (!voice || !voice.audio_path) {
-          r = { ok: false, cost_cents: 0, error: 'hedra_needs_voice_but_none_synthesized' };
+    // Try cascade — first non-null result wins
+    const cascade = shot.provider_cascade && shot.provider_cascade.length > 0
+      ? shot.provider_cascade
+      : [shot.provider];     // legacy fallback if cascade not set
+
+    for (const providerId of cascade) {
+      console.log(`[cinema-orch] shot ${shot.shot_no} trying ${providerId}...`);
+      try {
+        const attempt = await tryProvider(providerId, shot, episodeId, shotDbId);
+        if (attempt.result?.ok) {
+          r = attempt.result;
+          hasEmbeddedAudio = attempt.hasEmbeddedAudio;
+          providerUsed = providerId;
+          console.log(`[cinema-orch] shot ${shot.shot_no} ✅ via ${providerId} ($${((r.cost_cents || 0) / 100).toFixed(2)})`);
           break;
         }
-        // For POC: generate character image first via Hailuo single frame, save, pass to Hedra
-        // Simplified: skip Hedra in POC if no reference image, fallback to Hailuo
-        console.warn(`[cinema-orch] shot ${shot.shot_no} TALKING_HEAD requested but Hedra needs reference image — fallback to Hailuo for POC`);
-        r = await generateHailuoShot({
-          prompt: shot.visual_prompt + ', close-up portrait, talking expression',
-          duration_sec: shot.duration_target_sec,
-          aspect_ratio: '9:16',
-          episode_id: episodeId,
-          shot_id: shotDbId,
-        });
-        break;
+        console.log(`[cinema-orch] shot ${shot.shot_no} ${providerId} miss, cascade next`);
+      } catch (e: any) {
+        // FAL balance error must abort — bubble up
+        if (e?.isBalanceExhausted) throw e;
+        console.warn(`[cinema-orch] shot ${shot.shot_no} ${providerId} err: ${e?.message?.slice(0, 100)}, cascade next`);
       }
-      default:
-        r = { ok: false, cost_cents: 0, error: `unknown_provider: ${shot.provider}` };
+    }
+
+    // If cascade exhausted with no success
+    if (!r || !r.ok) {
+      r = { ok: false, cost_cents: 0, error: `all_providers_failed: ${cascade.join(',')}` };
     }
 
     if (r.ok) {
@@ -508,6 +576,9 @@ export interface RunCinemaResult {
 }
 
 export async function runFullCinemaPipeline(input: RunCinemaInput): Promise<RunCinemaResult> {
+  // Reset stock dedup for fresh episode
+  resetStockUsedIds();
+
   // Step 1: Create
   const created = createCinemaEpisode(input);
   if (!created.ok) {
