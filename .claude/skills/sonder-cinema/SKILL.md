@@ -5,7 +5,18 @@ description: SKILL CỐT LÕI cho Sonder Cinema — module long-form 5-7 phút P
 
 # Sonder Cinema — Marketing Bible (Long-Form Premium)
 
-> **MỤC ĐÍCH**: Lock philosophy + structure + tool stack + cost cap cho Sonder Cinema. Module long-form 5-7 phút TÁCH BIỆT 100% với Anthology Reels (sonder-storytelling skill). Cùng universe Sonder, cùng character pool, KHÁC infrastructure + format + tool stack.
+> **MỤC ĐÍCH**: Lock philosophy + structure + tool stack + cost cap cho Sonder Cinema. Module long-form TÁCH BIỆT 100% với Anthology Reels (sonder-storytelling skill). Cùng universe Sonder, cùng character pool, KHÁC infrastructure + format + tool stack.
+
+## 🎯 3 DURATION MODES (tunable qua setting `cinema_target_duration_sec`)
+
+| Mode | Duration | Shots | Cost/clip | Use case |
+|------|----------|-------|-----------|----------|
+| **PILOT** | 60-90s | 5-7 | $8-12 | **Test quality** — bắt đầu ở đây |
+| **MID** | 180s (3 phút) | 10-14 | $25-35 | Proof concept long-form |
+| **FULL** | 360s (5-7 phút) | 18-23 | $60-90 | Premium cinema (default goal) |
+
+**Strategy**: Bắt đầu PILOT 60s. Nếu Veo/Hailuo output đẹp + audience engaged → upgrade MID → FULL.
+PILOT MODE bỏ TITLE CARD và OUTRO, dùng 1 brand value duy nhất, closing line nằm trong Act III.
 
 ---
 

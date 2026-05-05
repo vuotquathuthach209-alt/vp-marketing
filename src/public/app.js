@@ -9840,6 +9840,7 @@ async function vsCinLoadStatus() {
     const capEp = document.getElementById('vs-cin-cap-ep');
     const capMonth = document.getElementById('vs-cin-cap-month');
     const veoFast = document.getElementById('vs-cin-veo-fast');
+    const targetDur = document.getElementById('vs-cin-target-dur');
 
     const ytBadge = (d.publish_yt_enabled && d.yt_connected) ? '<span class="ml-2 text-red-600">YT✓</span>' : '<span class="ml-2 text-slate-400">YT✗</span>';
     const fbBadge = d.publish_fb_enabled ? '<span class="ml-1 text-blue-600">FB✓</span>' : '<span class="ml-1 text-slate-400">FB✗</span>';
@@ -9862,6 +9863,7 @@ async function vsCinLoadStatus() {
     if (capEp) capEp.value = d.max_cost_per_ep_usd;
     if (capMonth) capMonth.value = d.max_monthly_budget_usd;
     if (veoFast) veoFast.checked = d.veo_use_fast;
+    if (targetDur) targetDur.value = String(d.target_duration_sec || 60);
     if (ytStatus) {
       ytStatus.innerHTML = d.yt_connected
         ? '<span class="text-emerald-600 font-semibold">YT OAuth connected</span>'
@@ -10064,14 +10066,31 @@ async function vsCinDelete(id) {
 }
 
 async function vsCinShowEstimate() {
-  const r = await fetch('/api/cinema/estimate', { method: 'POST', credentials: 'include' });
-  const d = await r.json();
-  if (!d.success) { alert('Error: ' + d.error); return; }
-  let msg = `📊 Estimate cho 1 typical Cinema episode (6 phút, 22 shots):\n\n`;
-  msg += `Total: $${(d.total_cents / 100).toFixed(2)}\n\nBy provider:\n`;
-  for (const [k, v] of Object.entries(d.by_provider_cents)) {
-    msg += `  ${k}: $${(v / 100).toFixed(2)}\n`;
+  // Compare all 4 modes
+  const modes = [
+    { sec: 60, label: 'PILOT 60s' },
+    { sec: 90, label: 'PILOT 90s' },
+    { sec: 180, label: 'MID 3 phút' },
+    { sec: 360, label: 'FULL 6 phút' },
+  ];
+  let msg = `📊 Cost estimate per duration mode:\n\n`;
+  for (const m of modes) {
+    try {
+      const r = await fetch('/api/cinema/estimate', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_duration_sec: m.sec }),
+      });
+      const d = await r.json();
+      if (d.success) {
+        const breakdown = Object.entries(d.by_provider_cents)
+          .map(([k, v]) => `${k}=$${(v / 100).toFixed(2)}`)
+          .join(', ');
+        msg += `${m.label}: $${(d.total_cents / 100).toFixed(2)}\n  (${breakdown})\n\n`;
+      }
+    } catch (e) { /* skip */ }
   }
+  msg += '\n→ Recommendation: Bắt đầu PILOT 60s, scale up nếu quality OK.';
   alert(msg);
 }
 
@@ -10090,25 +10109,39 @@ async function vsCinShowBudget() {
 }
 
 async function vsCinGeneratePOC() {
+  // Read current target duration from settings (already loaded in status)
+  const targetDur = parseInt(document.getElementById('vs-cin-target-dur')?.value || '60', 10);
+  const modeLabel = targetDur <= 90 ? `PILOT ${targetDur}s` : targetDur <= 220 ? `MID ${targetDur}s` : `FULL ${targetDur}s`;
+  const expectedCost = targetDur <= 90 ? '~$8-12' : targetDur <= 220 ? '~$25-35' : '~$60-90';
+  const expectedTime = targetDur <= 90 ? '5-10 phút' : targetDur <= 220 ? '15-20 phút' : '30-45 phút';
+
   const character = prompt('Character (linh/tuan/vy/khanh/ha/tai):', 'linh');
   if (!character) return;
-  const idea = prompt('Episode idea (1-2 sentences):', 'Một đêm ở Sonder. Linh ngày 2 ở Sài Gòn, ngồi sảnh đêm, cuộc nói chuyện ngắn với chú Tuấn callback phở Bà Tám. Multi-act 6 phút.');
+
+  const defaultIdea = targetDur <= 90
+    ? 'Linh sảnh đêm 22h, viết nhật ký. Tuấn rót trà gừng. Không ai nói nhiều. Linh nhận ra Sài Gòn không vội.'
+    : 'Một đêm ở Sonder. Linh ngày 2 ở Sài Gòn, ngồi sảnh đêm, cuộc nói chuyện ngắn với chú Tuấn callback phở Bà Tám.';
+  const idea = prompt('Episode idea (1-2 sentences):', defaultIdea);
   if (!idea) return;
 
-  if (!confirm(`Generate Cinema POC: ${character}\n\nIdea: ${idea}\n\nPipeline mất 30-45 phút (script + 22 shots × 4 phút × Veo/Hailuo/Seedance + voice + compose). Cost ~$60-90. Confirm?`)) return;
+  if (!confirm(`Generate Cinema ${modeLabel} POC: ${character}\n\nIdea: ${idea}\n\nPipeline mất ${expectedTime} (script + shots × providers + voice + compose). Cost ${expectedCost}. Confirm?`)) return;
 
   const btn = document.getElementById('vs-cin-generate');
-  btn.disabled = true; btn.textContent = '⏳ Generating (30-45min)...';
+  btn.disabled = true; btn.textContent = `⏳ Generating ${modeLabel} (${expectedTime})...`;
 
   try {
     const r = await fetch('/api/cinema/generate', {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ primary_character: character, episode_idea: idea }),
+      body: JSON.stringify({
+        primary_character: character,
+        episode_idea: idea,
+        target_duration_sec: targetDur,
+      }),
     });
     const d = await r.json();
     if (d.success) {
-      alert(`✅ Cinema ep#${d.episode_no} generated!\n\nTitle: ${d.script?.title}\nDuration: ${d.duration_sec?.toFixed(1)}s\nCost: $${((d.cost_cents || 0) / 100).toFixed(2)}\nVideo: ${d.final_video_url}`);
+      alert(`✅ Cinema ${modeLabel} ep#${d.episode_no} generated!\n\nTitle: ${d.script?.title}\nDuration: ${d.duration_sec?.toFixed(1)}s\nCost: $${((d.cost_cents || 0) / 100).toFixed(2)}\nVideo: ${d.final_video_url}`);
       vsCinLoadAll();
     } else if (d.budget_exceeded) {
       alert(`💰 Budget exceeded: ${d.error}\n\nVào Settings tăng cap hoặc đợi tháng sau.`);
@@ -10129,6 +10162,7 @@ async function vsCinSaveSettings() {
       fb_page_id: document.getElementById('vs-cin-fb-page').value || '',
       max_cost_per_ep_usd: parseFloat(document.getElementById('vs-cin-cap-ep').value),
       max_monthly_budget_usd: parseFloat(document.getElementById('vs-cin-cap-month').value),
+      target_duration_sec: parseInt(document.getElementById('vs-cin-target-dur').value, 10),
     };
     const fal = document.getElementById('vs-cin-fal-key').value.trim();
     const hedra = document.getElementById('vs-cin-hedra-key').value.trim();

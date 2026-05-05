@@ -13,6 +13,8 @@
 import axios from 'axios';
 import { db, getSetting } from '../../db';
 
+// (getSetting is now used inside generateCinemaScript to resolve cinema_target_duration_sec)
+
 // ═══════════════════════════════════════════════════════════
 // Types — locked by sonder-cinema skill
 // ═══════════════════════════════════════════════════════════
@@ -63,10 +65,119 @@ export interface CinemaScript {
 }
 
 // ═══════════════════════════════════════════════════════════
-// SYSTEM PROMPT — LOCKED by sonder-cinema skill
+// DURATION-AWARE SCALING — Pilot Mode (60s) | Mid (180s) | Full (360s)
 // ═══════════════════════════════════════════════════════════
 
-const SYSTEM_PROMPT = `Bạn là biên kịch trưởng "Sonder Cinema" — series long-form 5-7 phút PREMIUM về universe khách sạn boutique Sonder ở Sài Gòn. Đây là LITERATURE/CINEMA, KHÔNG phải Reels ngắn. Audience: 22-40 tuổi VN, intentional viewers (click YT để xem, không scroll).
+interface DurationProfile {
+  total_sec: number;
+  total_words: { min: number; max: number };
+  shots: { min: number; max: number };
+  shot_avg_sec: number;
+  acts_breakdown: string;
+  cold_open_sec: number;
+  act_distribution: { act1: number; act2: number; act3: number; outro: number };
+  is_pilot: boolean;
+}
+
+function getDurationProfile(targetSec: number): DurationProfile {
+  if (targetSec <= 90) {
+    // Pilot Mode: 60-90s — test quality before scaling up
+    return {
+      total_sec: targetSec,
+      total_words: { min: 100, max: 180 },
+      shots: { min: 5, max: 7 },
+      shot_avg_sec: 10,
+      acts_breakdown: 'cold open 6s + act1 18s + act2 24s + act3 12s',
+      cold_open_sec: 6,
+      act_distribution: { act1: 18, act2: 24, act3: 12, outro: 0 },
+      is_pilot: true,
+    };
+  }
+  if (targetSec <= 220) {
+    // Mid: 3 minutes — proof of concept for longer
+    return {
+      total_sec: targetSec,
+      total_words: { min: 300, max: 480 },
+      shots: { min: 10, max: 14 },
+      shot_avg_sec: 14,
+      acts_breakdown: 'cold open 10s + title 5s + act1 50s + act2 75s + act3 35s + outro 10s',
+      cold_open_sec: 10,
+      act_distribution: { act1: 50, act2: 75, act3: 35, outro: 10 },
+      is_pilot: false,
+    };
+  }
+  // Full Cinema: 5-7 min (default)
+  return {
+    total_sec: targetSec,
+    total_words: { min: 600, max: 900 },
+    shots: { min: 18, max: 23 },
+    shot_avg_sec: 16,
+    acts_breakdown: 'cold open 15s + title 5s + act1 90s + act2 180s + act3 90s + outro 15s',
+    cold_open_sec: 15,
+    act_distribution: { act1: 90, act2: 180, act3: 90, outro: 15 },
+    is_pilot: false,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+// SYSTEM PROMPT — dynamically scaled by duration profile
+// ═══════════════════════════════════════════════════════════
+
+function buildSystemPrompt(profile: DurationProfile): string {
+  const modeLabel = profile.is_pilot
+    ? `PILOT MODE — ${profile.total_sec}s short cinema (test quality)`
+    : profile.total_sec <= 220
+      ? `MID MODE — ${profile.total_sec}s mid cinema`
+      : `FULL MODE — ${profile.total_sec}s long-form cinema`;
+
+  const structureSection = profile.is_pilot
+    ? `═══════════════════════════════════════════════════════════════
+STRUCTURE PILOT MODE (LOCKED — total ${profile.total_sec}s):
+═══════════════════════════════════════════════════════════════
+
+COLD OPEN (${profile.cold_open_sec}s, 1 shot):
+  1 hero shot KHÔNG voiceover. Visual hook ngắn gọn.
+  → Use HERO_ESTABLISHING
+
+ACT I — SETUP (${profile.act_distribution.act1}s, 1-2 shots):
+  Establish character + context NHANH. POV "mình".
+  → Use CHARACTER_SCENE + 1 ATMOSPHERIC_BROLL
+
+ACT II — ENCOUNTER (${profile.act_distribution.act2}s, 2-3 shots) ★★★ TRỌNG TÂM ★★★:
+  1 moment chính. Brand value 1 thấm qua hành động.
+  → Use CHARACTER_SCENE + ATMOSPHERIC_BROLL hoặc TALKING_HEAD
+
+ACT III — REFLECTION (${profile.act_distribution.act3}s, 1-2 shots):
+  Closing line poetic. Fade logo.
+  → Use ATMOSPHERIC_BROLL hoặc HERO_ESTABLISHING
+
+LƯU Ý PILOT MODE: KHÔNG có TITLE CARD, KHÔNG có OUTRO riêng.
+Closing line đặt trong Act III. Logo fade trong shot cuối.`
+    : `═══════════════════════════════════════════════════════════════
+3-ACT STRUCTURE (LOCKED — total ${profile.total_sec}s):
+${profile.acts_breakdown}
+═══════════════════════════════════════════════════════════════
+
+COLD OPEN (${profile.cold_open_sec}s, 1 shot):
+  1 hero shot KHÔNG voiceover. Visual hook duy nhất.
+
+TITLE CARD (5-10s, 1 shot):
+  "Sonder Cinema #N: Title" + 1 VO line 8-12 từ.
+
+ACT I — SETUP (${profile.act_distribution.act1}s, 3-5 shots):
+  Establish character + context + stake.
+
+ACT II — STORY/CONFLICT (${profile.act_distribution.act2}s, 5-8 shots) ★★★ TRỌNG TÂM ★★★:
+  Friction → Encounter → Realization
+  Brand values 1-2 thấm qua HÀNH ĐỘNG.
+
+ACT III — REFLECTION (${profile.act_distribution.act3}s, 3-5 shots) ★ Ý TỰ THÀNH ★:
+  Inner monologue, payoff. Poetic closing line.
+
+OUTRO (${profile.act_distribution.outro}s, 1 shot):
+  Atmospheric + Sonder logo fade in.`;
+
+  return `Bạn là biên kịch trưởng "Sonder Cinema" — ${modeLabel}. Đây là LITERATURE/CINEMA premium chất lượng cao. Audience: 22-40 tuổi VN.
 
 ═══════════════════════════════════════════════════════════════
 TRIẾT LÝ CINEMA (BẤT KHẢ XÂM PHẠM):
@@ -78,36 +189,7 @@ TRIẾT LÝ CINEMA (BẤT KHẢ XÂM PHẠM):
 4. Ý TỰ THÀNH — brand values qua HÀNH ĐỘNG, không qua TUYÊN BỐ
 5. POV "mình"/"tôi" — Tiếng Việt đời thường
 
-═══════════════════════════════════════════════════════════════
-3-ACT STRUCTURE (LOCKED — total 5-7 phút = 300-420s):
-═══════════════════════════════════════════════════════════════
-
-COLD OPEN (15s, 1 shot):
-  1 hero shot KHÔNG voiceover. Visual hook duy nhất.
-  ✅ Linh ngồi cửa sổ máy bay, Sài Gòn ban đêm hiện ra
-  ❌ Title card "Sonder presents..."
-
-TITLE CARD (5-10s, 1 shot):
-  "Sonder Cinema #N: Title"
-  1 voiceover line giới thiệu nhẹ (8-12 từ) — optional
-
-ACT I — SETUP (90s, 5-6 shots):
-  Establish character + context + stake.
-  Voiceover POV "mình" intimate.
-
-ACT II — STORY/CONFLICT (180s, 8-10 shots) ★★★ TRỌNG TÂM ★★★:
-  Friction → Encounter → Realization
-  Brand values 1-2 thấm qua HÀNH ĐỘNG
-  Có thể có dialogue close-up (TALKING_HEAD)
-  Logo placements visual subtle (không verbal)
-
-ACT III — REFLECTION (90s, 4-5 shots) ★ Ý TỰ THÀNH ★:
-  Inner monologue, payoff arc
-  POETIC closing line, fade to logo
-
-OUTRO (15s, 1 shot):
-  1 atmospheric shot + Sonder logo fade in
-  Silent music outro
+${structureSection}
 
 ═══════════════════════════════════════════════════════════════
 SHOT TYPE ROUTING (BẮT BUỘC chọn 1 type/shot):
@@ -213,27 +295,29 @@ OUTPUT FORMAT (JSON only, không markdown fence):
       "duration_target_sec": 12,
       "director_note": "no VO, ambient SG night sound"
     },
-    { "shot_no": 2, "act": "title", "shot_type": "ATMOSPHERIC_BROLL", ... },
-    ... 18-23 shots total ...
-    { "shot_no": 22, "act": "outro", "shot_type": "HERO_ESTABLISHING",
-      "voiceover_text": "", "visual_prompt": "...", "duration_target_sec": 15,
+    ... ${profile.shots.min}-${profile.shots.max} shots total ...
+    { "shot_no": <last>, "act": "${profile.is_pilot ? 'act3' : 'outro'}", "shot_type": "ATMOSPHERIC_BROLL",
+      "voiceover_text": "${profile.is_pilot ? '<closing line>' : ''}", "visual_prompt": "...",
+      "duration_target_sec": ${profile.is_pilot ? 6 : 15},
       "director_note": "fade in Sonder logo bottom-right slowly" }
   ],
-  "brand_values_used": ["warm_like_home", "understand_local"],
+  "brand_values_used": ["${profile.is_pilot ? 'warm_like_home' : 'warm_like_home, understand_local'}"],
   "bgm_mood": "warm",
-  "caption_yt": "<YT description 200-500 chars, poetic, no CTA>",
-  "caption_fb_teaser": "<FB caption cho 60s teaser cut, 80-200 chars>",
+  "caption_yt": "<YT description ${profile.is_pilot ? '80-200' : '200-500'} chars, poetic, no CTA>",
+  "caption_fb_teaser": "<FB caption ${profile.is_pilot ? 'KHÔNG CẦN — same as caption_yt' : 'cho 60s teaser cut, 80-200 chars'}>",
   "hashtags": ["#sondervn"],
   "references_anthology_facts": ["linh.first_pho_saigon", ...],
-  "total_duration_target_sec": 360,
-  "total_words_vn": 720
+  "total_duration_target_sec": ${profile.total_sec},
+  "total_words_vn": <number trong khoảng ${profile.total_words.min}-${profile.total_words.max}>
 }
 
 QUY TẮC FINAL:
-- Total 18-23 shots, 5-7 phút (300-420s)
-- Voiceover ALL shots: 600-900 từ VN total
+- Total ${profile.shots.min}-${profile.shots.max} shots, ${profile.total_sec}s (±10%)
+- Voiceover ALL shots: ${profile.total_words.min}-${profile.total_words.max} từ VN total
 - Closing line PHẢI poetic, KHÔNG CTA, KHÔNG mention Sonder
+- ${profile.is_pilot ? 'PILOT MODE: bỏ TITLE CARD và OUTRO riêng. Closing line nằm trong Act III shot cuối. Brand value chỉ 1 (không 2).' : ''}
 - Output JSON only. Không giải thích.`;
+}
 
 // ═══════════════════════════════════════════════════════════
 // Build user prompt — inject character + location + Anthology continuity
@@ -415,18 +499,22 @@ const FORBIDDEN_NARRATION = [
 
 export interface ValidationResult { ok: boolean; warnings: string[]; errors: string[]; }
 
-function validateScript(script: CinemaScript): ValidationResult {
+function validateScript(script: CinemaScript, profile: DurationProfile): ValidationResult {
   const warnings: string[] = [];
   const errors: string[] = [];
 
-  // Shots count 18-23
-  if (!Array.isArray(script.shots) || script.shots.length < 15 || script.shots.length > 26) {
-    errors.push(`shots must be 18-23, got ${script.shots?.length}`);
+  // Shots count — duration-aware
+  const minShots = Math.max(3, profile.shots.min - 2);
+  const maxShots = profile.shots.max + 3;
+  if (!Array.isArray(script.shots) || script.shots.length < minShots || script.shots.length > maxShots) {
+    errors.push(`shots must be ${profile.shots.min}-${profile.shots.max} (got ${script.shots?.length})`);
   }
 
-  // Total duration 300-420
-  if (script.total_duration_target_sec < 240 || script.total_duration_target_sec > 480) {
-    warnings.push(`total_duration ${script.total_duration_target_sec}s outside 300-420 target`);
+  // Total duration — ±20% tolerance
+  const minDur = Math.round(profile.total_sec * 0.7);
+  const maxDur = Math.round(profile.total_sec * 1.3);
+  if (script.total_duration_target_sec < minDur || script.total_duration_target_sec > maxDur) {
+    warnings.push(`total_duration ${script.total_duration_target_sec}s outside ${minDur}-${maxDur}s target`);
   }
 
   // Forbidden words in voiceover (combined all shots)
@@ -504,6 +592,8 @@ export interface GenerateScriptOpts {
   secondary_characters?: string[];
   episode_idea: string;
   episode_no: number;
+  /** Target duration. 60-90s = Pilot Mode | 180s = Mid | 360s = Full (default) */
+  target_duration_sec?: number;
 }
 
 export interface GenerateScriptResult {
@@ -538,6 +628,15 @@ export async function generateCinemaScript(opts: GenerateScriptOpts): Promise<Ge
     ORDER BY established_at DESC LIMIT 30
   `).all(`${opts.primary_character}.%`) as any[];
 
+  // Resolve duration profile (60s = Pilot, 180s = Mid, 360s = Full)
+  const targetDur = opts.target_duration_sec
+    || parseInt(getSetting('cinema_target_duration_sec') || '60', 10)
+    || 60;
+  const profile = getDurationProfile(targetDur);
+  const systemPrompt = buildSystemPrompt(profile);
+  // Lower maxTokens when profile is small (faster Claude response)
+  const maxTokens = profile.is_pilot ? 3000 : profile.total_sec <= 220 ? 5000 : 8000;
+
   const userPrompt = buildUserPrompt({
     primary_character: opts.primary_character,
     secondary_characters: opts.secondary_characters,
@@ -549,12 +648,12 @@ export async function generateCinemaScript(opts: GenerateScriptOpts): Promise<Ge
     recentAnthologyEpisodes,
   });
 
-  console.log(`[cinema-script] generating ep#${opts.episode_no} for ${opts.primary_character} | anthology_eps=${recentAnthologyEpisodes.length} facts=${recentAnthologyFacts.length}`);
+  console.log(`[cinema-script] generating ep#${opts.episode_no} for ${opts.primary_character} | mode=${profile.is_pilot ? 'PILOT' : profile.total_sec <= 220 ? 'MID' : 'FULL'} target=${profile.total_sec}s shots=${profile.shots.min}-${profile.shots.max} | anthology_eps=${recentAnthologyEpisodes.length} facts=${recentAnthologyFacts.length}`);
 
-  let raw = await callClaude(SYSTEM_PROMPT, userPrompt, 8000);
+  let raw = await callClaude(systemPrompt, userPrompt, maxTokens);
   let parsed = extractJSON(raw);
   let script = normalizeScript(parsed, opts.primary_character);
-  let validation = validateScript(script);
+  let validation = validateScript(script, profile);
   let retryCount = 0;
 
   // Retry once on hard errors
@@ -562,10 +661,10 @@ export async function generateCinemaScript(opts: GenerateScriptOpts): Promise<Ge
     retryCount = 1;
     console.warn(`[cinema-script] validation fail (${validation.errors.length} errors), retry...`);
     const retryPrompt = `${userPrompt}\n\n# RETRY — ERRORS từ lần trước (FIX):\n${validation.errors.map((e) => `- ${e}`).join('\n')}`;
-    raw = await callClaude(SYSTEM_PROMPT, retryPrompt, 8000);
+    raw = await callClaude(systemPrompt, retryPrompt, maxTokens);
     parsed = extractJSON(raw);
     script = normalizeScript(parsed, opts.primary_character);
-    validation = validateScript(script);
+    validation = validateScript(script, profile);
   }
 
   if (validation.warnings.length) {

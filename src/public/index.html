@@ -1055,15 +1055,26 @@
               </div>
             </div>
 
+            <div class="pt-3 border-t">
+              <label class="text-xs font-semibold">📏 Target Duration (Pilot vs Full)</label>
+              <select id="vs-cin-target-dur" class="border rounded px-3 py-2 w-full text-sm mt-1">
+                <option value="60">PILOT 60s — ~$8/clip — test quality, rẻ nhất</option>
+                <option value="90">PILOT 90s — ~$12/clip — pilot expanded</option>
+                <option value="180">MID 3 phút — ~$30/clip — proof concept long-form</option>
+                <option value="360">FULL 6 phút — ~$80/clip — full cinema (default LOCKED)</option>
+              </select>
+              <div class="text-[11px] text-slate-500 mt-1">Bắt đầu PILOT 60s. Nếu quality OK → upgrade MID → FULL.</div>
+            </div>
+
             <div class="grid grid-cols-2 gap-3 pt-3 border-t">
               <div>
                 <label class="text-xs font-semibold">Max cost / tập (USD)</label>
-                <input type="number" id="vs-cin-cap-ep" value="80" step="10" min="20" class="border rounded px-2 py-2 w-full text-sm mt-1">
+                <input type="number" id="vs-cin-cap-ep" value="80" step="5" min="5" class="border rounded px-2 py-2 w-full text-sm mt-1">
                 <div class="text-[11px] text-slate-500 mt-1">Pre-flight ABORT nếu vượt</div>
               </div>
               <div>
                 <label class="text-xs font-semibold">Max budget / tháng (USD)</label>
-                <input type="number" id="vs-cin-cap-month" value="400" step="50" min="100" class="border rounded px-2 py-2 w-full text-sm mt-1">
+                <input type="number" id="vs-cin-cap-month" value="400" step="50" min="50" class="border rounded px-2 py-2 w-full text-sm mt-1">
                 <div class="text-[11px] text-slate-500 mt-1">~4 tập/tháng</div>
               </div>
             </div>

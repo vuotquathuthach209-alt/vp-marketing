@@ -468,6 +468,8 @@ export interface RunCinemaInput {
   generatedBy?: string;
   scheduledAt?: number;
   autoApprove?: boolean;            // cron mode → status='approved' instead of 'qc_review'
+  /** Override target duration. If omitted, reads cinema_target_duration_sec setting. */
+  target_duration_sec?: number;
 }
 
 export interface RunCinemaResult {
@@ -501,6 +503,7 @@ export async function runFullCinemaPipeline(input: RunCinemaInput): Promise<RunC
     secondary_characters: input.secondary_characters,
     episode_idea: input.episode_idea,
     episode_no,
+    target_duration_sec: input.target_duration_sec,
   });
   if (!scriptR.ok || !scriptR.script) {
     return { ok: false, episode_id, error: scriptR.error, step_failed: 'script' };

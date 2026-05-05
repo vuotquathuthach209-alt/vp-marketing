@@ -52,6 +52,7 @@ router.get('/status', (_req, res) => {
       max_cost_per_ep_usd: parseFloat(getSetting('cinema_max_cost_per_episode_usd') || '80'),
       max_monthly_budget_usd: parseFloat(getSetting('cinema_max_monthly_budget_usd') || '400'),
       veo_use_fast: getSetting('cinema_veo_use_fast') === 'true',
+      target_duration_sec: parseInt(getSetting('cinema_target_duration_sec') || '60', 10),
       fal_api_key_set: !!getSetting('fal_api_key'),
       hedra_api_key_set: !!getSetting('hedra_api_key'),
     });
@@ -109,6 +110,9 @@ router.post('/settings', superadminOnly, (req: AuthRequest, res) => {
     if (typeof body.max_monthly_budget_usd === 'number' && body.max_monthly_budget_usd > 0) {
       updates.cinema_max_monthly_budget_usd = String(body.max_monthly_budget_usd);
     }
+    if (typeof body.target_duration_sec === 'number' && body.target_duration_sec >= 30 && body.target_duration_sec <= 600) {
+      updates.cinema_target_duration_sec = String(body.target_duration_sec);
+    }
     if (body.fal_api_key !== undefined && typeof body.fal_api_key === 'string') {
       updates.fal_api_key = body.fal_api_key;
     }
@@ -161,6 +165,7 @@ router.post('/generate', superadminOnly, async (req: AuthRequest, res) => {
       primary_character: body.primary_character,
       secondary_characters: body.secondary_characters,
       episode_idea: body.episode_idea,
+      target_duration_sec: typeof body.target_duration_sec === 'number' ? body.target_duration_sec : undefined,
       generatedBy: req.user?.email || 'admin-manual',
       autoApprove: false,
     });
@@ -174,33 +179,67 @@ router.post('/generate', superadminOnly, async (req: AuthRequest, res) => {
 
 router.post('/estimate', superadminOnly, (req: AuthRequest, res) => {
   try {
-    // POC budget pre-flight: rough estimate cho 1 typical 6 min episode
-    const typicalShots = [
-      { shot_no: 1, provider: 'veo' as Provider, duration_sec: 12 },          // hero cold open
-      { shot_no: 2, provider: 'seedance' as Provider, duration_sec: 6 },      // title broll
-      // Act I: 5 character + 1 hero
-      ...Array.from({ length: 4 }, (_, i) => ({ shot_no: 3 + i, provider: 'hailuo' as Provider, duration_sec: 8 })),
-      { shot_no: 7, provider: 'veo' as Provider, duration_sec: 10 },
-      { shot_no: 8, provider: 'seedance' as Provider, duration_sec: 6 },
-      // Act II: 4 character + 2 talking + 2 broll + 1 hero = 9
-      ...Array.from({ length: 4 }, (_, i) => ({ shot_no: 9 + i, provider: 'hailuo' as Provider, duration_sec: 8 })),
-      ...Array.from({ length: 2 }, (_, i) => ({ shot_no: 13 + i, provider: 'hedra' as Provider, duration_sec: 12 })),
-      ...Array.from({ length: 2 }, (_, i) => ({ shot_no: 15 + i, provider: 'seedance' as Provider, duration_sec: 6 })),
-      { shot_no: 17, provider: 'veo' as Provider, duration_sec: 10 },
-      // Act III: 3 character + 1 broll = 4
-      ...Array.from({ length: 3 }, (_, i) => ({ shot_no: 18 + i, provider: 'hailuo' as Provider, duration_sec: 8 })),
-      { shot_no: 21, provider: 'seedance' as Provider, duration_sec: 6 },
-      // Outro
-      { shot_no: 22, provider: 'veo' as Provider, duration_sec: 12 },
-    ];
+    const targetSec = Number(req.body?.target_duration_sec)
+      || parseInt(getSetting('cinema_target_duration_sec') || '60', 10);
+
+    // Build typical shot list scaled by duration
+    let typicalShots: Array<{ shot_no: number; provider: Provider; duration_sec: number }>;
+    let words: number;
+
+    if (targetSec <= 90) {
+      // PILOT MODE: 5-7 shots
+      typicalShots = [
+        { shot_no: 1, provider: 'veo' as Provider, duration_sec: 6 },        // hero cold open
+        { shot_no: 2, provider: 'hailuo' as Provider, duration_sec: 8 },      // act1 character
+        { shot_no: 3, provider: 'seedance' as Provider, duration_sec: 6 },    // act1 broll
+        { shot_no: 4, provider: 'hailuo' as Provider, duration_sec: 10 },     // act2 encounter
+        { shot_no: 5, provider: 'hedra' as Provider, duration_sec: 10 },      // act2 talking head
+        { shot_no: 6, provider: 'seedance' as Provider, duration_sec: 8 },    // act3 closing
+      ];
+      words = 140;
+    } else if (targetSec <= 220) {
+      // MID MODE: 10-12 shots
+      typicalShots = [
+        { shot_no: 1, provider: 'veo' as Provider, duration_sec: 10 },
+        { shot_no: 2, provider: 'seedance' as Provider, duration_sec: 6 },
+        ...Array.from({ length: 3 }, (_, i) => ({ shot_no: 3 + i, provider: 'hailuo' as Provider, duration_sec: 10 })),
+        ...Array.from({ length: 2 }, (_, i) => ({ shot_no: 6 + i, provider: 'seedance' as Provider, duration_sec: 8 })),
+        { shot_no: 8, provider: 'hedra' as Provider, duration_sec: 12 },
+        ...Array.from({ length: 2 }, (_, i) => ({ shot_no: 9 + i, provider: 'hailuo' as Provider, duration_sec: 10 })),
+        { shot_no: 11, provider: 'veo' as Provider, duration_sec: 10 },
+      ];
+      words = 380;
+    } else {
+      // FULL MODE: 18-23 shots (default 360s)
+      typicalShots = [
+        { shot_no: 1, provider: 'veo' as Provider, duration_sec: 12 },
+        { shot_no: 2, provider: 'seedance' as Provider, duration_sec: 6 },
+        ...Array.from({ length: 4 }, (_, i) => ({ shot_no: 3 + i, provider: 'hailuo' as Provider, duration_sec: 8 })),
+        { shot_no: 7, provider: 'veo' as Provider, duration_sec: 10 },
+        { shot_no: 8, provider: 'seedance' as Provider, duration_sec: 6 },
+        ...Array.from({ length: 4 }, (_, i) => ({ shot_no: 9 + i, provider: 'hailuo' as Provider, duration_sec: 8 })),
+        ...Array.from({ length: 2 }, (_, i) => ({ shot_no: 13 + i, provider: 'hedra' as Provider, duration_sec: 12 })),
+        ...Array.from({ length: 2 }, (_, i) => ({ shot_no: 15 + i, provider: 'seedance' as Provider, duration_sec: 6 })),
+        { shot_no: 17, provider: 'veo' as Provider, duration_sec: 10 },
+        ...Array.from({ length: 3 }, (_, i) => ({ shot_no: 18 + i, provider: 'hailuo' as Provider, duration_sec: 8 })),
+        { shot_no: 21, provider: 'seedance' as Provider, duration_sec: 6 },
+        { shot_no: 22, provider: 'veo' as Provider, duration_sec: 12 },
+      ];
+      words = 720;
+    }
 
     const estimate = estimateEpisodeCost({
       shots: typicalShots,
-      total_words_vn: 720,
+      total_words_vn: words,
       script_input_chars: 8000,
     });
 
-    res.json({ success: true, ...estimate });
+    res.json({
+      success: true,
+      target_duration_sec: targetSec,
+      mode: targetSec <= 90 ? 'PILOT' : targetSec <= 220 ? 'MID' : 'FULL',
+      ...estimate,
+    });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e?.message });
   }

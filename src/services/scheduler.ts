@@ -992,24 +992,32 @@ export function startScheduler() {
   // Reference skill: sonder-cinema
   if ((require('../db').getSetting('cinema_cron_enabled') || 'true') !== 'false') {
     // STAGE A — T7 12:00 VN generate
+    // Reads cinema_target_duration_sec setting (default 60 = PILOT MODE)
     cron.schedule('0 12 * * 6', async () => {
       try {
         const { runFullCinemaPipeline } = await import('./cinema/cinema-orchestrator');
-        // Cron mode: pick rotating character across weeks; for POC start with linh
+        const { getSetting: gs } = require('../db');
+        const targetDur = parseInt(gs('cinema_target_duration_sec') || '60', 10);
+        const modeLabel = targetDur <= 90 ? `PILOT ${targetDur}s` : targetDur <= 220 ? `MID ${targetDur}s` : `FULL ${targetDur}s`;
+
         const charRotation = ['linh', 'tuan', 'vy', 'khanh', 'ha', 'tai'];
         const weekOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / (7 * 24 * 3600 * 1000));
         const character = charRotation[weekOfYear % charRotation.length];
 
-        // Generic premise that respects continuity (script writer reads Anthology facts)
+        // Premise scaled by duration mode
+        const ideaShort = `Cinema ${modeLabel}: ${character}. 1 moment đáng nhớ ở Sonder. POV "mình" intimate. Brand value 1 thấm qua hành động. Closing line poetic.`;
+        const ideaLong = `Cinema ${modeLabel}: ${character}. Long-form deep-dive về moment ở Sonder. Callback Anthology facts nếu phù hợp. Multi-act với arc rõ ràng.`;
+
         const r = await runFullCinemaPipeline({
           primary_character: character,
-          episode_idea: `Cinema episode tuần này: ${character}. Long-form deep-dive về moment đáng nhớ ở Sonder. Chia sẻ continuity từ Anthology gần đây nếu phù hợp. 5-7 phút multi-act.`,
-          generatedBy: 'cron-T7-12h-generate',
+          episode_idea: targetDur <= 90 ? ideaShort : ideaLong,
+          target_duration_sec: targetDur,
+          generatedBy: `cron-T7-12h-generate-${modeLabel}`,
           autoApprove: true,
         });
 
         if (r.ok) {
-          console.log(`[scheduler] cinema-generate ✅ ep#${r.episode_id} no=${r.episode_no} | "${r.script?.title}" | ${r.duration_sec?.toFixed(1)}s | cost=$${((r.cost_cents || 0) / 100).toFixed(2)} → APPROVED for 20h30 publish`);
+          console.log(`[scheduler] cinema-generate ✅ ${modeLabel} ep#${r.episode_id} no=${r.episode_no} | "${r.script?.title}" | ${r.duration_sec?.toFixed(1)}s | cost=$${((r.cost_cents || 0) / 100).toFixed(2)} → APPROVED for 20h30 publish`);
         } else if (r.budget_exceeded) {
           console.warn(`[scheduler] cinema-generate 💰 BUDGET EXCEEDED ep#${r.episode_id || '?'}: ${r.error}`);
         } else {
