@@ -315,8 +315,10 @@ QUY TẮC FINAL:
 - Total ${profile.shots.min}-${profile.shots.max} shots, ${profile.total_sec}s (±10%)
 - Voiceover ALL shots: ${profile.total_words.min}-${profile.total_words.max} từ VN total
 - Closing line PHẢI poetic, KHÔNG CTA, KHÔNG mention Sonder
-- ${profile.is_pilot ? 'PILOT MODE: bỏ TITLE CARD và OUTRO riêng. Closing line nằm trong Act III shot cuối. Brand value chỉ 1 (không 2).' : ''}
-- Output JSON only. Không giải thích.`;
+- visual_prompt MAX ${profile.is_pilot ? '180' : '300'} chars/shot (concise English keywords + camera + lighting)
+- director_note MAX ${profile.is_pilot ? '60' : '120'} chars/shot (single sentence)
+- ${profile.is_pilot ? 'PILOT MODE: bỏ TITLE CARD và OUTRO riêng. Closing line nằm trong Act III shot cuối. Brand value chỉ 1 (không 2). Caption_yt 80-200 chars (KHÔNG cần caption_fb_teaser riêng — copy same).' : ''}
+- Output JSON only. Không giải thích. KHÔNG markdown fence.`;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -665,8 +667,10 @@ export async function generateCinemaScript(opts: GenerateScriptOpts): Promise<Ge
     || 60;
   const profile = getDurationProfile(targetDur);
   const systemPrompt = buildSystemPrompt(profile);
-  // Lower maxTokens when profile is small (faster Claude response)
-  const maxTokens = profile.is_pilot ? 3000 : profile.total_sec <= 220 ? 5000 : 8000;
+  // Higher maxTokens to avoid JSON truncation. Claude verbose visual_prompts
+  // can be 200-400 chars each; safety buffer needed.
+  // PILOT 6 shots × ~1500 chars/shot = ~9000 chars + boilerplate = need ~5000 tokens
+  const maxTokens = profile.is_pilot ? 5500 : profile.total_sec <= 220 ? 8000 : 12000;
 
   const userPrompt = buildUserPrompt({
     primary_character: opts.primary_character,
