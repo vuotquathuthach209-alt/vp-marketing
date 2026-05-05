@@ -228,22 +228,49 @@ export async function falPoll(submitResult: FalSubmitResult, modelId: string, op
 }
 
 /**
- * Fetch result — REQUIRES full model path. Don't trust submitResult.response_url
- * (FAL's bug returns truncated owner-only).
+ * Fetch result — FAL inconsistent: some models need full path, others owner-only.
+ *
+ * Empirical 2026-05-05 testing:
+ *   • Seedance: full path works  (/fal-ai/bytedance/seedance/v2/.../requests/{id})
+ *   • Hailuo:   owner-only works (/fal-ai/minimax/requests/{id})
+ *   • Veo:      single-segment   (/fal-ai/veo3/requests/{id})
+ *
+ * Strategy: try BOTH URLs (FAL-returned response_url + full path construct),
+ * return first that succeeds with 200.
  */
 export async function falFetchResult<T = any>(submitResult: FalSubmitResult, modelId: string): Promise<T> {
-  const responseUrl = buildResponseUrl(modelId, submitResult.request_id);
+  // Build candidate URLs in priority order
+  const candidates: string[] = [];
 
-  try {
-    const r = await axios.get(responseUrl, {
-      headers: authHeaders(),
-      timeout: 30_000,
-    });
-    return r.data as T;
-  } catch (e: any) {
-    const ax = e as AxiosError<any>;
-    throw new Error(`fal_fetch_result_fail (${responseUrl}): ${ax?.response?.data?.detail || ax?.message}`);
+  // 1st priority: FAL-returned response_url (works for Hailuo, Veo)
+  if (submitResult.response_url) candidates.push(submitResult.response_url);
+
+  // 2nd priority: constructed full path (works for Seedance multi-slash)
+  const fullPath = buildResponseUrl(modelId, submitResult.request_id);
+  if (!candidates.includes(fullPath)) candidates.push(fullPath);
+
+  // 3rd priority: owner-only fallback (in case FAL didn't return response_url)
+  const ownerOnlyUrl = `${QUEUE_BASE}/${modelId.split('/')[0]}/requests/${submitResult.request_id}`;
+  if (!candidates.includes(ownerOnlyUrl)) candidates.push(ownerOnlyUrl);
+
+  let lastErr: any;
+  for (const url of candidates) {
+    try {
+      const r = await axios.get(url, {
+        headers: authHeaders(),
+        timeout: 30_000,
+        validateStatus: () => true,
+      });
+      if (r.status === 200) {
+        return r.data as T;
+      }
+      lastErr = `${r.status} ${JSON.stringify(r.data).slice(0, 150)}`;
+    } catch (e: any) {
+      lastErr = e?.message || 'unknown';
+    }
   }
+
+  throw new Error(`fal_fetch_result_fail (tried ${candidates.length} URLs): ${lastErr}`);
 }
 
 // ═══════════════════════════════════════════════════════════
