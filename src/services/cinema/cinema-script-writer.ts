@@ -462,6 +462,22 @@ function repairInnerQuotes(jsonText: string): string {
   );
 }
 
+/**
+ * Pass 4: insert missing commas between adjacent objects/strings in arrays.
+ * Common Claude mistake — forgets comma between array elements.
+ */
+function repairMissingCommas(jsonText: string): string {
+  return jsonText
+    // }\n  { → },\n  {  (between objects in array)
+    .replace(/\}(\s*\n\s*)\{/g, '},$1{')
+    // ]\n  [ → ],\n  [  (between arrays)
+    .replace(/\](\s*\n\s*)\[/g, '],$1[')
+    // "..."\n  "..." → "...",\n  "..."  (between strings in array — careful, only inside arrays)
+    .replace(/"(\s*\n\s*)"/g, '",$1"')
+    // }  "key":  → },  "key":  (forgot comma between key:value pairs in object)
+    .replace(/(\}|"|\d|true|false|null)(\s*\n\s*)"([a-z_][a-z_0-9]*)"\s*:/gi, '$1,$2"$3":');
+}
+
 function extractJSON(raw: string): any {
   let cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
   const m = cleaned.match(/\{[\s\S]*\}/);
@@ -469,18 +485,33 @@ function extractJSON(raw: string): any {
 
   try { return JSON.parse(cleaned); }
   catch {
+    // Pass 1: smart quotes + trailing commas
     let fixed = cleaned
       .replace(/[‘’]/g, "'")
       .replace(/[“”]/g, '"')
       .replace(/,(\s*[}\]])/g, '$1');
     try { return JSON.parse(fixed); }
     catch {
-      const repaired = repairInnerQuotes(fixed);
-      try { return JSON.parse(repaired); }
-      catch (e: any) {
-        console.error(`[cinema-script] JSON parse fail (3 passes): ${e.message}`);
-        console.error(`[cinema-script] first 500: ${raw.slice(0, 500)}`);
-        throw new Error(`Cannot parse JSON: ${e.message}`);
+      // Pass 2: missing commas between elements
+      let withCommas = repairMissingCommas(fixed);
+      try { return JSON.parse(withCommas); }
+      catch {
+        // Pass 3: inner unescaped quotes
+        const repaired = repairInnerQuotes(withCommas);
+        try { return JSON.parse(repaired); }
+        catch (e: any) {
+          // Save full raw to /tmp for debug
+          try {
+            const fs = require('fs');
+            const dumpPath = `/tmp/cinema-script-fail-${Date.now()}.txt`;
+            fs.writeFileSync(dumpPath, `=== ORIGINAL ===\n${raw}\n\n=== AFTER PASS 1+2+3 ===\n${repaired}`);
+            console.error(`[cinema-script] full raw dumped to ${dumpPath}`);
+          } catch {}
+          console.error(`[cinema-script] JSON parse fail (4 passes): ${e.message}`);
+          console.error(`[cinema-script] first 500: ${raw.slice(0, 500)}`);
+          console.error(`[cinema-script] last 300: ${raw.slice(-300)}`);
+          throw new Error(`Cannot parse JSON: ${e.message}`);
+        }
       }
     }
   }
