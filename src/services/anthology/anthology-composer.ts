@@ -415,38 +415,88 @@ export async function composeAnthologyVideo(opts: ComposeOpts): Promise<ComposeR
 }
 
 // ═══════════════════════════════════════════════════════════
-// BGM picker — based on script.bgm_mood
+// BGM picker — based on script.bgm_mood + LICENSE PROVENANCE CHECK
 // ═══════════════════════════════════════════════════════════
+//
+// CRITICAL (post 2026-05-05 BGM violation): BGM file MUST be listed in
+// /opt/vp-marketing/data/bgm/bgm-licenses.json with verified=true.
+// Files without provenance = REJECTED to prevent copyright violation
+// (untraceable BGM caused FB takedown of ep#14).
 
 const BGM_DIR = '/opt/vp-marketing/data/bgm';
+const BGM_LICENSES_PATH = path.join(BGM_DIR, 'bgm-licenses.json');
 
 const BGM_MOOD_FILES: Record<string, string[]> = {
-  warm:       ['mood_warm.mp3', 'mood_intimate.mp3', 'sonder-soft.mp3'],
-  calm:       ['mood_calm.mp3', 'mood_warm.mp3', 'sonder-soft.mp3'],
+  warm:       ['mood_warm.mp3', 'mood_intimate.mp3', 'pixabay-relaxing-piano.mp3'],
+  calm:       ['mood_calm.mp3', 'mood_warm.mp3', 'pixabay-relaxing-piano.mp3'],
   cinematic:  ['mood_cinematic.mp3', 'mood_uplifting.mp3', 'mood_warm.mp3'],
-  intimate:   ['mood_intimate.mp3', 'mood_warm.mp3', 'sonder-soft.mp3'],
+  intimate:   ['mood_intimate.mp3', 'mood_warm.mp3', 'pixabay-relaxing-piano.mp3'],
   uplifting:  ['mood_uplifting.mp3', 'mood_cinematic.mp3', 'mood_warm.mp3'],
 };
+
+interface BgmLicense {
+  provider?: string;
+  license?: string;
+  verified?: boolean;
+}
+
+interface BgmLicensesFile {
+  tracks: Record<string, BgmLicense>;
+}
+
+let bgmLicensesCache: BgmLicensesFile | null = null;
+let bgmLicensesCachedAt = 0;
+
+function loadBgmLicenses(): BgmLicensesFile {
+  const TTL_MS = 60_000;
+  if (bgmLicensesCache && Date.now() - bgmLicensesCachedAt < TTL_MS) return bgmLicensesCache;
+  if (!fs.existsSync(BGM_LICENSES_PATH)) {
+    bgmLicensesCache = { tracks: {} };
+  } else {
+    try {
+      bgmLicensesCache = JSON.parse(fs.readFileSync(BGM_LICENSES_PATH, 'utf-8'));
+    } catch (e: any) {
+      console.warn(`[anthology-composer] bgm-licenses.json parse fail: ${e?.message}`);
+      bgmLicensesCache = { tracks: {} };
+    }
+  }
+  bgmLicensesCachedAt = Date.now();
+  return bgmLicensesCache!;
+}
+
+function isBgmVerified(filename: string): boolean {
+  const licenses = loadBgmLicenses();
+  const track = licenses.tracks[filename];
+  return !!(track && track.verified === true);
+}
 
 export function pickBgmForAnthology(mood: string): string | undefined {
   const candidates = BGM_MOOD_FILES[mood] || BGM_MOOD_FILES.warm;
 
   for (const filename of candidates) {
     const p = path.join(BGM_DIR, filename);
-    if (fs.existsSync(p)) {
-      console.log(`[anthology-composer] BGM: ${filename} (mood=${mood})`);
-      return p;
+    if (!fs.existsSync(p)) continue;
+
+    // CRITICAL: provenance check — REJECT untraceable BGM
+    if (!isBgmVerified(filename)) {
+      console.warn(`[anthology-composer] ⚠ BGM REJECTED (no provenance): ${filename} — add to bgm-licenses.json with verified=true`);
+      continue;
+    }
+
+    console.log(`[anthology-composer] BGM: ${filename} (mood=${mood}) ✅ verified`);
+    return p;
+  }
+
+  // Final fallback — only if also verified
+  for (const fbName of ['mood_warm.mp3', 'pixabay-relaxing-piano.mp3']) {
+    const fbPath = path.join(BGM_DIR, fbName);
+    if (fs.existsSync(fbPath) && isBgmVerified(fbName)) {
+      console.log(`[anthology-composer] BGM fallback verified: ${fbName} (mood=${mood} not found)`);
+      return fbPath;
     }
   }
 
-  // Final fallback
-  const fallback = path.join(BGM_DIR, 'sonder-soft.mp3');
-  if (fs.existsSync(fallback)) {
-    console.log(`[anthology-composer] BGM fallback: sonder-soft.mp3 (mood=${mood} not found)`);
-    return fallback;
-  }
-
-  console.warn(`[anthology-composer] no BGM available for mood=${mood} — video sẽ silent BGM`);
+  console.warn(`[anthology-composer] ❌ NO VERIFIED BGM available for mood=${mood} — video will be silent (no music bed)`);
   return undefined;
 }
 

@@ -408,27 +408,56 @@ export async function composeCinemaVideo(opts: ComposeOpts): Promise<ComposeResu
 }
 
 // ═══════════════════════════════════════════════════════════
-// BGM picker (similar to Anthology mood-based)
+// BGM picker với LICENSE PROVENANCE CHECK
 // ═══════════════════════════════════════════════════════════
+// CRITICAL: BGM file MUST be in bgm-licenses.json with verified=true
+// (post 2026-05-05 BGM violation policy)
 
 const BGM_DIR = '/opt/vp-marketing/data/bgm';
+const BGM_LICENSES_PATH = path.join(BGM_DIR, 'bgm-licenses.json');
 
 const BGM_MOOD_FILES: Record<string, string[]> = {
-  warm: ['mood_warm.mp3', 'mood_intimate.mp3', 'sonder-soft.mp3'],
-  calm: ['mood_calm.mp3', 'mood_warm.mp3', 'sonder-soft.mp3'],
+  warm: ['mood_warm.mp3', 'mood_intimate.mp3', 'pixabay-relaxing-piano.mp3'],
+  calm: ['mood_calm.mp3', 'mood_warm.mp3', 'pixabay-relaxing-piano.mp3'],
   cinematic: ['mood_cinematic.mp3', 'mood_uplifting.mp3', 'mood_warm.mp3'],
-  intimate: ['mood_intimate.mp3', 'mood_warm.mp3', 'sonder-soft.mp3'],
+  intimate: ['mood_intimate.mp3', 'mood_warm.mp3', 'pixabay-relaxing-piano.mp3'],
   uplifting: ['mood_uplifting.mp3', 'mood_cinematic.mp3', 'mood_warm.mp3'],
 };
+
+let cinemaBgmLicensesCache: any = null;
+let cinemaBgmLicensesCachedAt = 0;
+
+function loadCinemaBgmLicenses(): any {
+  if (cinemaBgmLicensesCache && Date.now() - cinemaBgmLicensesCachedAt < 60_000) return cinemaBgmLicensesCache;
+  if (!fs.existsSync(BGM_LICENSES_PATH)) {
+    cinemaBgmLicensesCache = { tracks: {} };
+  } else {
+    try { cinemaBgmLicensesCache = JSON.parse(fs.readFileSync(BGM_LICENSES_PATH, 'utf-8')); }
+    catch { cinemaBgmLicensesCache = { tracks: {} }; }
+  }
+  cinemaBgmLicensesCachedAt = Date.now();
+  return cinemaBgmLicensesCache;
+}
+
+function isCinemaBgmVerified(filename: string): boolean {
+  const t = loadCinemaBgmLicenses().tracks?.[filename];
+  return !!(t && t.verified === true);
+}
 
 export function pickBgmForCinema(mood: string): string | undefined {
   const candidates = BGM_MOOD_FILES[mood] || BGM_MOOD_FILES.warm;
   for (const filename of candidates) {
     const p = path.join(BGM_DIR, filename);
-    if (fs.existsSync(p)) return p;
+    if (!fs.existsSync(p)) continue;
+    if (!isCinemaBgmVerified(filename)) {
+      console.warn(`[cinema-composer] ⚠ BGM REJECTED (no provenance): ${filename}`);
+      continue;
+    }
+    console.log(`[cinema-composer] BGM: ${filename} ✅ verified`);
+    return p;
   }
-  const fb = path.join(BGM_DIR, 'sonder-soft.mp3');
-  return fs.existsSync(fb) ? fb : undefined;
+  console.warn(`[cinema-composer] ❌ no verified BGM for mood=${mood} — silent fallback`);
+  return undefined;
 }
 
 export function buildCinemaOutputPath(episodeNo: number, characterSlug: string): string {
