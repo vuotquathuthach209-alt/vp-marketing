@@ -327,7 +327,8 @@ async function generateTeaserCut(
 export async function composeCinemaVideo(opts: ComposeOpts): Promise<ComposeResult> {
   const { script, episodeId, episodeNo, materials, bgmPath, outputPath } = opts;
 
-  if (materials.length < 10) throw new Error(`too few materials: ${materials.length} (need 18-23)`);
+  // PILOT mode: 5-10 shots, MID: 10-14, FULL: 18-23. Accept all.
+  if (materials.length < 4) throw new Error(`too few materials: ${materials.length} (need at least 4)`);
 
   // FFmpeg sanity
   const ffCheck = spawnSync('ffmpeg', ['-version'], { encoding: 'utf8' });
