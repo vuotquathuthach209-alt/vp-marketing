@@ -117,25 +117,26 @@ export async function falSubmit(modelId: string, input: any): Promise<FalSubmitR
 }
 
 /**
- * Build status URL using FULL model ID path (per FAL docs):
- *   https://queue.fal.run/{full-model-id}/requests/{request_id}/status
+ * FAL URL discovery — empirical mapping from extensive testing 2026-05-05:
  *
- * NOTE: FAL's submit response sometimes returns truncated owner-only response_url
- * (e.g. for multi-slash models like fal-ai/bytedance/seedance/v2/text-to-video,
- * it returns /fal-ai/bytedance/requests/{id} which gives 404 on fetch).
- * Per FAL docs the FULL path must be preserved. We always construct ourselves
- * to ignore FAL's truncation bug.
+ *   STATUS poll URL: use FAL's status_url verbatim (owner-only path)
+ *     ✅ https://queue.fal.run/fal-ai/minimax/requests/{id}/status
+ *     ❌ https://queue.fal.run/fal-ai/minimax/hailuo-02/pro/text-to-video/requests/{id}/status (405)
+ *
+ *   FETCH result URL: requires FULL model path (per FAL docs)
+ *     ❌ https://queue.fal.run/fal-ai/bytedance/requests/{id} (404 "Path not found")
+ *     ✅ https://queue.fal.run/fal-ai/bytedance/seedance/v2/text-to-video/requests/{id}
+ *
+ * FAL inconsistency: their submit response returns owner-only URLs for both
+ * status_url and response_url. status_url works as-is, response_url DOES NOT
+ * — must construct full path for fetch.
  */
-function buildStatusUrl(modelId: string, requestId: string): string {
-  return `${QUEUE_BASE}/${modelId}/requests/${requestId}/status`;
-}
-
 function buildResponseUrl(modelId: string, requestId: string): string {
   return `${QUEUE_BASE}/${modelId}/requests/${requestId}`;
 }
 
 /**
- * Poll status using FULL model ID path (ignore FAL's owner-only response).
+ * Poll status using FAL-returned status_url (owner-only path works for status).
  */
 export async function falPoll(submitResult: FalSubmitResult, modelId: string, opts: { intervalMs?: number; timeoutMs?: number } = {}): Promise<FalStatusResult> {
   const intervalMs = opts.intervalMs || 5000;
@@ -143,8 +144,10 @@ export async function falPoll(submitResult: FalSubmitResult, modelId: string, op
   const start = Date.now();
   let lastStatus: FalStatusResult | null = null;
 
-  // Always construct full-path URL ourselves (FAL returns owner-only sometimes)
-  const statusUrl = buildStatusUrl(modelId, submitResult.request_id);
+  // Trust FAL's status_url (owner-only works for status); fallback construct
+  const ownerOnly = modelId.split('/')[0];
+  const statusUrl = submitResult.status_url
+    || `${QUEUE_BASE}/${ownerOnly}/requests/${submitResult.request_id}/status`;
 
   while (Date.now() - start < timeoutMs) {
     try {
@@ -166,7 +169,8 @@ export async function falPoll(submitResult: FalSubmitResult, modelId: string, op
 }
 
 /**
- * Fetch final result using FULL model ID path. Don't trust submitResult.response_url.
+ * Fetch result — REQUIRES full model path. Don't trust submitResult.response_url
+ * (FAL's bug returns truncated owner-only).
  */
 export async function falFetchResult<T = any>(submitResult: FalSubmitResult, modelId: string): Promise<T> {
   const responseUrl = buildResponseUrl(modelId, submitResult.request_id);
