@@ -110,10 +110,10 @@ export function scanAndMoveFailures(): { scanned: number; moved: number } {
   // 2. news_post_drafts status='failed'
   const failedNews = db.prepare(
     `SELECT nd.id, nd.hotel_id, nd.page_id, nd.draft_post as caption, nd.image_url,
-            nd.rejection_reason as error, nd.created_at, nd.last_state_change_at
+            nd.rejection_reason as error, nd.created_at
      FROM news_post_drafts nd
      WHERE nd.status = 'failed'
-       AND nd.last_state_change_at < ?
+       AND nd.created_at < ?
        AND NOT EXISTS (
          SELECT 1 FROM failed_posts_dlq d WHERE d.source_type = 'news_draft' AND d.source_id = nd.id
        )`
