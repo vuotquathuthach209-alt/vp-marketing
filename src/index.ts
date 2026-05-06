@@ -201,6 +201,10 @@ app.use('/data-deletion', dataDeletionRouter); // also accept /data-deletion/sta
 app.use('/', zaloWebhookRouter); // POST /webhook/zalo
 app.use('/webhook', bankWebhookRouter); // POST /webhook/bank
 
+// Chatwoot bridge — agent reply → FB Messenger
+// Mounted at /webhooks/chatwoot-bridge/fb-sonder (NOT /webhook to avoid rate limiter conflict)
+app.use('/webhooks', require('./routes/chatwoot-bridge').default);
+
 app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 
 // Public: industries list (for signup page)

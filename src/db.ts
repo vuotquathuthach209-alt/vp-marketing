@@ -2556,6 +2556,29 @@ CREATE INDEX IF NOT EXISTS idx_intent_logs_route ON intent_logs(routed_to, creat
 `);
 console.log('[db] intent_logs table ready (v23)');
 
+// ═══════════════════════════════════════════════════════════
+// Chatwoot bridge — map FB PSID ↔ Chatwoot conversation
+// Reference: skill sonder-tech-sovereignty (Chatwoot is omnichannel inbox)
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+CREATE TABLE IF NOT EXISTS chatwoot_bridge_mappings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  fb_psid TEXT NOT NULL,                       -- FB Page-Scoped ID (guest)
+  fb_page_id TEXT NOT NULL,                    -- FB Page (Sonder = 892083053979896)
+  chatwoot_contact_id INTEGER,
+  chatwoot_conversation_id INTEGER,
+  chatwoot_inbox_identifier TEXT NOT NULL,     -- e.g. fb-sonder-892083053979896
+  status TEXT DEFAULT 'open',                  -- 'open' | 'resolved' | 'closed'
+  last_message_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER,
+  UNIQUE(fb_psid, fb_page_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chatwoot_psid ON chatwoot_bridge_mappings(fb_psid);
+CREATE INDEX IF NOT EXISTS idx_chatwoot_conv ON chatwoot_bridge_mappings(chatwoot_conversation_id);
+`);
+console.log('[db] chatwoot_bridge_mappings table ready');
+
 // Indexes trên hotel_id
 try {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_pages_hotel ON pages(hotel_id)`);
