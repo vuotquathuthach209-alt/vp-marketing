@@ -205,6 +205,10 @@ app.use('/webhook', bankWebhookRouter); // POST /webhook/bank
 // Mounted at /webhooks/chatwoot-bridge/fb-sonder (NOT /webhook to avoid rate limiter conflict)
 app.use('/webhooks', require('./routes/chatwoot-bridge').default);
 
+// V5 Content Pipeline — Real footage upload + management
+// Reference: skill sonder-content-v5
+app.use('/admin/footage', require('./routes/v5-footage').default);
+
 app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 
 // Public: industries list (for signup page)

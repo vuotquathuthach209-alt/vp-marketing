@@ -2598,6 +2598,93 @@ CREATE INDEX IF NOT EXISTS idx_email_log_email ON email_automation_log(guest_ema
 `);
 console.log('[db] email_automation_log table ready');
 
+// ═══════════════════════════════════════════════════════════
+// V5 Content Pipeline tables
+// Reference: skill sonder-content-v5
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+-- Real footage uploaded from Sonder staff phone (60% pillar)
+CREATE TABLE IF NOT EXISTS v5_footage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  filename TEXT NOT NULL,
+  path TEXT NOT NULL,                  -- /var/sonder-real-footage/<filename>
+  duration_sec REAL,
+  width INTEGER,
+  height INTEGER,
+  location TEXT,                       -- airport | q1 | binh_thanh | phu_nhuan | cafe_vy | street | other
+  character TEXT,                      -- tuan | linh | vy | khanh | ha | tai | guest | no_face
+  moment_tag TEXT,                     -- pha_tra_gung | san_dem_mua | etc
+  uploaded_by TEXT,
+  uploaded_at INTEGER NOT NULL,
+  used_count INTEGER DEFAULT 0,
+  notes TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_v5_footage_loc ON v5_footage(location, character);
+CREATE INDEX IF NOT EXISTS idx_v5_footage_used ON v5_footage(used_count);
+
+-- V5 scripts with 3 hook variants A/B/C
+CREATE TABLE IF NOT EXISTS v5_scripts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  theme TEXT NOT NULL,                 -- saigon_insider | sonder_bts
+  title TEXT NOT NULL,
+  arc_id INTEGER,
+  body_json TEXT NOT NULL,             -- JSON: context/encounter/reflection/closing VOs
+  hook_a_json TEXT NOT NULL,           -- {pattern, vo_text, visual_prompt}
+  hook_b_json TEXT NOT NULL,
+  hook_c_json TEXT NOT NULL,
+  visual_plan_json TEXT NOT NULL,      -- JSON: shots[]
+  loop_reward_visual TEXT,
+  bgm_mood TEXT,
+  total_duration_target_sec INTEGER,
+  status TEXT DEFAULT 'draft',         -- draft | approved | rendering | rendered | posted | failed
+  generated_by TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_v5_scripts_status ON v5_scripts(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_v5_scripts_theme ON v5_scripts(theme);
+
+-- Rendered clips (1 script → 3 variants)
+CREATE TABLE IF NOT EXISTS v5_rendered_clips (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  script_id INTEGER NOT NULL,
+  variant TEXT NOT NULL,               -- a | b | c
+  hook_pattern TEXT,
+  output_path TEXT NOT NULL,
+  duration_sec REAL,
+  size_mb REAL,
+  cost_usd REAL DEFAULT 0,
+  rendered_at INTEGER NOT NULL,
+  FOREIGN KEY (script_id) REFERENCES v5_scripts(id)
+);
+CREATE INDEX IF NOT EXISTS idx_v5_rendered_script ON v5_rendered_clips(script_id, variant);
+
+-- A/B test results per platform per variant
+CREATE TABLE IF NOT EXISTS v5_ab_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  rendered_clip_id INTEGER NOT NULL,
+  platform TEXT NOT NULL,              -- fb | ig | tiktok | youtube
+  posted_at INTEGER NOT NULL,
+  platform_post_id TEXT,
+  reach INTEGER DEFAULT 0,
+  views INTEGER DEFAULT 0,
+  completion_rate_halfway REAL DEFAULT 0,
+  reactions INTEGER DEFAULT 0,
+  comments INTEGER DEFAULT 0,
+  shares INTEGER DEFAULT 0,
+  dm_shares INTEGER DEFAULT 0,
+  saves INTEGER DEFAULT 0,
+  first_hour_engagement INTEGER DEFAULT 0,
+  is_winner INTEGER DEFAULT 0,
+  killed_at INTEGER,
+  last_metrics_at INTEGER,
+  FOREIGN KEY (rendered_clip_id) REFERENCES v5_rendered_clips(id)
+);
+CREATE INDEX IF NOT EXISTS idx_v5_ab_clip ON v5_ab_results(rendered_clip_id);
+CREATE INDEX IF NOT EXISTS idx_v5_ab_perf ON v5_ab_results(platform, completion_rate_halfway DESC);
+`);
+console.log('[db] V5 content pipeline tables ready (v5_footage + v5_scripts + v5_rendered_clips + v5_ab_results)');
+
 // Indexes trên hotel_id
 try {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_pages_hotel ON pages(hotel_id)`);
