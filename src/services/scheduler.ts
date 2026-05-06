@@ -1059,6 +1059,32 @@ export function startScheduler() {
     console.log('[scheduler] V4 Cinema cron DISABLED (cinema_cron_enabled=false)');
   }
 
+  // ═══ Email Automation (Phase 3 — Listmonk + Resend + BullMQ) ═══
+  // Reference: skill sonder-tech-sovereignty
+  // Default ENABLED. Disable: setting `email_automation_enabled = 'false'`.
+  if ((require('../db').getSetting('email_automation_enabled') || 'true') !== 'false') {
+    // Start BullMQ worker (consume jobs from queue)
+    try {
+      const { startEmailWorker } = require('./email-automation');
+      startEmailWorker();
+    } catch (e: any) {
+      console.warn('[scheduler] email worker start fail:', e?.message);
+    }
+
+    // Cron: every 15 min — scan OTA bookings + schedule emails
+    cron.schedule('*/15 * * * *', async () => {
+      try {
+        const { runEmailAutomationCron } = require('./email-automation/cron');
+        await runEmailAutomationCron();
+      } catch (e: any) {
+        console.error('[scheduler] email-cron err:', e?.message);
+      }
+    });
+    console.log('[scheduler] Email automation ENABLED (welcome + review + loyalty, every 15 min)');
+  } else {
+    console.log('[scheduler] Email automation DISABLED (email_automation_enabled=false)');
+  }
+
   // Monthly concept proposal — 28 mỗi tháng 9h sáng VN
   cron.schedule('0 9 28 * *', async () => {
     try {

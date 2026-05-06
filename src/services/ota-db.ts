@@ -73,6 +73,10 @@ function getPool(): Pool | null {
 }
 
 /** Execute a read-only query */
+export async function otaQuery<T = any>(sql: string, params: any[] = []): Promise<T[]> {
+  return query<T>(sql, params);
+}
+
 async function query<T = any>(sql: string, params: any[] = []): Promise<T[]> {
   const p = getPool();
   if (!p) throw new Error('OTA DB chưa cấu hình. Vào Cấu hình → OTA Database.');

@@ -2579,6 +2579,25 @@ CREATE INDEX IF NOT EXISTS idx_chatwoot_conv ON chatwoot_bridge_mappings(chatwoo
 `);
 console.log('[db] chatwoot_bridge_mappings table ready');
 
+// ═══════════════════════════════════════════════════════════
+// Email automation log — idempotency for BullMQ email jobs
+// Reference: skill sonder-tech-sovereignty (Listmonk + BullMQ)
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+CREATE TABLE IF NOT EXISTS email_automation_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  booking_id TEXT NOT NULL,
+  guest_email TEXT NOT NULL,
+  job_name TEXT NOT NULL,                       -- welcome | review_request | loyalty_reengage
+  status TEXT NOT NULL,                         -- sent | failed | skipped
+  error TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_email_log_booking ON email_automation_log(booking_id, job_name);
+CREATE INDEX IF NOT EXISTS idx_email_log_email ON email_automation_log(guest_email, created_at DESC);
+`);
+console.log('[db] email_automation_log table ready');
+
 // Indexes trên hotel_id
 try {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_pages_hotel ON pages(hotel_id)`);
