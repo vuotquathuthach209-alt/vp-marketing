@@ -298,19 +298,20 @@ export async function renderV5Script(scriptId: number): Promise<{
       if (r.ok) voHookPath = tmpVo;
     }
 
-    // Concat hook VO + body VO into single track
+    // Concat hook VO + body VO into single track (always re-encode MP3 to keep size small)
     const finalVoPath = path.join(tmpDir, `vo-final-${v}.mp3`);
+    const mp3Codec = ['-c:a', 'libmp3lame', '-b:a', '96k', '-ar', '24000'];
     if (voHookPath && voBodyOk) {
       const concatList = path.join(tmpDir, `vo-concat-${v}.txt`);
       fs.writeFileSync(concatList, `file '${voHookPath}'\nfile '${voBodyPath}'`);
-      runFfmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', concatList, '-c', 'copy', finalVoPath]);
+      runFfmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', concatList, ...mp3Codec, finalVoPath]);
     } else if (voBodyOk) {
       // Only body VO — pad 3s silence at start (where hook would be)
       runFfmpeg([
         '-y', '-f', 'lavfi', '-i', 'anullsrc=r=24000:cl=mono', '-t', '3',
         '-i', voBodyPath,
         '-filter_complex', '[0:a][1:a]concat=n=2:v=0:a=1[a]',
-        '-map', '[a]', finalVoPath,
+        '-map', '[a]', ...mp3Codec, finalVoPath,
       ]);
     } else if (voHookPath) {
       fs.copyFileSync(voHookPath, finalVoPath);

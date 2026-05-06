@@ -141,14 +141,16 @@ export async function generateAIVideo(opts: {
   }
 
   try {
-    const submitResult = await falSubmit('fal-ai/wan/v2.2/text-to-video', {
+    // Use Wan 2.6 (proven stable in Cinema pipeline since Apr 2026)
+    const MODEL = 'fal-ai/wan/v2.6/text-to-video';
+    const submitResult = await falSubmit(MODEL, {
       prompt: opts.prompt,
       duration: duration,
       aspect_ratio: opts.aspect_ratio || '9:16',
       resolution: '720p',
     });
 
-    const status = await falPoll(submitResult, 'fal-ai/wan/v2.2/text-to-video', {
+    const status = await falPoll(submitResult, MODEL, {
       intervalMs: 5000,
       timeoutMs: 300000, // 5 min for video
     });
@@ -156,7 +158,7 @@ export async function generateAIVideo(opts: {
       return { ok: false, cost_usd: 0, error: `Wan status: ${status.status}` };
     }
 
-    const result = await falFetchResult<any>(submitResult, 'fal-ai/wan/v2.2/text-to-video');
+    const result = await falFetchResult<any>(submitResult, MODEL);
     const videoUrl = result.video?.url || result.videos?.[0]?.url;
     if (!videoUrl) {
       return { ok: false, cost_usd: 0, error: 'no video URL in result' };

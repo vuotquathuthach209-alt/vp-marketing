@@ -1059,6 +1059,46 @@ export function startScheduler() {
     console.log('[scheduler] V4 Cinema cron DISABLED (cinema_cron_enabled=false)');
   }
 
+  // ═══ V5 Content Pipeline (Hybrid 60% real + AI assist) ═══
+  // Reference: skill sonder-content-v5
+  // 2-stage: 17h gen+render, 19h publish
+  // Default DISABLED — enable via setting v5_cron_enabled='true' after Gate 1 review.
+  if ((require('../db').getSetting('v5_cron_enabled') || 'false') === 'true') {
+    // Stage A: Generate + Render daily 17h VN (Mon-Fri only)
+    cron.schedule('0 17 * * 1-5', async () => {
+      try {
+        const { runV5GeneratePhase } = require('./v5/orchestrator');
+        const r = await runV5GeneratePhase({ generated_by: 'cron-17h' });
+        if (r.ok) {
+          console.log(`[scheduler] v5-generate ✅ script #${r.script_id} | ${r.rendered_count} variants | $${(r.total_cost_usd || 0).toFixed(3)}`);
+        } else {
+          console.warn(`[scheduler] v5-generate ❌ ${r.step_failed}: ${r.error}`);
+        }
+      } catch (e: any) {
+        console.error('[scheduler] v5-generate err:', e?.message);
+      }
+    }, { timezone: 'Asia/Ho_Chi_Minh' });
+
+    // Stage B: Publish daily 19h VN (Mon-Fri)
+    cron.schedule('0 19 * * 1-5', async () => {
+      try {
+        const { runV5PublishPhase } = require('./v5/orchestrator');
+        const r = await runV5PublishPhase();
+        if (r.ok) {
+          console.log(`[scheduler] v5-publish ✅ script #${r.script_id} | ${r.published_post_ids?.length || 0} posts`);
+        } else {
+          console.log(`[scheduler] v5-publish ⏭ ${r.step_failed || 'skip'}`);
+        }
+      } catch (e: any) {
+        console.error('[scheduler] v5-publish err:', e?.message);
+      }
+    }, { timezone: 'Asia/Ho_Chi_Minh' });
+
+    console.log('[scheduler] V5 Content cron ENABLED (gen 17h → publish 19h VN, T2-T6, hybrid 60% real + AI)');
+  } else {
+    console.log('[scheduler] V5 Content cron DISABLED (v5_cron_enabled=false)');
+  }
+
   // ═══ Email Automation (Phase 3 — Listmonk + Resend + BullMQ) ═══
   // Reference: skill sonder-tech-sovereignty
   // Default ENABLED. Disable: setting `email_automation_enabled = 'false'`.
