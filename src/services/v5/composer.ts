@@ -17,6 +17,7 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { db } from '../../db';
 import { generateAIImage, generateAIVideo } from './fal-generator';
+import { synthesizeSonderVoice } from '../sonder-voice';
 import type { V5Script, V5Shot, V5RenderedClip } from './types';
 
 const V5_OUT_DIR = '/opt/vp-marketing/data/media/v5-out';
@@ -240,7 +241,30 @@ export async function renderV5Script(scriptId: number): Promise<{
     return { ok: false, variants: [], total_cost_usd: totalCost, error: 'no body shots resolved' };
   }
 
-  // 2. For each variant — generate hook clip + compose
+  // 2. Synthesize VO body (shared across all 3 variants — body identical)
+  const body = JSON.parse(scriptRow.body_json) as {
+    context_vo: string;
+    encounter_vo: string;
+    reflection_vo: string;
+    closing_vo: string;
+  };
+  const bodyVoText = [body.context_vo, body.encounter_vo, body.reflection_vo, body.closing_vo]
+    .filter(Boolean)
+    .join('. ');
+  const voBodyPath = path.join(tmpDir, 'vo-body.mp3');
+  let voBodyOk = false;
+  if (bodyVoText.trim()) {
+    console.log(`[v5-composer] synthesizing VO body (${bodyVoText.length} chars)`);
+    try {
+      const synthR = await synthesizeSonderVoice(bodyVoText, voBodyPath);
+      voBodyOk = synthR.ok;
+      console.log(`[v5-composer] VO body: ${synthR.ok ? 'OK ' + synthR.mode : 'FAIL ' + synthR.error}`);
+    } catch (e: any) {
+      console.warn('[v5-composer] VO synth fail:', e.message);
+    }
+  }
+
+  // 3. For each variant — generate hook clip + VO hook + compose
   const variants: V5RenderedClip[] = [];
   const bgmPath = path.join(BGM_DIR, `mood_${scriptRow.bgm_mood || 'warm'}.mp3`);
 
@@ -266,6 +290,32 @@ export async function renderV5Script(scriptId: number): Promise<{
       hookClip = bodyClipPaths[0];
     }
 
+    // Hook VO (skip nếu textural_asmr — silent design)
+    let voHookPath: string | null = null;
+    if (hook.vo_text && hook.pattern !== 'textural_asmr') {
+      const tmpVo = path.join(tmpDir, `vo-hook-${v}.mp3`);
+      const r = await synthesizeSonderVoice(hook.vo_text, tmpVo);
+      if (r.ok) voHookPath = tmpVo;
+    }
+
+    // Concat hook VO + body VO into single track
+    const finalVoPath = path.join(tmpDir, `vo-final-${v}.mp3`);
+    if (voHookPath && voBodyOk) {
+      const concatList = path.join(tmpDir, `vo-concat-${v}.txt`);
+      fs.writeFileSync(concatList, `file '${voHookPath}'\nfile '${voBodyPath}'`);
+      runFfmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', concatList, '-c', 'copy', finalVoPath]);
+    } else if (voBodyOk) {
+      // Only body VO — pad 3s silence at start (where hook would be)
+      runFfmpeg([
+        '-y', '-f', 'lavfi', '-i', 'anullsrc=r=24000:cl=mono', '-t', '3',
+        '-i', voBodyPath,
+        '-filter_complex', '[0:a][1:a]concat=n=2:v=0:a=1[a]',
+        '-map', '[a]', finalVoPath,
+      ]);
+    } else if (voHookPath) {
+      fs.copyFileSync(voHookPath, finalVoPath);
+    }
+
     const outPath = path.join(V5_OUT_DIR, `script-${scriptId}-variant-${v}.mp4`);
 
     const result = await composeVariant({
@@ -273,7 +323,7 @@ export async function renderV5Script(scriptId: number): Promise<{
       scriptId,
       hookClipPath: hookClip,
       bodyClipPaths,
-      voAudioPath: null, // TODO Day 6.5: integrate voice synth
+      voAudioPath: fs.existsSync(finalVoPath) ? finalVoPath : null,
       bgmPath,
       outPath,
     });
