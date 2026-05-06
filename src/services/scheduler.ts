@@ -577,6 +577,11 @@ export function startScheduler() {
   //   Dedup: không lặp hotel 14d, không lặp image 90d, rotate 5 angles.
   //   Loại: verified rating < avg-0.5, <3 reviews, <3 images.
   cron.schedule('0 7 * * *', async () => {
+    // Guard: pause if disabled (hard-sell ad-copy posts hurt page edge-rank)
+    if (require('../db').getSetting('product_auto_post_enabled') === 'false') {
+      console.log('[scheduler] product-auto-post generate SKIPPED (product_auto_post_enabled=false)');
+      return;
+    }
     try {
       const { generateTodayPlan } = require('./product-auto-post/orchestrator');
       const r = await generateTodayPlan();
@@ -590,6 +595,10 @@ export function startScheduler() {
   }, { timezone: 'Asia/Ho_Chi_Minh' });
 
   cron.schedule('0 9 * * *', async () => {
+    if (require('../db').getSetting('product_auto_post_enabled') === 'false') {
+      console.log('[scheduler] product-auto-post publish SKIPPED (product_auto_post_enabled=false)');
+      return;
+    }
     try {
       const { publishTodayPlan } = require('./product-auto-post/orchestrator');
       const r = await publishTodayPlan();
