@@ -255,17 +255,6 @@ export function startScheduler() {
     }
   });
 
-  // ── Monthly learning aggregation: 6h sáng mùng 1 hàng tháng ──
-  cron.schedule('0 6 1 * *', () => {
-    try {
-      const { aggregateMonthlyLearnings } = require('./monthly-learning');
-      const result = aggregateMonthlyLearnings();
-      console.log(`[scheduler] monthly learning: ${JSON.stringify(result)}`);
-    } catch (e: any) {
-      console.error('[scheduler] monthly learning error:', e?.message);
-    }
-  });
-
   // ── Weekly quality report: Chủ nhật 8h sáng ──
   cron.schedule('0 8 * * 0', () => {
     sendWeeklyReport().catch(e => console.error('[scheduler] weekly report error:', e));
@@ -286,31 +275,6 @@ export function startScheduler() {
       aggregateFunnelDaily();
     } catch (e: any) {
       console.error('[scheduler] outcome-classify error:', e?.message);
-    }
-  });
-
-  // ── v16 Marketing Audiences — refresh each audience respecting their interval ──
-  // Runs hourly: each audience has refresh_interval_min (60 for abandoned_cart, 1440 for daily)
-  cron.schedule('10 * * * *', () => {
-    try {
-      const { refreshAllAudiences } = require('./marketing-audience-engine');
-      const results = refreshAllAudiences(false);
-      if (results.length > 0) {
-        const ok = results.filter((r: any) => !r.error).length;
-        console.log(`[scheduler] audience-refresh: ${ok}/${results.length} refreshed`);
-      }
-    } catch (e: any) {
-      console.error('[scheduler] audience-refresh error:', e?.message);
-    }
-  });
-
-  // ── v16 Broadcast campaigns — send scheduled campaigns due now ──
-  cron.schedule('*/5 * * * *', async () => {
-    try {
-      const { sendDueCampaigns } = require('./broadcast-sender');
-      await sendDueCampaigns();
-    } catch (e: any) {
-      console.error('[scheduler] broadcast-send error:', e?.message);
     }
   });
 
@@ -366,60 +330,6 @@ export function startScheduler() {
       console.log(`[scheduler] weekly-cleanup: drafts=${oldDrafts.changes} remix=${oldRemix.changes} ai_images=${oldAiImages.changes} ocr=${oldOcr.changes}`);
     } catch (e: any) {
       console.error('[scheduler] cleanup error:', e?.message);
-    }
-  });
-
-  // ── v18 Proactive Outreach: daily scan 9h VN + send every 30min ──
-  // Scan daily at 2h UTC (9h VN) for opportunities
-  cron.schedule('0 2 * * *', () => {
-    try {
-      const { scanAndQueueOutreach } = require('./proactive-outreach');
-      const results = scanAndQueueOutreach(1);
-      const totalQueued = results.reduce((s: number, r: any) => s + r.queued, 0);
-      if (totalQueued > 0) {
-        console.log(`[scheduler] outreach-scan: queued ${totalQueued} messages`);
-      }
-    } catch (e: any) {
-      console.error('[scheduler] outreach-scan error:', e?.message);
-    }
-  });
-
-  // Send queued outreach every 30 minutes (respect scheduled_at)
-  cron.schedule('*/30 * * * *', async () => {
-    try {
-      const { sendQueuedOutreach } = require('./proactive-outreach');
-      const result = await sendQueuedOutreach({ limit: 20 });
-      if (result.processed > 0) {
-        console.log(`[scheduler] outreach-send: ${JSON.stringify(result)}`);
-      }
-    } catch (e: any) {
-      console.error('[scheduler] outreach-send error:', e?.message);
-    }
-  });
-
-  // ── v17 Self-improvement: weekly winner selection + report ──
-  // Chủ Nhật 9h sáng VN time = 2h UTC Sunday
-  cron.schedule('0 2 * * 0', async () => {
-    try {
-      const { selectAllWinners } = require('./winner-selector');
-      const { sendWeeklyPerformanceReport } = require('./weekly-performance-report');
-      const { extractLessonsFromLabels } = require('./prompt-lessons');
-
-      // 1. Extract new lessons từ admin labels
-      const lessons = extractLessonsFromLabels();
-      console.log(`[scheduler] prompt-lessons: ${JSON.stringify(lessons)}`);
-
-      // 2. Auto winner selection cho running experiments
-      const winners = selectAllWinners();
-      const promoted = winners.filter((w: any) => w.decision === 'promoted').length;
-      if (winners.length > 0) {
-        console.log(`[scheduler] winner-select: ${promoted}/${winners.length} promoted`);
-      }
-
-      // 3. Weekly report Telegram
-      await sendWeeklyPerformanceReport(1);
-    } catch (e: any) {
-      console.error('[scheduler] weekly self-improvement error:', e?.message);
     }
   });
 

@@ -19,28 +19,19 @@ import otaRouter from './routes/ota';
 import adminRouter from './routes/admin';
 import onboardingRouter from './routes/onboarding';
 import monitoringRouter from './routes/monitoring';
-import feedbackRouter from './routes/feedback';
 import productAutoPostRouter from './routes/product-auto-post';
 import agentRouter from './routes/agent';
 import dataDeletionRouter from './routes/data-deletion';
-import trainingRouter from './routes/training';
-import playgroundRouter from './routes/playground';
 import hotelsEditorRouter from './routes/hotels-editor';
 import conversationsRouter from './routes/conversations';
 import funnelAnalyticsRouter from './routes/funnel-analytics';
 import retentionRouter from './routes/retention';
 import knowledgeRouter from './routes/knowledge';
 import botMonitorRouter from './routes/bot-monitor';
-import feedbackLoopRouter from './routes/feedback-loop';
 import agenticTemplatesRouter from './routes/agentic-templates';
 import { syncHubRouter, syncHubAdminRouter, syncHubDocsRouter } from './routes/sync-hub';
 import ocrRouter from './routes/ocr';
 import domainDataRouter from './routes/domain-data';
-import marketingRouter from './routes/marketing';
-import selfImprovementRouter from './routes/self-improvement';
-import outreachRouter from './routes/outreach';
-import attributionRouter from './routes/attribution';
-import multiPlatformRouter from './routes/multi-platform';
 import postsOpsRouter from './routes/posts-ops';
 import './services/agent-tools'; // init table + register tools
 import './services/ota-readonly-guard'; // self-test fires on boot (fail-fast if guard broken)
@@ -123,25 +114,16 @@ app.use('/api/ota', otaRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/onboarding', onboardingRouter);
 app.use('/api/monitoring', monitoringRouter);
-app.use('/api/feedback', feedbackRouter);
 app.use('/api/agent', agentRouter);
-app.use('/api/training', trainingRouter);
-app.use('/api/playground', playgroundRouter);
 app.use('/api/hotels-editor', hotelsEditorRouter);
 app.use('/api/conversations', conversationsRouter);
 app.use('/api/bot-monitor', botMonitorRouter);
-app.use('/api/feedback-loop', feedbackLoopRouter);
 app.use('/api/agentic-templates', agenticTemplatesRouter);
 app.use('/api/sync', syncHubRouter);             // HMAC auth for OTA team
 app.use('/api/sync-admin', syncHubAdminRouter);  // UI admin (cookie auth)
 app.use('/sync-hub', syncHubDocsRouter);         // Public docs page
 app.use('/api/ocr', ocrRouter);                  // OCR testing + config
 app.use('/api/domain', domainDataRouter);        // Policies + pricing + promotions
-app.use('/api/marketing', marketingRouter);      // Audiences + campaigns
-app.use('/api/improve', selfImprovementRouter);  // A/B test + weekly report + lessons
-app.use('/api/outreach', outreachRouter);        // Proactive outreach (6 triggers)
-app.use('/api/attribution', attributionRouter);  // Revenue attribution + LTV
-app.use('/api/mp', multiPlatformRouter);         // IG + FB crosspost + share helper
 app.use('/api/ops', postsOpsRouter);             // Metrics + Dead Letter Queue
 app.use('/api/data-deletion', dataDeletionRouter);
 app.use('/data-deletion', dataDeletionRouter); // also accept /data-deletion/status (URL returned to FB)
