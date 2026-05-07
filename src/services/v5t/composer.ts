@@ -6,24 +6,94 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import sharp from 'sharp';
 import { db } from '../../db';
 import { generateAIImage } from '../v5/fal-generator';
 import type { V5TPost, V5TPostImage } from './types';
 
 const V5T_OUT_DIR = '/opt/vp-marketing/data/media/v5t-out';
+const V5_OUT_DIR = '/opt/vp-marketing/data/media/v5-out';
+const CINEMA_SHOTS_DIR = '/opt/vp-marketing/data/media/cinema-shots';
+const CINEMA_OUT_DIR = '/opt/vp-marketing/data/media/cinema-out';
+const ANTH_VISUALS_DIR = '/opt/vp-marketing/data/media/anth-visuals';
+const TMP_FRAMES_DIR = '/opt/vp-marketing/data/media/v5t-frames';
+
 if (!fs.existsSync(V5T_OUT_DIR)) fs.mkdirSync(V5T_OUT_DIR, { recursive: true });
+if (!fs.existsSync(TMP_FRAMES_DIR)) fs.mkdirSync(TMP_FRAMES_DIR, { recursive: true });
 
 const TARGET_SIZE = 1080;  // 1080×1080 square
 
-/** Resolve 1 image source: real footage or AI gen */
+/* ───────── Video frame extraction (FREE fallback when FAL exhausted) ───────── */
+
+/** Extract 1 frame from a video at given timestamp (seconds) */
+function extractFrameFromVideo(videoPath: string, atSec: number, outPath: string): boolean {
+  try {
+    const r = spawnSync('ffmpeg', [
+      '-y',
+      '-ss', String(atSec),
+      '-i', videoPath,
+      '-vframes', '1',
+      '-q:v', '2',
+      outPath,
+    ], { encoding: 'utf8', timeout: 30000 });
+    return r.status === 0 && fs.existsSync(outPath);
+  } catch {
+    return false;
+  }
+}
+
+/** Find a usable source video from existing media libraries (real Pexels OR Cinema clips) */
+function pickFallbackVideo(): string | null {
+  const libraries = [
+    ANTH_VISUALS_DIR,    // Pexels real footage — best quality, real
+    CINEMA_SHOTS_DIR,    // Hailuo Pro AI — close-up character shots
+    V5_OUT_DIR,          // Recent V5 Reels output — composite
+  ];
+  for (const dir of libraries) {
+    if (!fs.existsSync(dir)) continue;
+    const files = fs.readdirSync(dir).filter(f => f.endsWith('.mp4'));
+    if (files.length === 0) continue;
+    const pick = files[Math.floor(Math.random() * files.length)];
+    return path.join(dir, pick);
+  }
+  return null;
+}
+
+/** Get a fallback image by extracting random frame from existing video library */
+function getFallbackImageFromVideo(prefix: string, position: number): { path: string; cost: number } | null {
+  const videoPath = pickFallbackVideo();
+  if (!videoPath) return null;
+
+  // Pick frame at 30%-70% of video duration (avoid title cards / black frames)
+  const r = spawnSync('ffprobe', [
+    '-v', 'error', '-show_entries', 'format=duration',
+    '-of', 'default=noprint_wrappers=1:nokey=1', videoPath,
+  ], { encoding: 'utf8' });
+  const duration = parseFloat(r.stdout?.trim() || '5') || 5;
+  const atSec = duration * (0.3 + Math.random() * 0.4);
+
+  const framePath = path.join(TMP_FRAMES_DIR, `${prefix}-frame-${position}-${Date.now()}.jpg`);
+  if (extractFrameFromVideo(videoPath, atSec, framePath)) {
+    return { path: framePath, cost: 0 };
+  }
+  return null;
+}
+
+/** Resolve 1 image source via fallback chain:
+ *  1. v5_footage real photos (uploaded by Sonder staff) — primary
+ *  2. v5_footage video → extract frame (real footage, free)
+ *  3. AI Flux gen (FAL credit needed)
+ *  4. Existing video libraries → extract frame (Pexels Anthology + Cinema shots)
+ *  5. null (skip shot)
+ */
 async function resolveImageSource(opts: {
   postId: number;
   position: number;
   preferRealFootage: boolean;
   theme: string;
 }): Promise<{ path: string; source: 'real_footage' | 'ai_image'; footage_id?: number; cost: number } | null> {
-  // Try real footage first if preferred
+  // 1. Try real footage from v5_footage (image type)
   if (opts.preferRealFootage) {
     const footage = db.prepare(
       `SELECT * FROM v5_footage
@@ -34,17 +104,25 @@ async function resolveImageSource(opts: {
     ).get() as any;
 
     if (footage?.path && fs.existsSync(footage.path)) {
-      // Check if it's actually image extension
       const ext = path.extname(footage.path).toLowerCase();
       if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
         db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(footage.id);
         return { path: footage.path, source: 'real_footage', footage_id: footage.id, cost: 0 };
       }
+
+      // 2. Real footage stored as video → extract frame (still real, free)
+      if (['.mp4', '.mov', '.webm'].includes(ext)) {
+        const framePath = path.join(TMP_FRAMES_DIR, `v5t-${opts.postId}-real-${opts.position}-${Date.now()}.jpg`);
+        if (extractFrameFromVideo(footage.path, 1.0, framePath)) {
+          db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(footage.id);
+          return { path: framePath, source: 'real_footage', footage_id: footage.id, cost: 0 };
+        }
+      }
     }
   }
 
-  // Fallback: AI gen via FAL Flux
-  const prompt = `Sonder Vietnam boutique guesthouse, ${opts.theme === 'saigon_insider' ? 'Saigon street life' : 'cozy hotel interior'}, square 1:1, cinematic warm light, photo realistic`;
+  // 3. Try AI Flux gen
+  const prompt = `Sonder Vietnam boutique guesthouse, ${opts.theme === 'saigon_insider' ? 'Saigon street life morning quiet' : 'cozy hotel interior warm amber light'}, square 1:1, cinematic, photo realistic, vertical depth`;
   const r = await generateAIImage({
     prompt,
     aspect_ratio: '1:1',
@@ -53,6 +131,14 @@ async function resolveImageSource(opts: {
   if (r.ok && r.local_path) {
     return { path: r.local_path, source: 'ai_image', cost: r.cost_usd };
   }
+
+  // 4. FAL exhausted / failed → fallback to existing video library frame extraction
+  console.log(`[v5t-composer] AI image fail, fallback to video-frame extraction for pos ${opts.position}`);
+  const fallback = getFallbackImageFromVideo(`v5t-${opts.postId}`, opts.position);
+  if (fallback) {
+    return { path: fallback.path, source: 'ai_image', cost: 0 };
+  }
+
   return null;
 }
 
