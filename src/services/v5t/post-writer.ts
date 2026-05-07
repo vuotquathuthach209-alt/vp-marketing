@@ -18,6 +18,41 @@ import { db } from '../../db';
 import { generate } from '../router';
 import type { V5TPost, V5TPostType, V5TTheme, V5THookPattern } from './types';
 
+/**
+ * Robust JSON extraction — handles markdown code fences, leading/trailing text,
+ * truncation, unclosed quotes/braces. Mirrors vision-analyzer.extractJSON logic.
+ * Returns null only if no usable structure found.
+ */
+function safeExtractJSON(raw: string): any | null {
+  if (!raw) return null;
+  // 1. Direct
+  try { return JSON.parse(raw); } catch {}
+
+  // 2. Strip markdown fences
+  let cleaned = raw
+    .replace(/^```(?:json|JSON)?\s*\n?/m, '')
+    .replace(/\n?\s*```\s*$/m, '')
+    .trim();
+  try { return JSON.parse(cleaned); } catch {}
+
+  // 3. Extract first {...} and try to repair
+  const m = cleaned.match(/\{[\s\S]*\}/);
+  if (m) {
+    try { return JSON.parse(m[0]); } catch {}
+    // Repair: balance quotes/brackets/braces
+    let repaired = m[0];
+    if (!repaired.trimEnd().endsWith('}')) {
+      const qc = (repaired.match(/"/g) || []).length;
+      if (qc % 2 !== 0) repaired += '"';
+      const ob = (repaired.match(/\{/g) || []).length;
+      const cb = (repaired.match(/\}/g) || []).length;
+      for (let i = 0; i < ob - cb; i++) repaired += '}';
+      try { return JSON.parse(repaired); } catch {}
+    }
+  }
+  return null;
+}
+
 /* ───────── Sonder niche hashtag library ───────── */
 
 const SONDER_HASHTAGS: Record<V5TTheme, string[]> = {
@@ -239,26 +274,40 @@ OUTPUT JSON:
   "body": "<caption full theo type guide>"
 }`;
 
-  try {
-    const text = (await generate({
-      task: 'caption',
-      system: systemPrompt,
-      user: 'Generate JSON only.',
-    })).trim();
+  // Try LLM up to 2 times — if first attempt returns malformed JSON,
+  // retry with stricter "ONLY JSON, no markdown, no commentary" instruction.
+  let lastErr = '';
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const userPrompt = attempt === 1
+        ? 'Generate JSON only.'
+        : 'Trả về CHỈ JSON hợp lệ, không markdown ```, không text trước/sau. Chỉ {"body": "..."}';
+      const text = (await generate({
+        task: 'caption',
+        system: systemPrompt,
+        user: userPrompt,
+      })).trim();
 
-    const m = text.match(/\{[\s\S]*\}/);
-    if (!m) throw new Error('no JSON');
-    const parsed = JSON.parse(m[0]);
+      const parsed = safeExtractJSON(text);
+      if (!parsed || !parsed.body) {
+        lastErr = `pass${attempt}: no JSON or empty body — raw[:150]: ${text.slice(0, 150)}`;
+        if (attempt === 1) continue;
+        throw new Error(lastErr);
+      }
 
-    return {
-      body: parsed.body || '',
-      poll_question: parsed.poll_question,
-      poll_options: parsed.poll_options,
-    };
-  } catch (e: any) {
-    console.warn('[v5t-post-writer] body gen fail:', e.message);
-    throw e;
+      return {
+        body: parsed.body,
+        poll_question: parsed.poll_question,
+        poll_options: parsed.poll_options,
+      };
+    } catch (e: any) {
+      lastErr = e.message;
+      if (attempt === 1) continue;
+      console.warn('[v5t-post-writer] body gen fail (final):', lastErr);
+      throw e;
+    }
   }
+  throw new Error(lastErr || 'unknown body gen fail');
 }
 
 async function generateHookLine(
@@ -295,10 +344,9 @@ Hook MUST cụ thể + thơ + grounded. KHÔNG generic.`;
       system: systemPrompt,
       user: 'Generate hook JSON only.',
     })).trim();
-    const m = text.match(/\{[\s\S]*\}/);
-    if (!m) return '';
-    const parsed = JSON.parse(m[0]);
-    return (parsed.hook || '').trim();
+    const parsed = safeExtractJSON(text);
+    if (!parsed) return '';
+    return String(parsed.hook || '').trim();
   } catch {
     return '';
   }
