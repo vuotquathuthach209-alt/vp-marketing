@@ -305,19 +305,6 @@ export function startScheduler() {
     }
   });
 
-  // ── Billing renewal reminders: 9h sáng mỗi ngày ──
-  cron.schedule('0 9 * * *', async () => {
-    try {
-      const { runBillingReminders } = require('./billing-reminder');
-      const r = await runBillingReminders();
-      if (r.sent > 0 || r.expired_newly > 0) {
-        console.log(`[scheduler] billing reminders: sent=${r.sent} expired=${r.expired_newly}`);
-      }
-    } catch (e: any) {
-      console.error('[scheduler] billing reminder error:', e?.message);
-    }
-  });
-
   // ── Monthly learning aggregation: 6h sáng mùng 1 hàng tháng ──
   cron.schedule('0 6 1 * *', () => {
     try {
@@ -333,23 +320,6 @@ export function startScheduler() {
   cron.schedule('0 8 * * 0', () => {
     sendWeeklyReport().catch(e => console.error('[scheduler] weekly report error:', e));
   });
-
-  // ── v24: Zalo weekly broadcast — Thứ 2 10h sáng VN time ──
-  //   Chọn 1 bài FB top engagement trong tuần → push broadcast tới OA followers.
-  //   Uses ~1 trong 15 quota Zalo/tháng (4 broadcasts/tháng, an toàn).
-  //   Timeline article vẫn cross-post mỗi bài FB (không push, không tốn quota).
-  cron.schedule('0 10 * * 1', async () => {
-    try {
-      const { runWeeklyZaloBroadcast } = require('./zalo-weekly-broadcast');
-      const hotels = db.prepare(`SELECT DISTINCT hotel_id FROM pages`).all() as any[];
-      for (const h of hotels) {
-        const result = await runWeeklyZaloBroadcast(h.hotel_id);
-        console.log(`[scheduler] zalo-weekly hotel=${h.hotel_id}:`, JSON.stringify(result));
-      }
-    } catch (e: any) {
-      console.error('[scheduler] zalo-weekly error:', e?.message);
-    }
-  }, { timezone: 'Asia/Ho_Chi_Minh' });
 
   // ── News Pipeline v9 ───────────────────────────────────────────
   // Ingest RSS mỗi 2 giờ (khung 6h-23h VN time, skip đêm)

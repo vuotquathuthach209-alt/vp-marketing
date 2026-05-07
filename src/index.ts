@@ -21,13 +21,8 @@ import otaRouter from './routes/ota';
 import adminRouter from './routes/admin';
 import onboardingRouter from './routes/onboarding';
 import monitoringRouter from './routes/monitoring';
-import subscriptionRouter from './routes/subscription';
-import paymentRouter from './routes/payment';
 import feedbackRouter from './routes/feedback';
-import referralRouter from './routes/referral';
-import zaloRouter, { zaloWebhookRouter } from './routes/zalo';
 import productAutoPostRouter from './routes/product-auto-post';
-import bankWebhookRouter from './routes/bank-webhook';
 import agentRouter from './routes/agent';
 import dataDeletionRouter from './routes/data-deletion';
 import trainingRouter from './routes/training';
@@ -99,11 +94,6 @@ const webhookLimiter = rateLimit({
   windowMs: 60 * 1000, max: 120,
   standardHeaders: true, legacyHeaders: false,
 });
-const proofLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, max: 5,
-  message: { error: 'Quá nhiều lần gửi bill. Thử lại sau 1 giờ.' },
-  standardHeaders: true, legacyHeaders: false,
-});
 const apiGeneralLimiter = rateLimit({
   windowMs: 60 * 1000, max: 300,
   standardHeaders: true, legacyHeaders: false,
@@ -112,21 +102,7 @@ const apiGeneralLimiter = rateLimit({
 app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth/register', loginLimiter);
 app.use('/webhook', webhookLimiter);
-app.use('/api/subscription/submit-proof', proofLimiter);
 app.use('/api/', apiGeneralLimiter);
-
-// Zalo domain ownership verification (file-based fallback).
-// Zalo crawler checks for file `zalo-site-verification-<code>.html` at root.
-// Content must equal the verification code.
-app.get('/zalo-site-verification-SEwnEuJyP15KshOkjlvY64EAwpol_3vXD3Wm.html', (_req, res) => {
-  res.type('text/html').send('SEwnEuJyP15KshOkjlvY64EAwpol_3vXD3Wm');
-});
-app.get('/zalo_verifierSEwnEuJyP15KshOkjlvY64EAwpol_3vXD3Wm.html', (_req, res) => {
-  res.type('text/html').send('SEwnEuJyP15KshOkjlvY64EAwpol_3vXD3Wm');
-});
-app.get('/zaloverify.html', (_req, res) => {
-  res.type('text/html').send('SEwnEuJyP15KshOkjlvY64EAwpol_3vXD3Wm');
-});
 
 // Static frontend
 app.use(express.static(path.join(__dirname, '..', 'src', 'public')));
@@ -166,11 +142,7 @@ app.use('/api/admin/youtube', youtubeOauthRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/onboarding', onboardingRouter);
 app.use('/api/monitoring', monitoringRouter);
-app.use('/api/subscription', subscriptionRouter);
-app.use('/api/payment', paymentRouter);
 app.use('/api/feedback', feedbackRouter);
-app.use('/api/referral', referralRouter);
-app.use('/api/zalo', zaloRouter);
 app.use('/api/agent', agentRouter);
 app.use('/api/training', trainingRouter);
 app.use('/api/news', newsRouter);
@@ -198,9 +170,6 @@ app.use('/api/ops', postsOpsRouter);             // Metrics + Dead Letter Queue
 // (OTA push router đã mount trước /api/ota phía trên)
 app.use('/api/data-deletion', dataDeletionRouter);
 app.use('/data-deletion', dataDeletionRouter); // also accept /data-deletion/status (URL returned to FB)
-app.use('/', zaloWebhookRouter); // POST /webhook/zalo
-app.use('/webhook', bankWebhookRouter); // POST /webhook/bank
-
 // Chatwoot bridge — agent reply → FB Messenger
 // Mounted at /webhooks/chatwoot-bridge/fb-sonder (NOT /webhook to avoid rate limiter conflict)
 app.use('/webhooks', require('./routes/chatwoot-bridge').default);
