@@ -96,43 +96,77 @@ async function resolveImageSource(opts: {
   position: number;
   preferRealFootage: boolean;
   theme: string;
+  /** Footage IDs ALREADY picked for THIS post (carousel slots filled before this one). Avoid re-picking. */
+  excludeFootageIds?: number[];
+  /** For carousel slots > 0: prefer this content_type if inventory allows */
+  preferContentType?: 'tips' | 'story' | 'general';
 }): Promise<{ path: string; source: 'real_footage' | 'ai_image'; footage_id?: number; cost: number } | null> {
   const requireRealPhoto = require('../../db').getSetting('v5t_require_real_photo') === 'true';
+  const excludeIds = opts.excludeFootageIds || [];
 
-  // 0. PRIORITY: if post-writer already picked a footage_id (caption written for it),
+  // 0. PRIORITY (only for position 0): if post-writer already picked a footage_id (caption written for it),
   // render exactly that photo — guarantees caption ↔ image consistency + no-dup propagation.
-  const post = db.prepare(`SELECT picked_footage_id FROM v5t_posts WHERE id = ?`).get(opts.postId) as any;
-  if (post?.picked_footage_id) {
-    const picked = db.prepare(`SELECT * FROM v5_footage WHERE id = ?`).get(post.picked_footage_id) as any;
-    if (picked?.path && fs.existsSync(picked.path)) {
-      const ext = path.extname(picked.path).toLowerCase();
-      if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
-        db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(picked.id);
-        console.log(`[v5t-composer] using picked_footage_id=${picked.id} (caption was written for this photo)`);
-        return { path: picked.path, source: 'real_footage', footage_id: picked.id, cost: 0 };
-      }
-      if (['.mp4', '.mov', '.webm'].includes(ext)) {
-        const framePath = path.join(TMP_FRAMES_DIR, `v5t-${opts.postId}-real-${opts.position}-${Date.now()}.jpg`);
-        if (extractFrameFromVideo(picked.path, 1.0, framePath)) {
+  if (opts.position === 0) {
+    const post = db.prepare(`SELECT picked_footage_id FROM v5t_posts WHERE id = ?`).get(opts.postId) as any;
+    if (post?.picked_footage_id) {
+      const picked = db.prepare(`SELECT * FROM v5_footage WHERE id = ?`).get(post.picked_footage_id) as any;
+      if (picked?.path && fs.existsSync(picked.path)) {
+        const ext = path.extname(picked.path).toLowerCase();
+        if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
           db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(picked.id);
-          return { path: framePath, source: 'real_footage', footage_id: picked.id, cost: 0 };
+          console.log(`[v5t-composer] pos0 using picked_footage_id=${picked.id} (caption hero)`);
+          return { path: picked.path, source: 'real_footage', footage_id: picked.id, cost: 0 };
+        }
+        if (['.mp4', '.mov', '.webm'].includes(ext)) {
+          const framePath = path.join(TMP_FRAMES_DIR, `v5t-${opts.postId}-real-${opts.position}-${Date.now()}.jpg`);
+          if (extractFrameFromVideo(picked.path, 1.0, framePath)) {
+            db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(picked.id);
+            return { path: framePath, source: 'real_footage', footage_id: picked.id, cost: 0 };
+          }
         }
       }
+      console.warn(`[v5t-composer] picked_footage_id=${post.picked_footage_id} not usable, falling back to query`);
     }
-    console.warn(`[v5t-composer] picked_footage_id=${post.picked_footage_id} not usable (file missing or unsupported), falling back to query`);
   }
 
-  // 1. Fallback: query v5_footage with NO-DUPLICATE filter (matches post-writer logic).
-  // Excludes any photo already linked to a v5t_post — prevents reuse even if picked_footage_id missing.
+  // Build SQL exclusion clause for within-post dedup
+  const exclusionSql = excludeIds.length > 0
+    ? `AND v5_footage.id NOT IN (${excludeIds.map(() => '?').join(',')})`
+    : '';
+
+  // 1a. Try preferred content_type first (matches post style — tips for tips_post carousel slot)
+  if (opts.preferContentType) {
+    const matched = db.prepare(
+      `SELECT * FROM v5_footage
+       WHERE (media_type = 'image' OR media_type IS NULL)
+         AND notes LIKE ?
+         AND NOT EXISTS (
+           SELECT 1 FROM v5t_post_images vpi WHERE vpi.footage_id = v5_footage.id
+         )
+         ${exclusionSql}
+       ORDER BY RANDOM()
+       LIMIT 1`,
+    ).get(`%content_type:${opts.preferContentType}%`, ...excludeIds) as any;
+    if (matched?.path && fs.existsSync(matched.path)) {
+      const ext = path.extname(matched.path).toLowerCase();
+      if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
+        db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(matched.id);
+        return { path: matched.path, source: 'real_footage', footage_id: matched.id, cost: 0 };
+      }
+    }
+  }
+
+  // 1b. Fallback: any never-used photo with NO-DUPLICATE filter
   const footage = db.prepare(
     `SELECT * FROM v5_footage
      WHERE (media_type = 'image' OR media_type IS NULL)
        AND NOT EXISTS (
          SELECT 1 FROM v5t_post_images vpi WHERE vpi.footage_id = v5_footage.id
        )
+       ${exclusionSql}
      ORDER BY RANDOM()
      LIMIT 1`,
-  ).get() as any;
+  ).get(...excludeIds) as any;
 
   if (footage?.path && fs.existsSync(footage.path)) {
     const ext = path.extname(footage.path).toLowerCase();
@@ -233,19 +267,60 @@ export async function composeV5TPost(postId: number): Promise<{
   const post = db.prepare(`SELECT * FROM v5t_posts WHERE id = ?`).get(postId) as V5TPost | undefined;
   if (!post) return { ok: false, images: [], total_cost_usd: 0, error: 'post_not_found' };
 
-  // Image count — TIPS post may need 1-3 images, STORY single image
-  const numImages =
-    post.type === 'tips_post' ? 1 :     // single hero image, tips in caption
-    post.type === 'story_post' ? 1 :    // single moment photo
-    post.type === 'ugc_repost' ? 1 :
-    1;
+  // ─── Determine carousel size based on type + inventory ───
+  // STORY: always 1 (single moment photo).
+  // TIPS: try carousel 3-5 if inventory has enough never-used tips/general photos.
+  //   - count available tips photos first (preferred)
+  //   - if <3 tips available, count general (fallback)
+  //   - if total available <3, fallback to single image
+  let numImages = 1;
+  let carouselContentType: 'tips' | 'general' | null = null;
 
-  console.log(`[v5t-composer] composing ${numImages} images for post ${postId} (type=${post.type})`);
+  if (post.type === 'tips_post') {
+    const { getSetting } = require('../../db');
+    const carouselEnabled = getSetting('v5t_tips_carousel_enabled') !== 'false';  // default ON
+    const targetMin = parseInt(getSetting('v5t_tips_carousel_min') || '3', 10);
+    const targetMax = parseInt(getSetting('v5t_tips_carousel_max') || '5', 10);
+
+    if (carouselEnabled) {
+      // Count never-used tips photos (excluding hero already picked)
+      const heroId = post.picked_footage_id || 0;
+      const tipsCount = (db.prepare(
+        `SELECT COUNT(*) AS n FROM v5_footage
+         WHERE (media_type = 'image' OR media_type IS NULL)
+           AND notes LIKE '%content_type:tips%'
+           AND id != ?
+           AND NOT EXISTS (SELECT 1 FROM v5t_post_images vpi WHERE vpi.footage_id = v5_footage.id)`,
+      ).get(heroId) as any).n as number;
+
+      const generalCount = (db.prepare(
+        `SELECT COUNT(*) AS n FROM v5_footage
+         WHERE (media_type = 'image' OR media_type IS NULL)
+           AND notes LIKE '%content_type:general%'
+           AND id != ?
+           AND NOT EXISTS (SELECT 1 FROM v5t_post_images vpi WHERE vpi.footage_id = v5_footage.id)`,
+      ).get(heroId) as any).n as number;
+
+      // Prefer tips, fallback to general. Need targetMin-1 additional photos (hero is the 1st).
+      if (tipsCount >= targetMin - 1) {
+        numImages = Math.min(targetMax, 1 + tipsCount);
+        carouselContentType = 'tips';
+      } else if (generalCount >= targetMin - 1) {
+        numImages = Math.min(targetMax, 1 + generalCount);
+        carouselContentType = 'general';
+      } else {
+        console.log(`[v5t-composer] TIPS carousel inventory insufficient (tips=${tipsCount}, general=${generalCount}, need ≥${targetMin - 1}) → fallback to single image`);
+      }
+    }
+  }
+
+  console.log(`[v5t-composer] composing ${numImages} images for post ${postId} (type=${post.type}${carouselContentType ? `, carousel=${carouselContentType}` : ''})`);
 
   // Pick winning hook for image overlay (use variant A as default for compose phase)
   const hookText = post.caption_a.split('\n')[0]?.trim() || '';
 
   const images: V5TPostImage[] = [];
+  const usedFootageIds: number[] = [];  // track within-post to prevent same photo twice in carousel
   let totalCost = 0;
 
   for (let i = 0; i < numImages; i++) {
@@ -254,6 +329,8 @@ export async function composeV5TPost(postId: number): Promise<{
       position: i,
       preferRealFootage: i < Math.ceil(numImages * 0.6),  // 60% real
       theme: post.theme,
+      excludeFootageIds: usedFootageIds,  // don't pick same photo twice in same carousel
+      preferContentType: i === 0 ? undefined : (carouselContentType || undefined),  // pos 0 = hero (post-writer's pick)
     });
 
     if (!src) {
@@ -272,7 +349,9 @@ export async function composeV5TPost(postId: number): Promise<{
 
     if (!ok) continue;
 
-    const stat = fs.statSync(composedPath);
+    // Track for within-post dedup (carousel slots must all be distinct photos)
+    if (src.footage_id) usedFootageIds.push(src.footage_id);
+
     const r = db.prepare(
       `INSERT INTO v5t_post_images
        (post_id, position, source, footage_id, ai_prompt,

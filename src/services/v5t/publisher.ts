@@ -175,13 +175,23 @@ export async function publishV5TPost(opts: {
 
   let result: V5TPublishResult;
 
-  // V5T refactored: 2 main types (tips_post + story_post) — both single image
-  if ((post.type === 'tips_post' || post.type === 'story_post') && images.length >= 1) {
-    result = await publishSingleImage({ imagePath: images[0].composed_path, caption });
-  } else if (post.type === 'ugc_repost' && images.length >= 1) {
+  if (images.length === 0) {
+    return { ok: false, error: `no images composed for post ${opts.post_id}` };
+  }
+
+  // TIPS post can be carousel (3-5 images) or single — depends on composer's inventory decision.
+  // STORY + UGC always single.
+  if (post.type === 'tips_post' && images.length >= 2) {
+    console.log(`[v5t-publish] post ${opts.post_id}: TIPS carousel with ${images.length} images`);
+    result = await publishCarousel({
+      imagePaths: images.map(i => i.composed_path).filter((p: string) => fs.existsSync(p)),
+      caption,
+    });
+  } else if (post.type === 'tips_post' || post.type === 'story_post' || post.type === 'ugc_repost') {
+    console.log(`[v5t-publish] post ${opts.post_id}: ${post.type} single image`);
     result = await publishSingleImage({ imagePath: images[0].composed_path, caption });
   } else {
-    return { ok: false, error: `unsupported type ${post.type} or no images` };
+    return { ok: false, error: `unsupported type ${post.type}` };
   }
 
   if (result.ok && result.fb_post_id) {

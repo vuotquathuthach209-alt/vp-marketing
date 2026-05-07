@@ -36,6 +36,7 @@ export interface V5TPost {
   status: 'draft' | 'rendered' | 'approved' | 'posted' | 'failed';
   fb_post_id?: string;
   generated_by: string;
+  picked_footage_id?: number | null;    // Set by post-writer at gen time. Composer renders THIS exact photo as hero.
   posted_at?: number;
   created_at: number;
 }
