@@ -33,9 +33,6 @@ import knowledgeRouter from './routes/knowledge';
 import botMonitorRouter from './routes/bot-monitor';
 import feedbackLoopRouter from './routes/feedback-loop';
 import agenticTemplatesRouter from './routes/agentic-templates';
-import videoStudioRouter from './routes/video-studio';
-import anthologyRouter from './routes/anthology';
-import cinemaRouter from './routes/cinema';
 import { syncHubRouter, syncHubAdminRouter, syncHubDocsRouter } from './routes/sync-hub';
 import ocrRouter from './routes/ocr';
 import domainDataRouter from './routes/domain-data';
@@ -45,7 +42,6 @@ import outreachRouter from './routes/outreach';
 import attributionRouter from './routes/attribution';
 import multiPlatformRouter from './routes/multi-platform';
 import postsOpsRouter from './routes/posts-ops';
-import youtubeOauthRouter from './routes/youtube-oauth';
 import './services/agent-tools'; // init table + register tools
 import './services/ota-readonly-guard'; // self-test fires on boot (fail-fast if guard broken)
 // v8: Intent matcher self-test
@@ -124,8 +120,6 @@ app.use('/api/funnel', funnelAnalyticsRouter);
 app.use('/api/retention', retentionRouter);
 app.use('/api/knowledge', knowledgeRouter);
 app.use('/api/ota', otaRouter);
-// YouTube OAuth (Step 1) — mount BEFORE adminRouter để bypass admin auth middleware (callback từ Google không có cookie)
-app.use('/api/admin/youtube', youtubeOauthRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/onboarding', onboardingRouter);
 app.use('/api/monitoring', monitoringRouter);
@@ -138,9 +132,6 @@ app.use('/api/conversations', conversationsRouter);
 app.use('/api/bot-monitor', botMonitorRouter);
 app.use('/api/feedback-loop', feedbackLoopRouter);
 app.use('/api/agentic-templates', agenticTemplatesRouter);
-app.use('/api/video-studio', videoStudioRouter);    // VIDEO STUDIO — module riêng biệt
-app.use('/api/anthology', anthologyRouter);         // V3 Sonder Stories Anthology
-app.use('/api/cinema', cinemaRouter);               // V4 Sonder Cinema (long-form)
 app.use('/api/sync', syncHubRouter);             // HMAC auth for OTA team
 app.use('/api/sync-admin', syncHubAdminRouter);  // UI admin (cookie auth)
 app.use('/sync-hub', syncHubDocsRouter);         // Public docs page
@@ -157,7 +148,6 @@ app.use('/data-deletion', dataDeletionRouter); // also accept /data-deletion/sta
 // V5 Content Pipeline — Real footage upload + management
 // Reference: skill sonder-content-v5
 app.use('/admin/footage', require('./routes/v5-footage').default);
-app.use('/admin/v5', require('./routes/v5-admin').default);
 app.use('/admin/v5t', require('./routes/v5t-admin').default);
 
 app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
@@ -253,12 +243,6 @@ app.listen(config.port, () => {
     const { autoSeedIfNeeded } = require('./services/agentic/template-seeder');
     autoSeedIfNeeded();
   } catch (e: any) { console.warn('[boot] agentic template seed fail:', e?.message); }
-
-  // V3 Anthology: Sonder Stories — seed 6 characters + 4 locations + 4 values + 7 logos + 3 arcs
-  try {
-    const { autoSeedAnthologyIfNeeded } = require('./services/anthology/seed-data');
-    autoSeedAnthologyIfNeeded();
-  } catch (e: any) { console.warn('[boot] anthology seed fail:', e?.message); }
 
   startScheduler();
   startTelegramBot();

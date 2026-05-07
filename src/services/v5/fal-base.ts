@@ -15,7 +15,7 @@
 import axios, { AxiosError } from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
-import { getSetting } from '../../../db';
+import { getSetting } from '../../db';
 
 const QUEUE_BASE = 'https://queue.fal.run';
 const MEDIA_DIR = '/opt/vp-marketing/data/media';

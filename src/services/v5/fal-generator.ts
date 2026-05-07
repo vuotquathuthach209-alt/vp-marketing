@@ -21,7 +21,7 @@ import {
   falPoll,
   falFetchResult,
   getFalApiKey,
-} from '../cinema/cinema-providers/fal-base';
+} from './fal-base';
 
 const V5_GEN_DIR = '/opt/vp-marketing/data/media/v5-gen';
 if (!fs.existsSync(V5_GEN_DIR)) fs.mkdirSync(V5_GEN_DIR, { recursive: true });
