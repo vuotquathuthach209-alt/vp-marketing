@@ -11,7 +11,7 @@
  *   - ugc_repost: repost guest's tagged content
  */
 
-export type V5TPostType = 'carousel' | 'single_image' | 'poll' | 'question' | 'ugc_repost';
+export type V5TPostType = 'tips_post' | 'story_post' | 'ugc_repost';
 export type V5TTheme = 'saigon_insider' | 'sonder_bts';
 export type V5THookPattern =
   | 'textural_asmr'        // text equivalent: macro/sensory description

@@ -175,21 +175,13 @@ export async function publishV5TPost(opts: {
 
   let result: V5TPublishResult;
 
-  if (post.type === 'carousel' && images.length >= 2) {
-    result = await publishCarousel({
-      imagePaths: images.map(i => i.composed_path),
-      caption,
-    });
-  } else if (post.type === 'single_image' && images.length >= 1) {
+  // V5T refactored: 2 main types (tips_post + story_post) — both single image
+  if ((post.type === 'tips_post' || post.type === 'story_post') && images.length >= 1) {
     result = await publishSingleImage({ imagePath: images[0].composed_path, caption });
-  } else if (post.type === 'poll' || post.type === 'question') {
-    result = await publishQuestionPost({
-      question: post.poll_question || caption,
-      options: post.poll_options ? JSON.parse(post.poll_options) : undefined,
-      imagePath: images[0]?.composed_path,
-    });
+  } else if (post.type === 'ugc_repost' && images.length >= 1) {
+    result = await publishSingleImage({ imagePath: images[0].composed_path, caption });
   } else {
-    return { ok: false, error: `unsupported type ${post.type}` };
+    return { ok: false, error: `unsupported type ${post.type} or no images` };
   }
 
   if (result.ok && result.fb_post_id) {

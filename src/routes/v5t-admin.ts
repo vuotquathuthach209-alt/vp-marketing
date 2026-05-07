@@ -98,10 +98,8 @@ router.get('/dashboard', (_req, res) => {
 <body>
   <h1>📸 Sonder V5T Text/Image Admin</h1>
   <div style="margin-bottom:16px">
-    <button class="btn-trigger" onclick="trigger('carousel')">⚡ Carousel</button>
-    <button class="btn-trigger" onclick="trigger('single_image')">⚡ Single</button>
-    <button class="btn-trigger" onclick="trigger('poll')">⚡ Poll</button>
-    <button class="btn-trigger" onclick="trigger('question')">⚡ Question</button>
+    <button class="btn-trigger" onclick="trigger('tips_post')">⚡ TIPS Post (5 quán phở...)</button>
+    <button class="btn-trigger" onclick="trigger('story_post')">⚡ STORY Post (chú Tuấn pha trà...)</button>
     <button class="btn-trigger" onclick="publishNext()" style="margin-left:24px">📤 Publish Next</button>
   </div>
   <div id="posts">Loading...</div>

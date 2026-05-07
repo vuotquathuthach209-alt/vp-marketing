@@ -75,43 +75,41 @@ description: BẮT BUỘC đọc khi user yêu cầu build/edit/review pipeline 
 
 ---
 
-## 📐 V5T POST TYPES (4 templates lock)
+## 📐 V5T POST TYPES (REFACTORED 2026-05-07 — 2 main types only)
 
-### Type 1: **CAROUSEL** (40% V5T volume)
-- 4-6 images per post
-- Image 1 = hero with text overlay (hook 1 dòng)
-- Image 2-5 = supporting shots (room, view, amenity, neighborhood)
-- Image 6 = call-to-action subtle ("ghé Sonder thử" — KHÔNG hard-sell)
-- Caption: 30-60 từ + 3 hashtag
+> **PIVOT**: User feedback yêu cầu "đăng đều như người thật kể chuyện hoặc chia sẻ tips, không bị bóp tương tác". Em refactor từ 4 types → 2 types đơn giản hơn, real photo ONLY.
 
-**Use case**:
-- Phòng tour: 5 góc 1 phòng Bình Thạnh view sông
-- Sonder Airport tour: sảnh + phòng + sân + view + chìa khoá
-- Walking guide: 5 quán đường Hoàng Văn Thụ trong 800m
-
-### Type 2: **SINGLE IMAGE + STORY** (30% V5T volume)
-- 1 image high-quality (real photo)
-- Caption format: hook + story 4-6 dòng + closing poetic
-- Same Sonder voice (skill brand-voice)
+### Type 1: **TIPS POST** (60% V5T volume)
+- 1 hero image (real photo từ chú Tuấn / lễ tân)
+- Caption format:
+  - Hook 1 dòng (number + topic): "5 quán phở hẻm sâu Bình Thạnh"
+  - Body: 3-5 tips cụ thể (mỗi 1-2 dòng):
+    - "Phở Bà Tám — đường Hoàng Văn Thụ, mở 5h30. Nước dùng ngọt từ xương heo, không bột ngọt."
+  - Closing: 1 dòng poetic, KHÔNG CTA
+- 3-5 hashtags niche
+- Total ~80-150 từ — concrete, useful, locals-only
 
 **Use case**:
-- Chú Tuấn pha trà gừng đêm mưa
-- Cô Hà để trà ngoài cửa khi rảnh
-- Anh Khanh quay lại lần thứ 4
+- "5 quán phở hẻm sâu Bình Thạnh" (anh chụp quán phở quanh Sonder)
+- "3 cafe yên đêm Q1 dân local hay tới"
+- "4 góc Sài Gòn 5h sáng đẹp nhất"
+- "7 món ăn vặt đường HVT < 30k"
 
-### Type 3: **POLL/QUESTION** (15% V5T volume)
-- FB native poll OR question post
-- Trigger spontaneous comment (mạnh nhất theo algo 2026)
+### Type 2: **STORY POST** (40% V5T volume)
+- 1 photo thật moment cụ thể (Sonder BTS)
+- Caption format:
+  - Hook 1 dòng grounded (giờ + địa điểm)
+  - Body 4-6 dòng moment cụ thể (chú Tuấn / khách / lễ tân)
+  - Closing 1 dòng poetic ý tự thành
+- 50-80 từ POV "mình" intimate
 
 **Use case**:
-- "Anh chị thích phở 6h sáng hay bún bò 11h khuya?" (option A vs B)
-- "Sonder nên thêm gì vào sảnh nhỉ? Em đang nghĩ thêm cuốn sổ thơ Sài Gòn để khách viết..."
-- "Phòng đêm Sài Gòn — anh chị thích yên tĩnh tuyệt đối hay có chút tiếng xe nhẹ?"
+- "Đêm thứ 3 ở Sonder Airport. Chú Tuấn tự pha trà mình đợi sẵn."
+- "Cô Vy cafe đối diện. Quen mặt mình lần thứ 2 đã nhớ đơn."
+- "Anh Khanh quay lại lần 4. Vẫn chú Tuấn ấy."
 
-### Type 4: **UGC REPOST** (15% V5T volume — manual approve)
-- Khách tag #sondervn / @sondervn
-- Em auto-detect → notify Telegram → anh duyệt 1-click → repost
-- Caption: credit + thank-you + brief context
+### Type 3 (optional): **UGC REPOST** (manual approve)
+- Khách tag #sondervn → notify Telegram → 1-click repost
 
 ---
 

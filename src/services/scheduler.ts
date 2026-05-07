@@ -1104,52 +1104,53 @@ export function startScheduler() {
   // T3/T5 carousel + single, CN poll/question.
   // Default DISABLED — enable: setting v5t_cron_enabled='true'
   if ((require('../db').getSetting('v5t_cron_enabled') || 'false') === 'true') {
-    // T3 10:00 — Carousel
-    cron.schedule('0 10 * * 2', async () => {
+    // V5T REFACTORED: 4 posts/tuần đều đặn (T2/T4/T6 TIPS, CN STORY)
+    // T2 10:00 — TIPS post (Sài Gòn Insider guide)
+    cron.schedule('0 10 * * 1', async () => {
       try {
         const { runV5TGeneratePhase } = require('./v5t/orchestrator');
-        const r = await runV5TGeneratePhase({ type: 'carousel', generated_by: 'cron-T3-carousel' });
-        console.log(`[scheduler] v5t-T3-carousel: ${r.ok ? '✅' : '❌'} post=${r.post_id} cost=$${(r.total_cost_usd || 0).toFixed(3)}`);
-      } catch (e: any) {
-        console.error('[scheduler] v5t-T3-carousel err:', e?.message);
-      }
+        const r = await runV5TGeneratePhase({ type: 'tips_post', generated_by: 'cron-T2-tips' });
+        console.log(`[scheduler] v5t-T2-tips: ${r.ok ? '✅' : '❌'} post=${r.post_id}`);
+      } catch (e: any) { console.error('[scheduler] v5t-T2 err:', e?.message); }
     }, { timezone: 'Asia/Ho_Chi_Minh' });
 
-    // T5 10:00 — Single image
-    cron.schedule('0 10 * * 4', async () => {
+    // T4 10:00 — STORY post (Sonder BTS moment)
+    cron.schedule('0 10 * * 3', async () => {
       try {
         const { runV5TGeneratePhase } = require('./v5t/orchestrator');
-        const r = await runV5TGeneratePhase({ type: 'single_image', generated_by: 'cron-T5-single' });
-        console.log(`[scheduler] v5t-T5-single: ${r.ok ? '✅' : '❌'} post=${r.post_id}`);
-      } catch (e: any) {
-        console.error('[scheduler] v5t-T5-single err:', e?.message);
-      }
+        const r = await runV5TGeneratePhase({ type: 'story_post', generated_by: 'cron-T4-story' });
+        console.log(`[scheduler] v5t-T4-story: ${r.ok ? '✅' : '❌'} post=${r.post_id}`);
+      } catch (e: any) { console.error('[scheduler] v5t-T4 err:', e?.message); }
     }, { timezone: 'Asia/Ho_Chi_Minh' });
 
-    // CN 10:00 — Poll/question
+    // T6 10:00 — TIPS post (Sài Gòn Insider, 2nd of week)
+    cron.schedule('0 10 * * 5', async () => {
+      try {
+        const { runV5TGeneratePhase } = require('./v5t/orchestrator');
+        const r = await runV5TGeneratePhase({ type: 'tips_post', generated_by: 'cron-T6-tips' });
+        console.log(`[scheduler] v5t-T6-tips: ${r.ok ? '✅' : '❌'} post=${r.post_id}`);
+      } catch (e: any) { console.error('[scheduler] v5t-T6 err:', e?.message); }
+    }, { timezone: 'Asia/Ho_Chi_Minh' });
+
+    // CN 10:00 — STORY post
     cron.schedule('0 10 * * 0', async () => {
       try {
         const { runV5TGeneratePhase } = require('./v5t/orchestrator');
-        const type = Math.random() < 0.5 ? 'poll' : 'question';
-        const r = await runV5TGeneratePhase({ type, generated_by: `cron-CN-${type}` });
-        console.log(`[scheduler] v5t-CN-${type}: ${r.ok ? '✅' : '❌'} post=${r.post_id}`);
-      } catch (e: any) {
-        console.error('[scheduler] v5t-CN err:', e?.message);
-      }
+        const r = await runV5TGeneratePhase({ type: 'story_post', generated_by: 'cron-CN-story' });
+        console.log(`[scheduler] v5t-CN-story: ${r.ok ? '✅' : '❌'} post=${r.post_id}`);
+      } catch (e: any) { console.error('[scheduler] v5t-CN err:', e?.message); }
     }, { timezone: 'Asia/Ho_Chi_Minh' });
 
-    // Daily 11:00 — publish next approved (after gen+admin review window)
+    // Daily 11:00 — publish next approved (after gen at 10h)
     cron.schedule('0 11 * * *', async () => {
       try {
         const { runV5TPublishPhase } = require('./v5t/orchestrator');
         const r = await runV5TPublishPhase();
         if (r.ok) console.log(`[scheduler] v5t-publish: ✅ post=${r.post_id} fb=${r.fb_post_id}`);
-      } catch (e: any) {
-        console.error('[scheduler] v5t-publish err:', e?.message);
-      }
+      } catch (e: any) { console.error('[scheduler] v5t-publish err:', e?.message); }
     }, { timezone: 'Asia/Ho_Chi_Minh' });
 
-    console.log('[scheduler] V5T Text/Image cron ENABLED (T3/T5 10h carousel/single, CN 10h poll, publish 11h daily)');
+    console.log('[scheduler] V5T Text/Image cron ENABLED (T2/T4/T6/CN 10h gen — TIPS+STORY, publish 11h daily, REAL PHOTO ONLY)');
   } else {
     console.log('[scheduler] V5T Text/Image cron DISABLED (v5t_cron_enabled=false)');
   }

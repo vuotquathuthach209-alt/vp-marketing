@@ -59,12 +59,8 @@ function pickTheme(): V5TTheme {
 }
 
 function pickPostType(): V5TPostType {
-  // 40% carousel, 30% single, 15% poll, 15% question
-  const r = Math.random();
-  if (r < 0.4) return 'carousel';
-  if (r < 0.7) return 'single_image';
-  if (r < 0.85) return 'poll';
-  return 'question';
+  // 60% tips_post, 40% story_post
+  return Math.random() < 0.6 ? 'tips_post' : 'story_post';
 }
 
 function pick3HookPatterns(theme: V5TTheme): [V5THookPattern, V5THookPattern, V5THookPattern] {
@@ -90,14 +86,23 @@ async function generateCaptionBody(opts: {
     : `Theme: SONDER BEHIND-THE-SCENE — moment hành động cụ thể tại Sonder. Chú Tuấn pha trà, sảnh đèn vàng đêm mưa, khách check-in muộn.`;
 
   let typeGuide = '';
-  if (opts.type === 'carousel') {
-    typeGuide = `Carousel post: caption 30-60 từ, kể 1 câu chuyện ngắn về 4-6 ảnh (sẽ được build thành carousel). Kết bằng câu poetic, KHÔNG CTA.`;
-  } else if (opts.type === 'single_image') {
-    typeGuide = `Single image: caption 40-80 từ, story format hook + body 4-6 dòng + closing poetic.`;
-  } else if (opts.type === 'poll') {
-    typeGuide = `Poll: viết câu hỏi A vs B đơn giản (max 100 chars), trigger spontaneous comment. Output JSON với poll_question + poll_options (2-4 lựa chọn ngắn).`;
-  } else if (opts.type === 'question') {
-    typeGuide = `Question post: open-ended question, gợi mở conversation thật. Caption format: hook 1 dòng + question + invitation reply.`;
+  if (opts.type === 'tips_post') {
+    typeGuide = `TIPS POST format — practical local guide:
+Title kiểu "5 quán phở hẻm sâu Bình Thạnh" / "3 cafe yên đêm Q1 dân local hay tới" / "4 góc Sài Gòn 5h sáng đẹp nhất".
+Caption format:
+  Line 1: Hook 1 dòng (number + topic)
+  Body: Liệt kê 3-5 tips cụ thể, mỗi tip 1-2 dòng:
+    - Tên quán/địa điểm + đường + giờ + 1 detail đặc biệt
+    - VD: "Phở Bà Tám — đường Hoàng Văn Thụ, mở 5h30. Nước dùng ngọt từ xương heo, không bột ngọt."
+  Closing: 1 dòng poetic (KHÔNG CTA, KHÔNG mention Sonder)
+Total ~80-150 từ. Concrete, useful, locals-only feel.`;
+  } else if (opts.type === 'story_post') {
+    typeGuide = `STORY POST format — moment thật tại Sonder:
+Caption format:
+  Line 1: Hook 1 dòng grounded (giờ + địa điểm cụ thể)
+  Body: 4-6 dòng kể 1 moment cụ thể (chú Tuấn, lễ tân, khách quen)
+  Closing: 1 dòng poetic ý tự thành
+Total 50-80 từ. POV "mình" intimate.`;
   }
 
   const systemPrompt = `Em là content strategist Sonder Vietnam. Viết FB post.
@@ -115,15 +120,9 @@ ${themeGuide}
 ${typeGuide}
 
 OUTPUT JSON:
-${opts.type === 'poll' ? `
-{
-  "body": "<caption phụ trợ ngắn 20-30 từ>",
-  "poll_question": "<câu hỏi A vs B max 100 chars>",
-  "poll_options": ["<option 1>", "<option 2>"]
-}` : `
 {
   "body": "<caption full theo type guide>"
-}`}`;
+}`;
 
   try {
     const text = (await generate({

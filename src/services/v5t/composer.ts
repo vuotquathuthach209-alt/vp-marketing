@@ -80,12 +80,16 @@ function getFallbackImageFromVideo(prefix: string, position: number): { path: st
   return null;
 }
 
-/** Resolve 1 image source via fallback chain:
- *  1. v5_footage real photos (uploaded by Sonder staff) — primary
- *  2. v5_footage video → extract frame (real footage, free)
- *  3. AI Flux gen (FAL credit needed)
- *  4. Existing video libraries → extract frame (Pexels Anthology + Cinema shots)
- *  5. null (skip shot)
+/** Resolve 1 image source — ONLY real photo from v5_footage.
+ *
+ * If v5t_require_real_photo=true (DEFAULT after refactor):
+ *   - ONLY accept real photo uploaded by Sonder staff
+ *   - NO AI Flux fallback
+ *   - NO video frame extraction fallback (Hailuo/Pexels too synthetic)
+ *   - Reject post if no real photo available
+ *
+ * Reason: Skill V5T mandate "AUTHENTIC > POLISH" + Meta C2PA penalty
+ * for AI content. Better skip post than publish synthetic.
  */
 async function resolveImageSource(opts: {
   postId: number;
@@ -93,51 +97,50 @@ async function resolveImageSource(opts: {
   preferRealFootage: boolean;
   theme: string;
 }): Promise<{ path: string; source: 'real_footage' | 'ai_image'; footage_id?: number; cost: number } | null> {
-  // 1. Try real footage from v5_footage (image type)
-  if (opts.preferRealFootage) {
-    const footage = db.prepare(
-      `SELECT * FROM v5_footage
-       WHERE used_count < 10
-         AND (media_type = 'image' OR media_type IS NULL)
-       ORDER BY used_count ASC, RANDOM()
-       LIMIT 1`,
-    ).get() as any;
+  const requireRealPhoto = require('../../db').getSetting('v5t_require_real_photo') === 'true';
 
-    if (footage?.path && fs.existsSync(footage.path)) {
-      const ext = path.extname(footage.path).toLowerCase();
-      if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
+  // 1. Try real footage from v5_footage (image OR video for frame extract — but FROM SONDER staff only)
+  const footage = db.prepare(
+    `SELECT * FROM v5_footage
+     WHERE used_count < 10
+       AND (media_type = 'image' OR media_type IS NULL)
+     ORDER BY used_count ASC, RANDOM()
+     LIMIT 1`,
+  ).get() as any;
+
+  if (footage?.path && fs.existsSync(footage.path)) {
+    const ext = path.extname(footage.path).toLowerCase();
+    if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
+      db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(footage.id);
+      return { path: footage.path, source: 'real_footage', footage_id: footage.id, cost: 0 };
+    }
+    // Sonder staff video → extract frame (still real, free)
+    if (['.mp4', '.mov', '.webm'].includes(ext)) {
+      const framePath = path.join(TMP_FRAMES_DIR, `v5t-${opts.postId}-real-${opts.position}-${Date.now()}.jpg`);
+      if (extractFrameFromVideo(footage.path, 1.0, framePath)) {
         db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(footage.id);
-        return { path: footage.path, source: 'real_footage', footage_id: footage.id, cost: 0 };
-      }
-
-      // 2. Real footage stored as video → extract frame (still real, free)
-      if (['.mp4', '.mov', '.webm'].includes(ext)) {
-        const framePath = path.join(TMP_FRAMES_DIR, `v5t-${opts.postId}-real-${opts.position}-${Date.now()}.jpg`);
-        if (extractFrameFromVideo(footage.path, 1.0, framePath)) {
-          db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(footage.id);
-          return { path: framePath, source: 'real_footage', footage_id: footage.id, cost: 0 };
-        }
+        return { path: framePath, source: 'real_footage', footage_id: footage.id, cost: 0 };
       }
     }
   }
 
-  // 3. Try AI Flux gen
-  const prompt = `Sonder Vietnam boutique guesthouse, ${opts.theme === 'saigon_insider' ? 'Saigon street life morning quiet' : 'cozy hotel interior warm amber light'}, square 1:1, cinematic, photo realistic, vertical depth`;
+  // 2. STRICT MODE: reject if no real photo (don't fallback AI)
+  if (requireRealPhoto) {
+    console.log(`[v5t-composer] no real photo available + require_real_photo=true → reject post`);
+    return null;
+  }
+
+  // 3. Permissive mode (legacy): try AI Flux + video frame fallback
+  console.log(`[v5t-composer] permissive mode — trying AI Flux fallback`);
   const r = await generateAIImage({
-    prompt,
+    prompt: `Sonder Vietnam boutique guesthouse, ${opts.theme === 'saigon_insider' ? 'Saigon street life' : 'cozy hotel interior'}, square 1:1, cinematic, photo realistic`,
     aspect_ratio: '1:1',
     filename_prefix: `v5t-${opts.postId}-pos${opts.position}`,
   });
-  if (r.ok && r.local_path) {
-    return { path: r.local_path, source: 'ai_image', cost: r.cost_usd };
-  }
+  if (r.ok && r.local_path) return { path: r.local_path, source: 'ai_image', cost: r.cost_usd };
 
-  // 4. FAL exhausted / failed → fallback to existing video library frame extraction
-  console.log(`[v5t-composer] AI image fail, fallback to video-frame extraction for pos ${opts.position}`);
   const fallback = getFallbackImageFromVideo(`v5t-${opts.postId}`, opts.position);
-  if (fallback) {
-    return { path: fallback.path, source: 'ai_image', cost: 0 };
-  }
+  if (fallback) return { path: fallback.path, source: 'ai_image', cost: 0 };
 
   return null;
 }
@@ -204,12 +207,11 @@ export async function composeV5TPost(postId: number): Promise<{
   const post = db.prepare(`SELECT * FROM v5t_posts WHERE id = ?`).get(postId) as V5TPost | undefined;
   if (!post) return { ok: false, images: [], total_cost_usd: 0, error: 'post_not_found' };
 
-  // Image count
+  // Image count — TIPS post may need 1-3 images, STORY single image
   const numImages =
-    post.type === 'carousel' ? 4 + Math.floor(Math.random() * 3) :  // 4-6
-    post.type === 'single_image' ? 1 :
-    post.type === 'poll' ? 1 :
-    post.type === 'question' ? 1 :
+    post.type === 'tips_post' ? 1 :     // single hero image, tips in caption
+    post.type === 'story_post' ? 1 :    // single moment photo
+    post.type === 'ugc_repost' ? 1 :
     1;
 
   console.log(`[v5t-composer] composing ${numImages} images for post ${postId} (type=${post.type})`);
