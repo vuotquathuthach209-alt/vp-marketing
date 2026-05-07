@@ -7,7 +7,6 @@ import { pullMetrics } from './analytics';
 import { decidePendingWinners } from './abtest';
 import { notifyAll } from './telegram';
 import { getSetting } from '../db';
-import { runAutopilotCycle, generateMorningReport, generateEveningReport, researchTopics, runAutopilotAllHotels } from './autopilot';
 import { runFullSync, runBookingSync } from './ota-sync';
 import { cleanupAiCache } from './ai-cache';
 import { pruneLearned } from './learning';
@@ -140,48 +139,6 @@ export function startScheduler() {
       console.error('[scheduler] ab decide error:', e);
     }
   });
-  // ── Autopilot: morning prep 6:30 AM VN — runs for ALL active hotels ──
-  cron.schedule('30 6 * * *', async () => {
-    try {
-      console.log('[autopilot] Morning run — all hotels');
-      await runAutopilotAllHotels();
-
-      // Generate and send morning reports per hotel
-      const hotels = db.prepare(
-        `SELECT h.id FROM mkt_hotels h WHERE h.status = 'active'
-         AND EXISTS (SELECT 1 FROM settings s WHERE s.key = 'autopilot_enabled' AND s.value = '1' AND s.hotel_id = h.id)`
-      ).all() as { id: number }[];
-
-      for (const h of hotels) {
-        try {
-          const report = await generateMorningReport(h.id);
-          await notifyAll(report);
-        } catch (e) { console.error(`[autopilot] morning report hotel ${h.id}:`, e); }
-      }
-    } catch (e) {
-      console.error('[autopilot] morning error:', e);
-    }
-  });
-
-  // ── Autopilot: evening report 9:00 PM VN — all hotels ──
-  cron.schedule('0 21 * * *', async () => {
-    try {
-      const hotels = db.prepare(
-        `SELECT h.id FROM mkt_hotels h WHERE h.status = 'active'
-         AND EXISTS (SELECT 1 FROM settings s WHERE s.key = 'autopilot_enabled' AND s.value = '1' AND s.hotel_id = h.id)`
-      ).all() as { id: number }[];
-
-      for (const h of hotels) {
-        try {
-          const report = await generateEveningReport(h.id);
-          await notifyAll(report);
-        } catch (e) { console.error(`[autopilot] evening report hotel ${h.id}:`, e); }
-      }
-    } catch (e) {
-      console.error('[autopilot] evening error:', e);
-    }
-  });
-
   // ── OTA Sync (v13: DISABLED — returning 0 hotels, replaced by Sync Hub) ──
   // Old pull-based sync đang fail vì:
   //   - OTA data validation fail ("missing name_canonical")
@@ -312,64 +269,6 @@ export function startScheduler() {
   // ── Weekly quality report: Chủ nhật 8h sáng ──
   cron.schedule('0 8 * * 0', () => {
     sendWeeklyReport().catch(e => console.error('[scheduler] weekly report error:', e));
-  });
-
-  // ── News Pipeline v9 ───────────────────────────────────────────
-  // Ingest RSS mỗi 2 giờ (khung 6h-23h VN time, skip đêm)
-  cron.schedule('0 6-23/2 * * *', async () => {
-    try {
-      const { ingestAll } = require('./news-ingest');
-      const r = await ingestAll();
-      if (r.new > 0) console.log(`[scheduler] news-ingest: ${r.new} articles mới từ ${r.sources} nguồn`);
-    } catch (e: any) {
-      console.error('[scheduler] news-ingest error:', e?.message);
-    }
-  });
-
-  // Cleanup articles quá cũ: 3h sáng mỗi ngày
-  cron.schedule('0 3 * * *', () => {
-    try {
-      const { cleanupOldArticles } = require('./news-ingest');
-      const r = cleanupOldArticles();
-      if (r.deleted > 0) console.log(`[scheduler] news cleanup: deleted ${r.deleted} old articles`);
-    } catch (e: any) {
-      console.error('[scheduler] news cleanup error:', e?.message);
-    }
-  });
-
-  // Classifier batch mỗi 30 phút (process 10 articles/run; phù hợp với 177
-  // articles/ngày ÷ 10 × 48 runs ÷ ngày = đủ headroom)
-  cron.schedule('*/30 * * * *', async () => {
-    try {
-      const { classifyBatch } = require('./news-classifier');
-      const r = await classifyBatch(10);
-      if (r.processed > 0) console.log(`[scheduler] news-classify: ${JSON.stringify(r)}`);
-    } catch (e: any) {
-      console.error('[scheduler] news-classify error:', e?.message);
-    }
-  });
-
-  // Angle generator batch mỗi giờ (slow vì Pollinations image gen ~3s/draft)
-  cron.schedule('15 */1 * * *', async () => {
-    try {
-      const { generateDraftsBatch } = require('./news-angle-generator');
-      const r = await generateDraftsBatch(5);
-      if (r.processed > 0) console.log(`[scheduler] news-angle: ${JSON.stringify(r)}`);
-    } catch (e: any) {
-      console.error('[scheduler] news-angle error:', e?.message);
-    }
-  });
-
-  // Publisher scheduler — mỗi 15 phút check drafts approved + due
-  // (Admin set scheduled_at theo khung T2/T4/T6 20h VN mặc định qua UI)
-  cron.schedule('*/15 * * * *', async () => {
-    try {
-      const { publishScheduledBatch } = require('./news-publisher');
-      const r = await publishScheduledBatch();
-      if (r.considered > 0) console.log(`[scheduler] news-publish: ${JSON.stringify(r)}`);
-    } catch (e: any) {
-      console.error('[scheduler] news-publish error:', e?.message);
-    }
   });
 
   // ── v13 Feedback Loop — Outcome classifier ─────────────────────────
@@ -1089,5 +988,5 @@ export function startScheduler() {
     }
   }, { timezone: 'Asia/Ho_Chi_Minh' });
 
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, autopilot 6:30/21:00, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, news-ingest 2h, zalo-refresh 20h, zalo-articles 2p, template-suggest CN 2h, auto-promote daily 3h, anthology daily 17h→19h VN, cinema T7 12h→20h30 VN');
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, ota-sync 6h/1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, zalo-refresh 6h, template-suggest CN 2h, auto-promote daily 3h, anthology daily 17h→19h VN, cinema T7 12h→20h30 VN');
 }

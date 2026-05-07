@@ -22,7 +22,17 @@
 import axios from 'axios';
 import { db } from '../db';
 import { truncateByCodePoints, redactSecrets } from './text-utils';
-import { isSafeUrl } from './news-ingest';
+
+// Inlined URL safety check (was imported from news-ingest, removed in cleanup)
+function isSafeUrl(url: string): { safe: boolean; reason?: string } {
+  try {
+    const u = new URL(url);
+    if (!['http:', 'https:'].includes(u.protocol)) return { safe: false, reason: 'bad_protocol' };
+    return { safe: true };
+  } catch {
+    return { safe: false, reason: 'invalid_url' };
+  }
+}
 
 const GRAPH = 'https://graph.facebook.com/v18.0';
 
