@@ -174,3 +174,57 @@ export async function syncGoogleDriveFolder(): Promise<{
 
   return result;
 }
+
+/** Backfill vision tags for footage rows that were synced before vision was working */
+export async function backfillVisionTags(limit = 50): Promise<{
+  scanned: number;
+  analyzed: number;
+  failed: number;
+}> {
+  const result = { scanned: 0, analyzed: 0, failed: 0 };
+
+  const rows = db.prepare(
+    `SELECT id, path FROM v5_footage
+     WHERE (location IS NULL OR location = '')
+       AND (media_type = 'image' OR media_type IS NULL)
+       AND path IS NOT NULL
+     ORDER BY id DESC
+     LIMIT ?`,
+  ).all(limit) as Array<{ id: number; path: string }>;
+
+  result.scanned = rows.length;
+  console.log(`[gdrive-backfill] analyzing ${rows.length} untagged photos...`);
+
+  for (const row of rows) {
+    if (!fs.existsSync(row.path)) {
+      result.failed++;
+      continue;
+    }
+    try {
+      const analysis = await analyzeImageContent(row.path);
+      if (!analysis) {
+        result.failed++;
+        continue;
+      }
+      const existingNotes = (db.prepare(`SELECT notes FROM v5_footage WHERE id = ?`).get(row.id) as any)?.notes || '';
+      const newNotes = existingNotes.includes('content_type:')
+        ? existingNotes
+        : `${existingNotes} | content_type:${analysis.content_type} | ${analysis.description}`;
+
+      db.prepare(
+        `UPDATE v5_footage
+         SET location = ?, character = ?, moment_tag = ?, notes = ?
+         WHERE id = ?`,
+      ).run(analysis.location, analysis.character, analysis.moment_tag, newNotes, row.id);
+      result.analyzed++;
+      // Throttle 200ms to respect API rate limits
+      await new Promise(r => setTimeout(r, 200));
+    } catch (e: any) {
+      console.warn(`[gdrive-backfill] ${row.id} fail:`, e.message);
+      result.failed++;
+    }
+  }
+
+  console.log(`[gdrive-backfill] DONE: analyzed=${result.analyzed}, failed=${result.failed}`);
+  return result;
+}
