@@ -150,33 +150,6 @@ export function startScheduler() {
   // cron.schedule('30 * * * *', () => { runBookingSync()... });
   // setTimeout(() => runFullSync(), 10000);
 
-  // ── v24 Sync Outbox worker: mỗi 30 giây push MKT→OTA pending ops ──
-  cron.schedule('*/30 * * * * *', async () => {
-    try {
-      const { processOutbox } = require('./sync-outbox');
-      const r = await processOutbox(20);
-      if (r.processed > 0) {
-        console.log(`[scheduler] outbox: processed=${r.processed} ok=${r.succeeded} fail=${r.failed} dlq=${r.moved_to_dlq}`);
-      }
-    } catch (e: any) {
-      console.error('[scheduler] outbox-worker error:', e?.message);
-    }
-  });
-
-  // ── v24: Cleanup orphan in_flight (worker crashed giữa chừng) mỗi 5 phút ──
-  cron.schedule('*/5 * * * *', () => {
-    try {
-      const { db } = require('../db');
-      // Reset stuck "in_flight" items → pending (will retry)
-      const r = db.prepare(
-        `UPDATE sync_outbox
-         SET status = 'pending', updated_at = ?
-         WHERE status = 'in_flight' AND updated_at < ?`
-      ).run(Date.now(), Date.now() - 5 * 60_000);
-      if (r.changes > 0) console.log(`[scheduler] outbox: reset ${r.changes} stuck in_flight items`);
-    } catch (e: any) { console.warn('[scheduler] outbox cleanup fail:', e?.message); }
-  });
-
   // ── FB Token auto-refresh: 2h sáng mỗi ngày ──
   cron.schedule('0 2 * * *', () => {
     autoRefreshPageTokens()
@@ -215,16 +188,6 @@ export function startScheduler() {
     }
   });
 
-  // ── v6 Sprint 4: QA promoter — 5:30 sáng, sau prune ──
-  cron.schedule('30 5 * * *', async () => {
-    try {
-      const { runDailyPromotion } = require('./qa-promoter');
-      await runDailyPromotion();
-    } catch (e: any) {
-      console.error('[scheduler] qa-promoter error:', e?.message);
-    }
-  });
-
   // ── v6 Sprint 8: Stalled-lead re-engagement — mỗi 30 phút ──
   cron.schedule('*/30 * * * *', async () => {
     try {
@@ -242,16 +205,6 @@ export function startScheduler() {
       await runDailyHealthCheck();
     } catch (e: any) {
       console.error('[scheduler] bot-health error:', e?.message);
-    }
-  });
-
-  // ── v7: Hotel Knowledge ETL — T2/T4/T6 03:00 ──
-  cron.schedule('0 3 * * 1,3,5', async () => {
-    try {
-      const { runEtl } = require('./etl-runner');
-      await runEtl({ trigger: 'cron' });
-    } catch (e: any) {
-      console.error('[scheduler] etl error:', e?.message);
     }
   });
 
@@ -288,19 +241,6 @@ export function startScheduler() {
       }
     } catch (e: any) {
       console.error('[scheduler] fb-metrics error:', e?.message);
-    }
-  });
-
-  // ── v22: DLQ scan — hourly detect failed posts, move to DLQ + notify admin ──
-  cron.schedule('20 * * * *', () => {
-    try {
-      const { scanAndMoveFailures } = require('./posts-dlq');
-      const r = scanAndMoveFailures();
-      if (r.moved > 0) {
-        console.log(`[scheduler] dlq-scan: moved ${r.moved} failures to DLQ`);
-      }
-    } catch (e: any) {
-      console.error('[scheduler] dlq-scan error:', e?.message);
     }
   });
 

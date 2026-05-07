@@ -13,7 +13,19 @@
 import { db } from '../db';
 import { extractFromUrl, extractText } from './ocr-client';
 import { validateDeposit, getSonderBankConfig, logOcrReceipt, ValidationResult } from './deposit-validator';
-import { confirmBooking } from './sync-hub';
+
+// Inlined sync-hub confirmBooking stub (sync-hub deleted in cleanup phase 8).
+// Now bookingflow is the active path; this is fallback for legacy sync_bookings rows.
+function confirmBooking(bookingId: number, opts: { deposit_proof_url?: string } = {}): boolean {
+  try {
+    const r = db.prepare(
+      `UPDATE sync_bookings SET status = 'confirmed', deposit_paid = 1,
+        deposit_proof_url = ?, updated_at = ?
+       WHERE id = ? AND status = 'hold'`,
+    ).run(opts.deposit_proof_url || null, Date.now(), bookingId);
+    return r.changes > 0;
+  } catch { return false; }
+}
 
 export interface DepositHandleInput {
   hotel_id: number;

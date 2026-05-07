@@ -2,7 +2,6 @@ import { Router } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { pullMetrics, getLatestMetrics, getOverview, getBestPostingTime, getDailyTrend } from '../services/analytics';
 import { createExperiment, listExperiments, decidePendingWinners } from '../services/abtest';
-import { analyzeRecentComments } from '../services/faqlearn';
 import { syncBooking, getLatestBooking } from '../services/booking';
 import { getCostOverview } from '../services/costtrack';
 
@@ -50,16 +49,6 @@ router.post('/ab/create', async (req, res) => {
 router.post('/ab/decide', (req, res) => {
   const n = decidePendingWinners();
   res.json({ decided: n });
-});
-
-// ===== FAQ auto-learn =====
-router.post('/faq/analyze', async (req, res) => {
-  try {
-    const r = await analyzeRecentComments();
-    res.json(r);
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
-  }
 });
 
 // ===== Sprint 4: Advanced KPI =====

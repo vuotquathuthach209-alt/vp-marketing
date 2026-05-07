@@ -27,12 +27,9 @@ import conversationsRouter from './routes/conversations';
 import funnelAnalyticsRouter from './routes/funnel-analytics';
 import retentionRouter from './routes/retention';
 import knowledgeRouter from './routes/knowledge';
-import botMonitorRouter from './routes/bot-monitor';
 import agenticTemplatesRouter from './routes/agentic-templates';
-import { syncHubRouter, syncHubAdminRouter, syncHubDocsRouter } from './routes/sync-hub';
 import ocrRouter from './routes/ocr';
 import domainDataRouter from './routes/domain-data';
-import postsOpsRouter from './routes/posts-ops';
 import './services/agent-tools'; // init table + register tools
 import './services/ota-readonly-guard'; // self-test fires on boot (fail-fast if guard broken)
 // v8: Intent matcher self-test
@@ -117,14 +114,9 @@ app.use('/api/monitoring', monitoringRouter);
 app.use('/api/agent', agentRouter);
 app.use('/api/hotels-editor', hotelsEditorRouter);
 app.use('/api/conversations', conversationsRouter);
-app.use('/api/bot-monitor', botMonitorRouter);
 app.use('/api/agentic-templates', agenticTemplatesRouter);
-app.use('/api/sync', syncHubRouter);             // HMAC auth for OTA team
-app.use('/api/sync-admin', syncHubAdminRouter);  // UI admin (cookie auth)
-app.use('/sync-hub', syncHubDocsRouter);         // Public docs page
 app.use('/api/ocr', ocrRouter);                  // OCR testing + config
 app.use('/api/domain', domainDataRouter);        // Policies + pricing + promotions
-app.use('/api/ops', postsOpsRouter);             // Metrics + Dead Letter Queue
 app.use('/api/data-deletion', dataDeletionRouter);
 app.use('/data-deletion', dataDeletionRouter); // also accept /data-deletion/status (URL returned to FB)
 // V5 Content Pipeline — Real footage upload + management
@@ -198,26 +190,6 @@ app.get('*', (req, res) => {
 app.listen(config.port, () => {
   console.log(`🚀 Marketing Auto chạy trên http://localhost:${config.port}`);
   console.log(`   TZ: ${config.tz}`);
-
-  // v24: Brand positioning migration — force-remove stale "chuỗi khách sạn" rows
-  //       rồi re-seed với positioning đúng ("hệ thống tư vấn phòng lưu trú")
-  try {
-    const { migrateBrandPositioning } = require('./services/brand-positioning-migrator');
-    const m = migrateBrandPositioning();
-    if (m.updated_templates > 0 || m.updated_wiki > 0) {
-      // Re-seed sau khi đã remove stale rows
-      try {
-        const { seedReplyTemplates } = require('./services/reply-template-seed');
-        const r1 = seedReplyTemplates();
-        console.log(`[boot] reply templates re-seeded: ${r1.created} created, ${r1.skipped} skipped`);
-      } catch (e: any) { console.warn('[boot] template re-seed fail:', e?.message); }
-      try {
-        const { seedWikiDefaults } = require('./scripts/seed-wiki');
-        const r2 = seedWikiDefaults();
-        console.log(`[boot] wiki re-seeded: ${JSON.stringify(r2)}`);
-      } catch (e: any) { console.warn('[boot] wiki re-seed fail:', e?.message); }
-    }
-  } catch (e: any) { console.warn('[boot] brand migrator fail:', e?.message); }
 
   // v27: Agentic template seeder — seed 25 default templates vào agentic_templates
   //       table nếu empty hoặc có template mới trong code.
