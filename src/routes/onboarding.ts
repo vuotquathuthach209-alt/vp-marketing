@@ -2,7 +2,6 @@ import { Router } from 'express';
 import { db, getSetting, setSetting } from '../db';
 import { authMiddleware, AuthRequest, getHotelId } from '../middleware/auth';
 import { verifyPageToken } from '../services/facebook';
-import { verifyHotelBot, saveHotelTelegramConfig, setHotelBotUsername } from '../services/hotel-telegram';
 import { autoGenWikiFromOta } from '../services/ota-sync';
 import { autoWikiFromUrl } from '../services/auto-wiki';
 import { getOtaRoomImages } from '../services/ota-db';
@@ -96,30 +95,6 @@ router.post('/step/fb-page', async (req: AuthRequest, res) => {
     res.json({ ok: true, pageId: Number(result.lastInsertRowid), pageName: verified.name });
   } catch (e: any) {
     res.status(400).json({ error: e?.response?.data?.error?.message || e?.message });
-  }
-});
-
-// POST /api/onboarding/step/telegram — setup hotel Telegram bot
-router.post('/step/telegram', async (req: AuthRequest, res) => {
-  const hotelId = getHotelId(req);
-  const { telegram_bot_token, telegram_group_id } = req.body;
-
-  if (!telegram_bot_token) {
-    return res.status(400).json({ error: 'Can Telegram bot token' });
-  }
-
-  try {
-    // Find first page of this hotel
-    const page = db.prepare(`SELECT id FROM pages WHERE hotel_id = ? LIMIT 1`).get(hotelId) as any;
-    if (!page) return res.status(400).json({ error: 'Ket noi FB Page truoc' });
-
-    const username = await verifyHotelBot(telegram_bot_token);
-    saveHotelTelegramConfig(page.id, telegram_bot_token, telegram_group_id || null);
-    setHotelBotUsername(page.id, username);
-
-    res.json({ ok: true, bot_username: username });
-  } catch (e: any) {
-    res.status(400).json({ error: e.message });
   }
 });
 

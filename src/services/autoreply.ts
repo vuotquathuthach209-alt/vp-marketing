@@ -3,7 +3,6 @@ import { db } from '../db';
 import { smartReply, smartReplyWithSender } from './smartreply';
 import { markTransferReceived, hasActiveBooking } from './bookingflow';
 import { notifyAll } from './telegram';
-import { notifyHotelOrGlobal } from './hotel-telegram';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
@@ -145,7 +144,7 @@ async function replyToMessages(page: any) {
               `Tổng: ${b.total_price.toLocaleString('vi-VN')}₫ | Cọc: ${b.deposit_amount.toLocaleString('vi-VN')}₫\n\n` +
               `Lễ tân xác nhận: /confirm ${b.id} [số phòng]\n` +
               `Từ chối: /reject ${b.id} [lý do]`;
-            notifyHotelOrGlobal(page.id, tgMsg).catch(() => {});
+            notifyAll(tgMsg).catch(() => {});
 
             console.log(`[auto-reply] ✅ Transfer image received, booking #${b.id}`);
             continue;
@@ -176,20 +175,6 @@ async function replyToMessages(page: any) {
           }
         }
 
-        // Chatwoot bridge — mirror incoming guest message (non-fatal if fails)
-        // Reference: skill sonder-tech-sovereignty
-        try {
-          const { mirrorIncomingMessage, isChatwootBridgeEnabled } = require('./chatwoot-bridge');
-          if (isChatwootBridgeEnabled()) {
-            mirrorIncomingMessage({
-              fb_psid: senderId,
-              fb_page_id: page.fb_page_id || String(page.id),
-              guest_name: senderName || `FB ${senderId.slice(0, 8)}`,
-              content: effectiveMessage || '(image/audio attachment)',
-            }).catch((e: any) => console.warn('[chatwoot-mirror-in] non-fatal:', e?.message));
-          }
-        } catch (e: any) { /* non-fatal */ }
-
         const { reply, images } = await smartReplyWithSender(
           effectiveMessage || '(ảnh)',
           senderId,
@@ -201,18 +186,6 @@ async function replyToMessages(page: any) {
         );
         if (!reply) continue; // bot paused
         await sendFBMessage(page.access_token, senderId, reply);
-
-        // Chatwoot bridge — mirror bot reply so agents see what AI said
-        try {
-          const { mirrorBotReply, isChatwootBridgeEnabled } = require('./chatwoot-bridge');
-          if (isChatwootBridgeEnabled()) {
-            mirrorBotReply({
-              fb_psid: senderId,
-              fb_page_id: page.fb_page_id || String(page.id),
-              reply_text: reply,
-            }).catch((e: any) => console.warn('[chatwoot-mirror-out] non-fatal:', e?.message));
-          }
-        } catch (e: any) { /* non-fatal */ }
 
         // Send room images gallery if available
         if (images && images.length > 0) {

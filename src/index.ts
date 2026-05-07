@@ -16,7 +16,6 @@ import wikiRoutes from './routes/wiki';
 import analyticsRoutes from './routes/analytics';
 import autopilotRouter from './routes/autopilot';
 import bookingRouter from './routes/booking';
-import hotelTelegramRouter from './routes/hotel-telegram';
 import otaRouter from './routes/ota';
 import adminRouter from './routes/admin';
 import onboardingRouter from './routes/onboarding';
@@ -30,8 +29,6 @@ import newsRouter from './routes/news';
 import playgroundRouter from './routes/playground';
 import hotelsEditorRouter from './routes/hotels-editor';
 import conversationsRouter from './routes/conversations';
-import otaPushRouter from './routes/ota-push';
-import otaRawRouter from './routes/ota-raw';
 import funnelAnalyticsRouter from './routes/funnel-analytics';
 import retentionRouter from './routes/retention';
 import knowledgeRouter from './routes/knowledge';
@@ -127,12 +124,6 @@ app.use('/api/wiki', wikiRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/autopilot', autopilotRouter);
 app.use('/api/booking', bookingRouter);
-app.use('/api/hotel-telegram', hotelTelegramRouter);
-// IMPORTANT: /api/ota/push phải đặt TRƯỚC /api/ota vì otaRouter dùng
-// authMiddleware — Express match prefix theo thứ tự.
-app.use('/api/ota/push', otaPushRouter);
-// OTA Raw Pipeline — layer 1 ingestion (HMAC auth for POST /push, admin auth for status endpoints)
-app.use('/api/ota-raw', otaRawRouter);
 app.use('/api/funnel', funnelAnalyticsRouter);
 app.use('/api/retention', retentionRouter);
 app.use('/api/knowledge', knowledgeRouter);
@@ -167,13 +158,8 @@ app.use('/api/outreach', outreachRouter);        // Proactive outreach (6 trigge
 app.use('/api/attribution', attributionRouter);  // Revenue attribution + LTV
 app.use('/api/mp', multiPlatformRouter);         // IG + FB crosspost + share helper
 app.use('/api/ops', postsOpsRouter);             // Metrics + Dead Letter Queue
-// (OTA push router đã mount trước /api/ota phía trên)
 app.use('/api/data-deletion', dataDeletionRouter);
 app.use('/data-deletion', dataDeletionRouter); // also accept /data-deletion/status (URL returned to FB)
-// Chatwoot bridge — agent reply → FB Messenger
-// Mounted at /webhooks/chatwoot-bridge/fb-sonder (NOT /webhook to avoid rate limiter conflict)
-app.use('/webhooks', require('./routes/chatwoot-bridge').default);
-
 // V5 Content Pipeline — Real footage upload + management
 // Reference: skill sonder-content-v5
 app.use('/admin/footage', require('./routes/v5-footage').default);

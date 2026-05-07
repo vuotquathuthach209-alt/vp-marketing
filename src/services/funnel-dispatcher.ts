@@ -1367,40 +1367,12 @@ async function createBookingDraft(state: ConversationState): Promise<void> {
       // Route: hotel-specific Telegram group if configured, else global
       // Find page_id cho hotel (từ pages table or use first active)
       try {
-        if (s.selected_property_id) {
-          const page = db.prepare(
-            `SELECT p.id FROM pages p JOIN mkt_hotels mh ON mh.id = p.hotel_id WHERE mh.ota_hotel_id = ? LIMIT 1`
-          ).get(s.selected_property_id) as any;
-          if (page?.id) {
-            const { notifyHotelOrGlobal } = require('./hotel-telegram');
-            await notifyHotelOrGlobal(page.id, summary);
-          } else {
-            const { notifyAll } = require('./telegram');
-            notifyAll(summary).catch(() => {});
-          }
-        } else {
-          const { notifyAll } = require('./telegram');
-          notifyAll(summary).catch(() => {});
-        }
+        // Sonder single-hotel: alert globally (no per-hotel telegram routing)
+        const { notifyAll } = require('./telegram');
+        notifyAll(summary).catch(() => {});
       } catch (e: any) {
         console.warn('[funnel] telegram notify fail:', e?.message);
       }
-
-      // Email notify (if SMTP configured)
-      try {
-        const { sendBookingLeadEmail } = require('./email-notify');
-        if (sendBookingLeadEmail) {
-          sendBookingLeadEmail({
-            name: s.name, phone: s.phone, email: s.email,
-            hotel_name: hotel?.name_canonical,
-            room_name: room?.display_name_vi,
-            checkin: s.checkin_date, checkout: s.checkout_date,
-            nights: s.nights, months: s.months,
-            guests: s.guests_adults, total: totalEst,
-            sender_id: state.sender_id,
-          }).catch((e: any) => console.warn('[funnel] email send fail:', e?.message));
-        }
-      } catch (e: any) { console.warn('[funnel] email notify fail:', e?.message); }
     } catch (e: any) {
       console.warn('[funnel] notify fail:', e?.message);
     }

@@ -155,11 +155,7 @@ export function startScheduler() {
       for (const h of hotels) {
         try {
           const report = await generateMorningReport(h.id);
-          // Try hotel-specific telegram first
-          const { notifyHotelOrGlobal } = await import('./hotel-telegram');
-          const page = db.prepare(`SELECT id FROM pages WHERE hotel_id = ? LIMIT 1`).get(h.id) as any;
-          if (page) await notifyHotelOrGlobal(page.id, report);
-          else await notifyAll(report);
+          await notifyAll(report);
         } catch (e) { console.error(`[autopilot] morning report hotel ${h.id}:`, e); }
       }
     } catch (e) {
@@ -178,10 +174,7 @@ export function startScheduler() {
       for (const h of hotels) {
         try {
           const report = await generateEveningReport(h.id);
-          const { notifyHotelOrGlobal } = await import('./hotel-telegram');
-          const page = db.prepare(`SELECT id FROM pages WHERE hotel_id = ? LIMIT 1`).get(h.id) as any;
-          if (page) await notifyHotelOrGlobal(page.id, report);
-          else await notifyAll(report);
+          await notifyAll(report);
         } catch (e) { console.error(`[autopilot] evening report hotel ${h.id}:`, e); }
       }
     } catch (e) {
@@ -746,96 +739,13 @@ export function startScheduler() {
         const message = lines.join('\n');
 
         try {
-          const page = db.prepare(
-            `SELECT p.id FROM pages p JOIN mkt_hotels mh ON mh.id = p.hotel_id WHERE mh.ota_hotel_id = ? LIMIT 1`
-          ).get(hotelId) as any;
-          if (page?.id) {
-            const { notifyHotelOrGlobal } = await import('./hotel-telegram');
-            await notifyHotelOrGlobal(page.id, message);
-          } else {
-            const { notifyAll } = await import('./telegram');
-            await notifyAll(message);
-          }
+          const { notifyAll } = await import('./telegram');
+          await notifyAll(message);
         } catch {}
       }
       console.log(`[scheduler] funnel follow-up: ${stuck.length} stuck bookings, ${Object.keys(byHotel).length} hotels notified`);
     } catch (e: any) {
       console.error('[scheduler] funnel follow-up error:', e?.message);
-    }
-  });
-
-  // OTA Raw Pipeline — Qwen AI classifier cron mỗi 5 phút (batch 5 hotels + 5 rooms + 20 avail + 20 images)
-  cron.schedule('*/5 * * * *', async () => {
-    try {
-      const { runQwenClassifierBatch } = require('./qwen-classifier');
-      const stats = await runQwenClassifierBatch();
-      const total = stats.hotels.ok + stats.rooms.ok + stats.availability.ok + stats.images.ok;
-      const failed = stats.hotels.fail + stats.rooms.fail + stats.availability.fail + stats.images.fail;
-      if (total > 0 || failed > 0) {
-        console.log(`[scheduler] qwen-classifier: ${total} OK, ${failed} failed (${stats.total_ms}ms) — hotels=${stats.hotels.ok}/${stats.hotels.fail} rooms=${stats.rooms.ok}/${stats.rooms.fail} avail=${stats.availability.ok}/${stats.availability.fail} images=${stats.images.ok}/${stats.images.fail}`);
-      }
-    } catch (e: any) {
-      console.error('[scheduler] qwen-classifier error:', e?.message);
-    }
-  });
-
-  // Zalo OA Article publish — mỗi 2p check scheduled articles → publish
-  cron.schedule('*/2 * * * *', async () => {
-    try {
-      const { zaloCreateArticle, textToZaloBodyBlocks } = require('./zalo');
-      const { decrypt } = require('./crypto');
-      const now = Date.now();
-      const due = db.prepare(
-        `SELECT a.*, oa.access_token, oa.refresh_token, oa.app_secret, oa.oa_name, oa.enabled, oa.hotel_id as oa_hotel_id
-         FROM zalo_articles a
-         LEFT JOIN zalo_oa oa ON a.oa_id = oa.oa_id AND oa.enabled = 1
-         WHERE a.status = 'scheduled' AND a.scheduled_at IS NOT NULL AND a.scheduled_at <= ?
-         LIMIT 10`
-      ).all(now) as any[];
-      if (due.length === 0) return;
-      let ok = 0, fail = 0;
-      for (const art of due) {
-        if (!art.access_token) {
-          db.prepare(`UPDATE zalo_articles SET status='failed', error='OA disabled/missing', updated_at=? WHERE id=?`)
-            .run(now, art.id);
-          fail++; continue;
-        }
-        db.prepare(`UPDATE zalo_articles SET status='publishing', updated_at=? WHERE id=?`).run(now, art.id);
-        try {
-          const oa = {
-            id: art.oa_hotel_id,
-            hotel_id: art.hotel_id,
-            oa_id: art.oa_id,
-            oa_name: art.oa_name,
-            access_token: decrypt(art.access_token) || '',
-            refresh_token: decrypt(art.refresh_token),
-            app_secret: decrypt(art.app_secret),
-            token_expires_at: null,
-            enabled: 1,
-          };
-          const blocks = textToZaloBodyBlocks(art.body_html);
-          const result = await zaloCreateArticle(oa, {
-            title: art.title,
-            description: art.description,
-            cover: art.cover_url,
-            bodyBlocks: blocks,
-            status: 'show',
-            comment: 'enable',
-          });
-          db.prepare(
-            `UPDATE zalo_articles SET status='published', zalo_article_id=?, zalo_article_url=?,
-             published_at=?, error=NULL, updated_at=? WHERE id=?`
-          ).run(result.article_id || null, result.url || null, Date.now(), Date.now(), art.id);
-          ok++;
-        } catch (e: any) {
-          db.prepare(`UPDATE zalo_articles SET status='failed', error=?, updated_at=? WHERE id=?`)
-            .run(e?.message || 'unknown', Date.now(), art.id);
-          fail++;
-        }
-      }
-      if (due.length > 0) console.log(`[scheduler] zalo-articles-publish: ${ok} OK, ${fail} failed`);
-    } catch (e: any) {
-      console.error('[scheduler] zalo-articles-publish error:', e?.message);
     }
   });
 
