@@ -1150,7 +1150,18 @@ export function startScheduler() {
       } catch (e: any) { console.error('[scheduler] v5t-publish err:', e?.message); }
     }, { timezone: 'Asia/Ho_Chi_Minh' });
 
-    console.log('[scheduler] V5T Text/Image cron ENABLED (T2/T4/T6/CN 10h gen — TIPS+STORY, publish 11h daily, REAL PHOTO ONLY)');
+    // Google Drive sync — every 15 min, pull new photos from anh's "divider" folder
+    cron.schedule('*/15 * * * *', async () => {
+      try {
+        const { syncGoogleDriveFolder } = require('./v5t/gdrive-sync');
+        const r = await syncGoogleDriveFolder();
+        if (r.new_files > 0) {
+          console.log(`[scheduler] gdrive-sync: ${r.new_files} new files, downloaded=${r.downloaded}, vision-analyzed=${r.analyzed}`);
+        }
+      } catch (e: any) { console.error('[scheduler] gdrive-sync err:', e?.message); }
+    });
+
+    console.log('[scheduler] V5T Text/Image cron ENABLED (T2/T4/T6/CN 10h gen — TIPS+STORY, publish 11h daily, REAL PHOTO ONLY, gdrive sync 15min)');
   } else {
     console.log('[scheduler] V5T Text/Image cron DISABLED (v5t_cron_enabled=false)');
   }

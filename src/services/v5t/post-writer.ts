@@ -73,9 +73,73 @@ function pick3HookPatterns(theme: V5TTheme): [V5THookPattern, V5THookPattern, V5
 
 /* ───────── LLM gen ───────── */
 
+/** Pick best photo from v5_footage for given type, return path + context */
+function pickPhotoForPost(type: V5TPostType, theme: V5TTheme): {
+  footage_id: number;
+  path: string;
+  description: string | null;
+  location: string | null;
+  moment_tag: string | null;
+} | null {
+  // Filter by content_type if vision-tagged
+  // Prefer tips photos for tips_post, story photos for story_post
+  const preferContentType = type === 'tips_post' ? 'tips' : 'story';
+
+  // 1. Try matching content type from notes (vision tag)
+  const matched = require('../../db').db.prepare(
+    `SELECT id, path, notes, location, character, moment_tag
+     FROM v5_footage
+     WHERE used_count < 5
+       AND (media_type = 'image' OR media_type IS NULL)
+       AND notes LIKE ?
+     ORDER BY used_count ASC, RANDOM()
+     LIMIT 1`,
+  ).get(`%content_type:${preferContentType}%`) as any;
+
+  if (matched) {
+    return {
+      footage_id: matched.id,
+      path: matched.path,
+      description: extractDescriptionFromNotes(matched.notes),
+      location: matched.location,
+      moment_tag: matched.moment_tag,
+    };
+  }
+
+  // 2. Fallback: any unused photo
+  const fallback = require('../../db').db.prepare(
+    `SELECT id, path, notes, location, character, moment_tag
+     FROM v5_footage
+     WHERE used_count < 5
+       AND (media_type = 'image' OR media_type IS NULL)
+     ORDER BY used_count ASC, RANDOM()
+     LIMIT 1`,
+  ).get() as any;
+
+  if (fallback) {
+    return {
+      footage_id: fallback.id,
+      path: fallback.path,
+      description: extractDescriptionFromNotes(fallback.notes),
+      location: fallback.location,
+      moment_tag: fallback.moment_tag,
+    };
+  }
+
+  return null;
+}
+
+function extractDescriptionFromNotes(notes: string | null): string | null {
+  if (!notes) return null;
+  // notes format: "gdrive_id:xxx | <description>"
+  const m = notes.match(/\|\s*(.+)$/);
+  return m ? m[1].trim() : null;
+}
+
 async function generateCaptionBody(opts: {
   type: V5TPostType;
   theme: V5TTheme;
+  photo_context?: { description: string | null; location: string | null; moment_tag: string | null };
 }): Promise<{
   body: string;
   poll_question?: string;
@@ -105,6 +169,10 @@ Caption format:
 Total 50-80 từ. POV "mình" intimate.`;
   }
 
+  const photoContext = opts.photo_context?.description
+    ? `\nẢNH ĐÍNH KÈM (mô tả thực): "${opts.photo_context.description}"\nLocation: ${opts.photo_context.location || 'unknown'}\nMoment: ${opts.photo_context.moment_tag || 'unknown'}\n→ Caption MUST kể chuyện THEO nội dung ảnh, không random.`
+    : '';
+
   const systemPrompt = `Em là content strategist Sonder Vietnam. Viết FB post.
 
 PHILOSOPHY (BẮT BUỘC):
@@ -114,6 +182,7 @@ PHILOSOPHY (BẮT BUỘC):
 - KHÔNG hard-sell, KHÔNG engagement bait ("Hỏi thật nhé", "Còn chần chừ")
 - Tên VN thật (Linh, Tuấn, Vy, Khanh, Hà)
 - Văn thơ, cụ thể, sensory
+${photoContext}
 
 ${themeGuide}
 
@@ -201,8 +270,23 @@ export async function generateV5TPost(opts?: {
   console.log(`[v5t-post-writer] generating type=${type} theme=${theme}`);
 
   try {
-    // 1. Generate body (and poll fields if applicable)
-    const body = await generateCaptionBody({ type, theme });
+    // 0. Pick photo first (so caption can match ảnh)
+    const photo = pickPhotoForPost(type, theme);
+    if (!photo) {
+      console.warn(`[v5t-post-writer] no real photo available — skip post (require_real_photo=true)`);
+      return null;
+    }
+
+    // 1. Generate body với context từ ảnh
+    const body = await generateCaptionBody({
+      type,
+      theme,
+      photo_context: {
+        description: photo.description,
+        location: photo.location,
+        moment_tag: photo.moment_tag,
+      },
+    });
 
     // 2. Pick 3 hook patterns
     const [pA, pB, pC] = pick3HookPatterns(theme);
