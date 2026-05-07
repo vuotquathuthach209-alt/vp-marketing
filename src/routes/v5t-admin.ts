@@ -212,6 +212,14 @@ router.get('/inventory-view', (_req, res) => {
   .filter{margin:12px 0}
   .filter button{margin-right:6px;padding:6px 14px;border:1px solid #c0b890;background:#fff;border-radius:14px;cursor:pointer;font-size:13px}
   .filter button.active{background:#3b3a30;color:#fff;border-color:#3b3a30}
+  .filter-bar{background:#fff;border:1px solid #e0d8c0;border-radius:8px;padding:14px;margin:12px 0;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+  .filter-bar label{font-size:12px;color:#666;display:flex;flex-direction:column;gap:4px}
+  .filter-bar input[type=search],.filter-bar select{padding:6px 10px;border:1px solid #c0b890;border-radius:4px;font-size:13px;min-width:180px;background:#fff}
+  .filter-bar input[type=search]:focus,.filter-bar select:focus{outline:none;border-color:#a86b3c}
+  .filter-stats{font-size:13px;color:#5a5a5a;font-weight:500}
+  .clear-btn{padding:4px 10px;background:#f0e8d0;border:1px solid #c0b890;border-radius:4px;cursor:pointer;font-size:12px;color:#5a4a3a}
+  .clear-btn:hover{background:#e8d8b0}
+  mark{background:#fde088;padding:0 2px;border-radius:2px}
   .empty{padding:40px;text-align:center;color:#888;font-style:italic}
   .refresh-btn{padding:8px 16px;background:#3b3a30;color:#fff;border:none;border-radius:4px;cursor:pointer}
 </style>
@@ -278,33 +286,36 @@ async function load() {
   }
   html += '</tbody></table>';
 
-  // === Never used photos with thumbnails ===
+  // === Never used photos — multi-filter grid ===
+  // Cache the photo list globally so filters can be applied client-side without re-fetch.
+  window.__photos = r.never_used;
+  // Distinct locations for the dropdown
+  const locations = [...new Set(r.never_used.map(p => p.location).filter(Boolean))].sort();
+
   html += '<h2>✨ Ảnh chưa dùng — sẵn sàng cho post tiếp theo (' + r.never_used.length + ')</h2>';
+
+  // Filter bar: content_type chips + location dropdown + keyword search
   html += '<div class="filter">';
-  html += '<button class="active" data-filter="all" onclick="filterPhotos(\\'all\\')">Tất cả</button>';
-  html += '<button data-filter="tips" onclick="filterPhotos(\\'tips\\')">🍜 TIPS</button>';
-  html += '<button data-filter="story" onclick="filterPhotos(\\'story\\')">🌙 STORY</button>';
-  html += '<button data-filter="general" onclick="filterPhotos(\\'general\\')">🏠 GENERAL</button>';
-  html += '<button data-filter="untagged" onclick="filterPhotos(\\'untagged\\')">❓ Untagged</button>';
+  html += '<button class="active" data-filter="all" onclick="setContentTypeFilter(\\'all\\')">Tất cả</button>';
+  html += '<button data-filter="tips" onclick="setContentTypeFilter(\\'tips\\')">🍜 TIPS</button>';
+  html += '<button data-filter="story" onclick="setContentTypeFilter(\\'story\\')">🌙 STORY</button>';
+  html += '<button data-filter="general" onclick="setContentTypeFilter(\\'general\\')">🏠 GENERAL</button>';
+  html += '<button data-filter="untagged" onclick="setContentTypeFilter(\\'untagged\\')">❓ Untagged</button>';
   html += '</div>';
 
-  if (r.never_used.length === 0) {
-    html += '<div class="empty">😱 Hết ảnh chưa dùng! Anh up ảnh mới vào Drive divider hoặc đợi cron sync 15p.</div>';
-  } else {
-    html += '<div class="photos" id="photoGrid">';
-    for (const p of r.never_used) {
-      html += \`<div class="photo" data-ct="\${p.content_type}">
-        <img src="\${p.thumb_url}" loading="lazy" onerror="this.style.background='#fdd';this.alt='Missing'">
-        <div class="info">
-          <div class="id">#\${p.id}<span class="ct-badge ct-\${p.content_type}">\${p.content_type}</span></div>
-          <div class="loc">\${p.location || '—'}</div>
-          <div class="tag">\${p.moment_tag || '—'}</div>
-          \${p.description ? \`<div class="desc">\${p.description}</div>\` : ''}
-        </div>
-      </div>\`;
-    }
-    html += '</div>';
+  html += '<div class="filter-bar">';
+  html += '<label>Location<select id="filterLocation" onchange="renderGrid()">';
+  html += '<option value="">— Tất cả location —</option>';
+  for (const loc of locations) {
+    html += \`<option value="\${loc}">\${loc}</option>\`;
   }
+  html += '</select></label>';
+  html += '<label>Search<input type="search" id="filterKeyword" placeholder="filename, moment_tag, description, ID #..." oninput="renderGrid()" autocomplete="off"></label>';
+  html += '<button class="clear-btn" onclick="clearFilters()">Clear filters</button>';
+  html += '<span class="filter-stats" id="filterStats"></span>';
+  html += '</div>';
+
+  html += '<div id="photoGridWrap"></div>';
 
   // === Used photos (compact list) ===
   if (r.used.length > 0) {
@@ -326,19 +337,113 @@ async function load() {
   html += '</tbody></table>';
 
   document.getElementById('content').innerHTML = html;
+
+  // Initial render of photo grid
+  renderGrid();
 }
 
 function statCard(slug, label, num) {
   return \`<div class="stat stat-\${slug}"><div class="num">\${num}</div><div class="lbl">\${label}</div></div>\`;
 }
 
-function filterPhotos(ct) {
-  document.querySelectorAll('.filter button').forEach(b => {
+/* ─── Multi-filter state ─── */
+window.__activeContentType = 'all';
+
+function setContentTypeFilter(ct) {
+  window.__activeContentType = ct;
+  document.querySelectorAll('.filter button[data-filter]').forEach(b => {
     b.classList.toggle('active', b.dataset.filter === ct);
   });
-  document.querySelectorAll('#photoGrid .photo').forEach(p => {
-    p.style.display = (ct === 'all' || p.dataset.ct === ct) ? '' : 'none';
+  renderGrid();
+}
+
+function clearFilters() {
+  window.__activeContentType = 'all';
+  document.querySelectorAll('.filter button[data-filter]').forEach(b => {
+    b.classList.toggle('active', b.dataset.filter === 'all');
   });
+  const locEl = document.getElementById('filterLocation');
+  const kwEl = document.getElementById('filterKeyword');
+  if (locEl) locEl.value = '';
+  if (kwEl) kwEl.value = '';
+  renderGrid();
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+function highlight(text, kw) {
+  const safe = escapeHtml(text);
+  if (!kw) return safe;
+  const re = new RegExp('(' + kw.replace(/[-\\/^$*+?.()|[\\]{}]/g, '\\\\$&') + ')', 'gi');
+  return safe.replace(re, '<mark>$1</mark>');
+}
+
+function renderGrid() {
+  const photos = window.__photos || [];
+  if (photos.length === 0) {
+    document.getElementById('photoGridWrap').innerHTML =
+      '<div class="empty">😱 Hết ảnh chưa dùng! Anh up ảnh mới vào Drive divider hoặc bấm 🔄 Sync Drive Now.</div>';
+    document.getElementById('filterStats').textContent = '';
+    return;
+  }
+
+  const ct = window.__activeContentType || 'all';
+  const loc = (document.getElementById('filterLocation')?.value || '').trim();
+  const kwRaw = (document.getElementById('filterKeyword')?.value || '').trim();
+  const kw = kwRaw.toLowerCase();
+  // Strip leading # for ID search like "#52" → "52"
+  const kwId = kw.startsWith('#') ? kw.slice(1) : kw;
+
+  const filtered = photos.filter(p => {
+    if (ct !== 'all' && p.content_type !== ct) return false;
+    if (loc && p.location !== loc) return false;
+    if (kw) {
+      const haystack = [
+        p.filename, p.moment_tag, p.location, p.description,
+        String(p.id), p.content_type,
+      ].filter(Boolean).join(' ').toLowerCase();
+      // match either substring or exact ID
+      if (!haystack.includes(kw) && String(p.id) !== kwId) return false;
+    }
+    return true;
+  });
+
+  // Stats line
+  const stats = document.getElementById('filterStats');
+  if (stats) {
+    const total = photos.length;
+    if (filtered.length === total) {
+      stats.textContent = \`Hiển thị tất cả \${total} ảnh\`;
+    } else {
+      stats.textContent = \`Hiển thị \${filtered.length} / \${total} ảnh\`;
+    }
+  }
+
+  const wrap = document.getElementById('photoGridWrap');
+  if (filtered.length === 0) {
+    wrap.innerHTML = \`<div class="empty">Không tìm thấy ảnh khớp filter (content_type=\${ct}\${loc ? ', location='+loc : ''}\${kw ? ', keyword="'+escapeHtml(kwRaw)+'"' : ''})</div>\`;
+    return;
+  }
+
+  let html = '<div class="photos">';
+  for (const p of filtered) {
+    const desc = p.description ? \`<div class="desc">\${highlight(p.description, kw)}</div>\` : '';
+    html += \`<div class="photo" data-ct="\${p.content_type}">
+      <img src="\${p.thumb_url}" loading="lazy" onerror="this.style.background='#fdd';this.alt='Missing'">
+      <div class="info">
+        <div class="id">#\${p.id}<span class="ct-badge ct-\${p.content_type}">\${p.content_type}</span></div>
+        <div class="loc">\${highlight(p.location || '—', kw)}</div>
+        <div class="tag">\${highlight(p.moment_tag || '—', kw)}</div>
+        \${desc}
+      </div>
+    </div>\`;
+  }
+  html += '</div>';
+  wrap.innerHTML = html;
 }
 
 load();
