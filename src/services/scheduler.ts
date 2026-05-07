@@ -1099,6 +1099,61 @@ export function startScheduler() {
     console.log('[scheduler] V5 Content cron DISABLED (v5_cron_enabled=false)');
   }
 
+  // ═══ V5T Text/Image Post Pipeline ═══
+  // Reference: skill sonder-content-v5t
+  // T3/T5 carousel + single, CN poll/question.
+  // Default DISABLED — enable: setting v5t_cron_enabled='true'
+  if ((require('../db').getSetting('v5t_cron_enabled') || 'false') === 'true') {
+    // T3 10:00 — Carousel
+    cron.schedule('0 10 * * 2', async () => {
+      try {
+        const { runV5TGeneratePhase } = require('./v5t/orchestrator');
+        const r = await runV5TGeneratePhase({ type: 'carousel', generated_by: 'cron-T3-carousel' });
+        console.log(`[scheduler] v5t-T3-carousel: ${r.ok ? '✅' : '❌'} post=${r.post_id} cost=$${(r.total_cost_usd || 0).toFixed(3)}`);
+      } catch (e: any) {
+        console.error('[scheduler] v5t-T3-carousel err:', e?.message);
+      }
+    }, { timezone: 'Asia/Ho_Chi_Minh' });
+
+    // T5 10:00 — Single image
+    cron.schedule('0 10 * * 4', async () => {
+      try {
+        const { runV5TGeneratePhase } = require('./v5t/orchestrator');
+        const r = await runV5TGeneratePhase({ type: 'single_image', generated_by: 'cron-T5-single' });
+        console.log(`[scheduler] v5t-T5-single: ${r.ok ? '✅' : '❌'} post=${r.post_id}`);
+      } catch (e: any) {
+        console.error('[scheduler] v5t-T5-single err:', e?.message);
+      }
+    }, { timezone: 'Asia/Ho_Chi_Minh' });
+
+    // CN 10:00 — Poll/question
+    cron.schedule('0 10 * * 0', async () => {
+      try {
+        const { runV5TGeneratePhase } = require('./v5t/orchestrator');
+        const type = Math.random() < 0.5 ? 'poll' : 'question';
+        const r = await runV5TGeneratePhase({ type, generated_by: `cron-CN-${type}` });
+        console.log(`[scheduler] v5t-CN-${type}: ${r.ok ? '✅' : '❌'} post=${r.post_id}`);
+      } catch (e: any) {
+        console.error('[scheduler] v5t-CN err:', e?.message);
+      }
+    }, { timezone: 'Asia/Ho_Chi_Minh' });
+
+    // Daily 11:00 — publish next approved (after gen+admin review window)
+    cron.schedule('0 11 * * *', async () => {
+      try {
+        const { runV5TPublishPhase } = require('./v5t/orchestrator');
+        const r = await runV5TPublishPhase();
+        if (r.ok) console.log(`[scheduler] v5t-publish: ✅ post=${r.post_id} fb=${r.fb_post_id}`);
+      } catch (e: any) {
+        console.error('[scheduler] v5t-publish err:', e?.message);
+      }
+    }, { timezone: 'Asia/Ho_Chi_Minh' });
+
+    console.log('[scheduler] V5T Text/Image cron ENABLED (T3/T5 10h carousel/single, CN 10h poll, publish 11h daily)');
+  } else {
+    console.log('[scheduler] V5T Text/Image cron DISABLED (v5t_cron_enabled=false)');
+  }
+
   // ═══ Email Automation (Phase 3 — Listmonk + Resend + BullMQ) ═══
   // Reference: skill sonder-tech-sovereignty
   // Default ENABLED. Disable: setting `email_automation_enabled = 'false'`.

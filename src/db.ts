@@ -2685,6 +2685,74 @@ CREATE INDEX IF NOT EXISTS idx_v5_ab_perf ON v5_ab_results(platform, completion_
 `);
 console.log('[db] V5 content pipeline tables ready (v5_footage + v5_scripts + v5_rendered_clips + v5_ab_results)');
 
+// ═══════════════════════════════════════════════════════════
+// V5T Text/Image post pipeline tables
+// Reference: skill sonder-content-v5t
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+-- Extend v5_footage to track image vs video media (lazy migrate via ALTER below)
+
+CREATE TABLE IF NOT EXISTS v5t_posts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL,                  -- carousel | single_image | poll | question | ugc_repost
+  theme TEXT NOT NULL,                 -- saigon_insider | sonder_bts
+  hook_pattern TEXT,                   -- chosen winner from A/B
+  caption_a TEXT NOT NULL,
+  caption_b TEXT NOT NULL,
+  caption_c TEXT NOT NULL,
+  hashtags TEXT,                       -- JSON array
+  poll_question TEXT,                  -- if type=poll
+  poll_options TEXT,                   -- JSON array of options
+  status TEXT DEFAULT 'draft',         -- draft | rendered | approved | posted | failed
+  fb_post_id TEXT,
+  generated_by TEXT,
+  posted_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_v5t_posts_status ON v5t_posts(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_v5t_posts_type ON v5t_posts(type);
+
+CREATE TABLE IF NOT EXISTS v5t_post_images (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  post_id INTEGER NOT NULL,
+  position INTEGER NOT NULL,           -- 0-based ordering for carousel
+  source TEXT NOT NULL,                -- real_footage | ai_image
+  footage_id INTEGER,                  -- if source=real_footage → v5_footage.id
+  ai_prompt TEXT,
+  composed_path TEXT NOT NULL,         -- final composited image (with text overlay if applicable)
+  width INTEGER,
+  height INTEGER,
+  has_text_overlay INTEGER DEFAULT 0,
+  cost_usd REAL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (post_id) REFERENCES v5t_posts(id)
+);
+CREATE INDEX IF NOT EXISTS idx_v5t_images_post ON v5t_post_images(post_id, position);
+
+CREATE TABLE IF NOT EXISTS v5t_ab_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  post_id INTEGER NOT NULL,
+  variant TEXT NOT NULL,               -- a | b | c
+  caption TEXT NOT NULL,
+  posted_at INTEGER NOT NULL,
+  fb_post_id TEXT,
+  reach INTEGER DEFAULT 0,
+  reactions INTEGER DEFAULT 0,
+  comments INTEGER DEFAULT 0,
+  shares INTEGER DEFAULT 0,
+  saves INTEGER DEFAULT 0,
+  first_hour_engagement INTEGER DEFAULT 0,
+  is_winner INTEGER DEFAULT 0,
+  last_metrics_at INTEGER,
+  FOREIGN KEY (post_id) REFERENCES v5t_posts(id)
+);
+CREATE INDEX IF NOT EXISTS idx_v5t_ab_post ON v5t_ab_results(post_id);
+`);
+
+// Lazy migrate v5_footage to support image type
+safeAddColumn('v5_footage', 'media_type', 'TEXT', "'video'");
+console.log('[db] V5T text/image post tables ready (v5t_posts + v5t_post_images + v5t_ab_results) + v5_footage media_type column');
+
 // Indexes trên hotel_id
 try {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_pages_hotel ON pages(hotel_id)`);
