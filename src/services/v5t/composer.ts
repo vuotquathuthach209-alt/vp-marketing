@@ -99,12 +99,38 @@ async function resolveImageSource(opts: {
 }): Promise<{ path: string; source: 'real_footage' | 'ai_image'; footage_id?: number; cost: number } | null> {
   const requireRealPhoto = require('../../db').getSetting('v5t_require_real_photo') === 'true';
 
-  // 1. Try real footage from v5_footage (image OR video for frame extract — but FROM SONDER staff only)
+  // 0. PRIORITY: if post-writer already picked a footage_id (caption written for it),
+  // render exactly that photo — guarantees caption ↔ image consistency + no-dup propagation.
+  const post = db.prepare(`SELECT picked_footage_id FROM v5t_posts WHERE id = ?`).get(opts.postId) as any;
+  if (post?.picked_footage_id) {
+    const picked = db.prepare(`SELECT * FROM v5_footage WHERE id = ?`).get(post.picked_footage_id) as any;
+    if (picked?.path && fs.existsSync(picked.path)) {
+      const ext = path.extname(picked.path).toLowerCase();
+      if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
+        db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(picked.id);
+        console.log(`[v5t-composer] using picked_footage_id=${picked.id} (caption was written for this photo)`);
+        return { path: picked.path, source: 'real_footage', footage_id: picked.id, cost: 0 };
+      }
+      if (['.mp4', '.mov', '.webm'].includes(ext)) {
+        const framePath = path.join(TMP_FRAMES_DIR, `v5t-${opts.postId}-real-${opts.position}-${Date.now()}.jpg`);
+        if (extractFrameFromVideo(picked.path, 1.0, framePath)) {
+          db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(picked.id);
+          return { path: framePath, source: 'real_footage', footage_id: picked.id, cost: 0 };
+        }
+      }
+    }
+    console.warn(`[v5t-composer] picked_footage_id=${post.picked_footage_id} not usable (file missing or unsupported), falling back to query`);
+  }
+
+  // 1. Fallback: query v5_footage with NO-DUPLICATE filter (matches post-writer logic).
+  // Excludes any photo already linked to a v5t_post — prevents reuse even if picked_footage_id missing.
   const footage = db.prepare(
     `SELECT * FROM v5_footage
-     WHERE used_count < 10
-       AND (media_type = 'image' OR media_type IS NULL)
-     ORDER BY used_count ASC, RANDOM()
+     WHERE (media_type = 'image' OR media_type IS NULL)
+       AND NOT EXISTS (
+         SELECT 1 FROM v5t_post_images vpi WHERE vpi.footage_id = v5_footage.id
+       )
+     ORDER BY RANDOM()
      LIMIT 1`,
   ).get() as any;
 

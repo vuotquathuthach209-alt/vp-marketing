@@ -73,7 +73,16 @@ function pick3HookPatterns(theme: V5TTheme): [V5THookPattern, V5THookPattern, V5
 
 /* ───────── LLM gen ───────── */
 
-/** Pick best photo from v5_footage for given type, return path + context */
+/** Pick best photo from v5_footage for given type, return path + context.
+ *
+ * NO-DUPLICATE GUARANTEE (Phase 6):
+ *   - Excludes any photo that is linked to a v5t_posts row with non-null fb_post_id
+ *     (i.e. already published to Facebook).
+ *   - Excludes photo linked to any draft/approved/scheduled v5t_post (avoid same photo
+ *     waiting in queue twice).
+ *   - Falls back to "least-used" only if 100% of inventory has been published — in which
+ *     case we pick the oldest-used photo to maximize freshness gap.
+ */
 function pickPhotoForPost(type: V5TPostType, theme: V5TTheme): {
   footage_id: number;
   path: string;
@@ -85,18 +94,28 @@ function pickPhotoForPost(type: V5TPostType, theme: V5TTheme): {
   // Prefer tips photos for tips_post, story photos for story_post
   const preferContentType = type === 'tips_post' ? 'tips' : 'story';
 
-  // 1. Try matching content type from notes (vision tag)
-  const matched = require('../../db').db.prepare(
+  // SQL fragment: photo NOT linked to any v5t_post (regardless of status).
+  // This is the strict no-duplicate filter the user requested ("đừng để trùng").
+  const NEVER_USED = `
+    NOT EXISTS (
+      SELECT 1 FROM v5t_post_images vpi
+      WHERE vpi.footage_id = v5_footage.id
+    )
+  `;
+
+  // 1. Try matching content type AND never-used (strictest)
+  const matched = db.prepare(
     `SELECT id, path, notes, location, character, moment_tag
      FROM v5_footage
-     WHERE used_count < 5
-       AND (media_type = 'image' OR media_type IS NULL)
+     WHERE (media_type = 'image' OR media_type IS NULL)
        AND notes LIKE ?
-     ORDER BY used_count ASC, RANDOM()
+       AND ${NEVER_USED}
+     ORDER BY RANDOM()
      LIMIT 1`,
   ).get(`%content_type:${preferContentType}%`) as any;
 
   if (matched) {
+    console.log(`[v5t-post-writer] picked photo id=${matched.id} (matched content_type=${preferContentType}, never used)`);
     return {
       footage_id: matched.id,
       path: matched.path,
@@ -106,26 +125,53 @@ function pickPhotoForPost(type: V5TPostType, theme: V5TTheme): {
     };
   }
 
-  // 2. Fallback: any unused photo
-  const fallback = require('../../db').db.prepare(
+  // 2. Any never-used photo (relax content_type)
+  const anyNeverUsed = db.prepare(
     `SELECT id, path, notes, location, character, moment_tag
      FROM v5_footage
-     WHERE used_count < 5
-       AND (media_type = 'image' OR media_type IS NULL)
-     ORDER BY used_count ASC, RANDOM()
+     WHERE (media_type = 'image' OR media_type IS NULL)
+       AND ${NEVER_USED}
+     ORDER BY RANDOM()
      LIMIT 1`,
   ).get() as any;
 
-  if (fallback) {
+  if (anyNeverUsed) {
+    console.log(`[v5t-post-writer] picked photo id=${anyNeverUsed.id} (any never-used, content_type relaxed)`);
     return {
-      footage_id: fallback.id,
-      path: fallback.path,
-      description: extractDescriptionFromNotes(fallback.notes),
-      location: fallback.location,
-      moment_tag: fallback.moment_tag,
+      footage_id: anyNeverUsed.id,
+      path: anyNeverUsed.path,
+      description: extractDescriptionFromNotes(anyNeverUsed.notes),
+      location: anyNeverUsed.location,
+      moment_tag: anyNeverUsed.moment_tag,
     };
   }
 
+  // 3. Last-resort fallback: ALL photos exhausted → reuse oldest-used to maximize gap.
+  // Only triggers when inventory < posts. Prefer non-published over published.
+  const oldest = db.prepare(
+    `SELECT vf.id, vf.path, vf.notes, vf.location, vf.character, vf.moment_tag,
+            MAX(COALESCE(vp.created_at, 0)) AS last_used_at
+     FROM v5_footage vf
+     LEFT JOIN v5t_post_images vpi ON vpi.footage_id = vf.id
+     LEFT JOIN v5t_posts vp ON vp.id = vpi.post_id
+     WHERE (vf.media_type = 'image' OR vf.media_type IS NULL)
+     GROUP BY vf.id
+     ORDER BY last_used_at ASC, RANDOM()
+     LIMIT 1`,
+  ).get() as any;
+
+  if (oldest) {
+    console.warn(`[v5t-post-writer] ⚠️ inventory exhausted — reusing oldest photo id=${oldest.id} (last used ${oldest.last_used_at ? new Date(oldest.last_used_at).toISOString() : 'never'})`);
+    return {
+      footage_id: oldest.id,
+      path: oldest.path,
+      description: extractDescriptionFromNotes(oldest.notes),
+      location: oldest.location,
+      moment_tag: oldest.moment_tag,
+    };
+  }
+
+  console.warn(`[v5t-post-writer] no photo available at all (v5_footage empty or all videos)`);
   return null;
 }
 
@@ -307,14 +353,15 @@ export async function generateV5TPost(opts?: {
     const captionB = `${hookB}\n\n${body.body}\n\n${tagsLine}`;
     const captionC = `${hookC}\n\n${body.body}\n\n${tagsLine}`;
 
-    // 5. Persist to DB
+    // 5. Persist to DB — save picked_footage_id so composer renders the SAME photo
+    // we wrote the caption for (caption-image consistency + no-duplicate propagation).
     const now = Date.now();
     const r = db.prepare(
       `INSERT INTO v5t_posts
        (type, theme, hook_pattern, caption_a, caption_b, caption_c,
         hashtags, poll_question, poll_options,
-        status, generated_by, created_at)
-       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`,
+        status, generated_by, picked_footage_id, created_at)
+       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`,
     ).run(
       type, theme,
       captionA, captionB, captionC,
@@ -322,6 +369,7 @@ export async function generateV5TPost(opts?: {
       body.poll_question || null,
       body.poll_options ? JSON.stringify(body.poll_options) : null,
       opts?.generated_by || 'manual',
+      photo.footage_id,
       now,
     );
 

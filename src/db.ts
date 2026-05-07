@@ -2751,7 +2751,13 @@ CREATE INDEX IF NOT EXISTS idx_v5t_ab_post ON v5t_ab_results(post_id);
 
 // Lazy migrate v5_footage to support image type
 safeAddColumn('v5_footage', 'media_type', 'TEXT', "'video'");
-console.log('[db] V5T text/image post tables ready (v5t_posts + v5t_post_images + v5t_ab_results) + v5_footage media_type column');
+
+// Lazy migrate v5t_posts: picked_footage_id so caption + rendered image stay consistent
+// (post-writer picks photo, saves id here, composer renders that exact photo).
+// This is also the propagation channel for the no-duplicate guarantee.
+safeAddColumn('v5t_posts', 'picked_footage_id', 'INTEGER');
+
+console.log('[db] V5T text/image post tables ready (v5t_posts + v5t_post_images + v5t_ab_results) + v5_footage media_type + v5t_posts.picked_footage_id');
 
 // Indexes trên hotel_id
 try {
