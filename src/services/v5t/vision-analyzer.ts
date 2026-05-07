@@ -57,7 +57,7 @@ content_type guide:
 KHÔNG văn vẻ. JSON only.`;
 
     const r = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
       {
         contents: [{
           parts: [
