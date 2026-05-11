@@ -223,7 +223,7 @@ function inferSource(imagePath: string): ImageSource {
 function countInternalDupes(phash: string, excludePath: string): { count: number; paths: string[] } {
   if (!phash) return { count: 0, paths: [] };
   const rows = db.prepare(
-    `SELECT path FROM copyright_phashes WHERE phash IS NOT NULL AND image_path != ?`,
+    `SELECT image_path AS path, phash FROM copyright_phashes WHERE phash IS NOT NULL AND image_path != ?`,
   ).all(excludePath) as Array<{ path: string }>;
   const dupes: string[] = [];
   for (const r of rows) {
