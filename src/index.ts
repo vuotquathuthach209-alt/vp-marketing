@@ -176,12 +176,7 @@ app.listen(config.port, () => {
   console.log(`🚀 Marketing Auto chạy trên http://localhost:${config.port}`);
   console.log(`   TZ: ${config.tz}`);
 
-  // v27: Agentic template seeder — seed 25 default templates vào agentic_templates
-  //       table nếu empty hoặc có template mới trong code.
-  try {
-    const { autoSeedIfNeeded } = require('./services/agentic/template-seeder');
-    autoSeedIfNeeded();
-  } catch (e: any) { console.warn('[boot] agentic template seed fail:', e?.message); }
+  // Agentic template seeder REMOVED in pivot 2026-05-11 (chat module deleted).
 
   startScheduler();
   startTelegramBot();
