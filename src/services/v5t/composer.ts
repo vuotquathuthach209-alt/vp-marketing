@@ -104,6 +104,31 @@ async function resolveImageSource(opts: {
   const requireRealPhoto = require('../../db').getSetting('v5t_require_real_photo') === 'true';
   const excludeIds = opts.excludeFootageIds || [];
 
+  // Pre-publish copyright gate (added 2026-05-11 after FB takedown).
+  // Setting: v5t_copyright_check_enabled (default true). Setting: v5t_copyright_block_threshold (default 60).
+  const copyrightEnabled = require('../../db').getSetting('v5t_copyright_check_enabled') !== 'false';
+  const blockThreshold = parseInt(require('../../db').getSetting('v5t_copyright_block_threshold') || '60', 10);
+
+  const checkCopyright = async (imagePath: string): Promise<boolean> => {
+    if (!copyrightEnabled) return true;
+    try {
+      const { isImageSafeToPublish } = require('../copyright/verifier');
+      const r = await isImageSafeToPublish(imagePath, { threshold: blockThreshold });
+      if (!r.ok) {
+        console.warn(`[v5t-composer] 🚫 COPYRIGHT BLOCK ${imagePath} — score=${r.assessment.risk_score}/${r.assessment.risk_level} reasons:`, r.assessment.risk_reasons);
+        // Auto-add to review queue
+        db.prepare(
+          `INSERT OR IGNORE INTO copyright_review_queue (image_path, source_table, source_id, status, created_at)
+           VALUES (?, 'v5_footage', NULL, 'pending', ?)`,
+        ).run(imagePath, Date.now());
+      }
+      return r.ok;
+    } catch (e: any) {
+      console.warn('[v5t-composer] copyright check fail (allowing):', e?.message);
+      return true;  // fail open
+    }
+  };
+
   // 0. PRIORITY (only for position 0): if post-writer already picked a footage_id (caption written for it),
   // render exactly that photo — guarantees caption ↔ image consistency + no-dup propagation.
   if (opts.position === 0) {
@@ -113,9 +138,15 @@ async function resolveImageSource(opts: {
       if (picked?.path && fs.existsSync(picked.path)) {
         const ext = path.extname(picked.path).toLowerCase();
         if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
-          db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(picked.id);
-          console.log(`[v5t-composer] pos0 using picked_footage_id=${picked.id} (caption hero)`);
-          return { path: picked.path, source: 'real_footage', footage_id: picked.id, cost: 0 };
+          const safe = await checkCopyright(picked.path);
+          if (!safe) {
+            console.warn(`[v5t-composer] picked_footage_id=${picked.id} BLOCKED by copyright check — using fallback`);
+            // skip this picked photo, let the query fallback below pick another
+          } else {
+            db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(picked.id);
+            console.log(`[v5t-composer] pos0 using picked_footage_id=${picked.id} (caption hero, copyright OK)`);
+            return { path: picked.path, source: 'real_footage', footage_id: picked.id, cost: 0 };
+          }
         }
         if (['.mp4', '.mov', '.webm'].includes(ext)) {
           const framePath = path.join(TMP_FRAMES_DIR, `v5t-${opts.postId}-real-${opts.position}-${Date.now()}.jpg`);

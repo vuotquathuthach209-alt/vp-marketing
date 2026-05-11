@@ -2983,6 +2983,66 @@ CREATE TABLE IF NOT EXISTS care_notifications (
 `);
 console.log('[db] Customer Care tables ready (care_reviews + care_comments + care_templates + care_notifications)');
 
+// ═══════════════════════════════════════════════════════════
+// Copyright protection tables (added 2026-05-11 after FB takedown incident)
+// Pre-publish image verification + retro audit + admin review queue.
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+CREATE TABLE IF NOT EXISTS copyright_phashes (
+  image_path TEXT PRIMARY KEY,
+  phash TEXT NOT NULL,               -- 16-char hex perceptual hash
+  source TEXT NOT NULL,              -- ImageSource enum
+  computed_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_phash ON copyright_phashes(phash);
+
+CREATE TABLE IF NOT EXISTS copyright_assessments (
+  image_path TEXT PRIMARY KEY,
+  phash TEXT,
+  exif_camera TEXT,
+  has_exif INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL,
+  source_url TEXT,
+  web_matches_count INTEGER NOT NULL DEFAULT 0,
+  web_matches_json TEXT NOT NULL DEFAULT '[]',
+  internal_dupe_count INTEGER NOT NULL DEFAULT 0,
+  internal_dupe_paths_json TEXT NOT NULL DEFAULT '[]',
+  in_takedown_blacklist INTEGER NOT NULL DEFAULT 0,
+  risk_score INTEGER NOT NULL,
+  risk_level TEXT NOT NULL,           -- safe | low | medium | high | critical
+  risk_reasons_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL,               -- pending | approved | rejected | auto_blocked
+  checked_at INTEGER NOT NULL,
+  reviewed_by TEXT,
+  reviewed_at INTEGER,
+  notes TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_copyright_status ON copyright_assessments(status, risk_score DESC);
+CREATE INDEX IF NOT EXISTS idx_copyright_level ON copyright_assessments(risk_level);
+
+CREATE TABLE IF NOT EXISTS copyright_takedown_blacklist (
+  phash TEXT PRIMARY KEY,
+  image_path TEXT,
+  reason TEXT,                        -- 'FB rights manager' | 'manual block' | 'admin reject'
+  fb_post_id TEXT,
+  added_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS copyright_review_queue (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  image_path TEXT NOT NULL,
+  source_table TEXT NOT NULL,         -- 'v5_footage' | 'gdrive_images' | 'media' | 'manual'
+  source_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected
+  reviewed_by TEXT,
+  reviewed_at INTEGER,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (image_path) REFERENCES copyright_assessments(image_path)
+);
+CREATE INDEX IF NOT EXISTS idx_review_queue_status ON copyright_review_queue(status, created_at DESC);
+`);
+console.log('[db] Copyright protection tables ready (copyright_phashes + copyright_assessments + copyright_takedown_blacklist + copyright_review_queue)');
+
 // Indexes trên hotel_id
 try {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_pages_hotel ON pages(hotel_id)`);
