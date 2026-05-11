@@ -162,10 +162,10 @@ export function generateAllHotelSchemas(opts?: { baseUrl?: string }): {
       continue;
     }
     try {
-      // Pull amenities
+      // Pull amenities (column is `name_vi` per actual schema)
       const amenities = (db.prepare(
-        `SELECT amenity_name FROM hotel_amenities WHERE hotel_id = ? LIMIT 30`,
-      ).all(h.hotel_id) as any[]).map((a) => a.amenity_name).filter(Boolean);
+        `SELECT name_vi FROM hotel_amenities WHERE hotel_id = ? LIMIT 30`,
+      ).all(h.hotel_id) as any[]).map((a) => a.name_vi).filter(Boolean);
 
       // Pull review stats
       const rev = db.prepare(
