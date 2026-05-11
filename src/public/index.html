@@ -107,35 +107,14 @@
           </button>
           <div class="nav-group-body space-y-0.5">
             <button data-tab="compose" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="pen-line"></i><span>Tạo bài</span></button>
-            <button data-tab="autopilot" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm" title="Autopilot cũ — content-pillar 7-day calendar. Em khuyên dùng Auto Post Daily thay thế."><i data-lucide="rocket"></i><span>Autopilot</span><span class="ml-auto text-[9px] bg-slate-400 text-white px-1 py-0.5 rounded font-bold">legacy</span></button>
             <button data-tab="auto-post" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="calendar-clock"></i><span>Auto Post Daily</span><span class="ml-auto text-[9px] bg-emerald-500 text-slate-900 px-1 py-0.5 rounded font-bold">v25</span></button>
             <button data-tab="posts" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="list"></i><span>Danh sách bài</span></button>
             <button data-tab="media" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="image"></i><span>Thư viện media</span></button>
-            <button data-tab="news" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="newspaper"></i><span>News → Post</span><span id="news-badge" class="ml-auto hidden text-xs bg-indigo-500 text-white px-1.5 py-0.5 rounded-full font-bold"></span></button>
             <button data-tab="room-images" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="camera"></i><span>Ảnh phòng</span></button>
-            <button data-tab="series-story" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="book-marked"></i><span>Series Story</span><span class="ml-auto text-[9px] bg-purple-500 text-white px-1 py-0.5 rounded font-bold">NEW</span></button>
           </div>
         </div>
 
         <!-- 🎬 GROUP 2B: VIDEO STUDIO (mảng 3 của VP MKT) -->
-        <div class="nav-group" data-group="video-studio">
-          <button class="nav-group-header w-full flex items-center gap-2 px-3 pt-3 pb-1 text-[10px] uppercase tracking-wider text-slate-500 font-bold hover:text-slate-300">
-            <i data-lucide="chevron-down" class="nav-caret w-3 h-3"></i>
-            <span>Tạo video &amp; Đăng</span>
-          </button>
-          <div class="nav-group-body space-y-0.5">
-            <button data-tab="vs-dashboard" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="film"></i><span>Video Dashboard</span><span class="ml-auto text-[9px] bg-emerald-500 text-slate-900 px-1 py-0.5 rounded font-bold">v1.5</span></button>
-            <button data-tab="vs-create" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="plus-circle"></i><span>Tạo video mới</span></button>
-            <button data-tab="vs-ideas" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="lightbulb"></i><span>Ideas library</span><span id="vs-ideas-badge" class="ml-auto hidden text-[9px] bg-amber-500 text-slate-900 px-1 py-0.5 rounded font-bold"></span></button>
-            <button data-tab="vs-projects" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="video"></i><span>Video Projects</span></button>
-            <button data-tab="vs-anthology" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="book-marked"></i><span>Sonder Stories</span><span class="ml-auto text-[9px] bg-rose-500 text-white px-1 py-0.5 rounded font-bold">v3</span></button>
-            <button data-tab="vs-cinema" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="clapperboard"></i><span>Sonder Cinema</span><span class="ml-auto text-[9px] bg-purple-500 text-white px-1 py-0.5 rounded font-bold">v4</span></button>
-            <button data-tab="vs-tips" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm opacity-50"><i data-lucide="zap"></i><span>Daily Tips</span><span class="ml-auto text-[9px] bg-slate-500 text-white px-1 py-0.5 rounded font-bold">deprecated</span></button>
-            <button data-tab="vs-weekend" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm opacity-50"><i data-lucide="calendar-days"></i><span>Weekend</span><span class="ml-auto text-[9px] bg-slate-500 text-white px-1 py-0.5 rounded font-bold">deprecated</span></button>
-            <button data-tab="vs-brand" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="palette"></i><span>Brand Kit</span></button>
-            <button data-tab="vs-settings" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="settings"></i><span>Video Settings</span></button>
-          </div>
-        </div>
 
         <!-- 💬 GROUP 3: CHATBOT & AI -->
         <div class="nav-group" data-group="chatbot">
@@ -147,12 +126,8 @@
             <button data-tab="autoreply" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="message-circle"></i><span>Cài đặt chatbot</span></button>
             <button data-tab="templates" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="file-text"></i><span>Template bot</span><span class="ml-auto text-[9px] bg-emerald-500 text-slate-900 px-1 py-0.5 rounded font-bold">v27</span></button>
             <button data-tab="conversations" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="messages-square"></i><span>Hội thoại</span></button>
-            <button data-tab="playground" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="message-square-dashed"></i><span>Thử bot</span></button>
-            <button data-tab="feedback" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="star"></i><span>Chấm bot</span></button>
             <button data-tab="agent-audit" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="bot"></i><span>AI Agent</span></button>
             <button data-tab="wiki" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="book-open"></i><span>Kiến thức AI</span></button>
-            <button data-tab="training" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="graduation-cap"></i><span>Duyệt training</span><span id="training-badge" class="ml-auto hidden text-xs bg-amber-500 text-slate-900 px-1.5 py-0.5 rounded-full font-bold"></span></button>
-            <button data-tab="bot-control" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="pause-circle"></i><span>Tạm dừng bot</span></button>
           </div>
         </div>
 
@@ -166,8 +141,6 @@
             <button data-tab="funnel" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm" title="Phễu khách hàng đặt phòng: inquiry → quote → cọc → confirmed"><i data-lucide="target"></i><span>Phễu đặt phòng</span><span id="funnel-badge" class="ml-auto hidden text-xs bg-emerald-500 text-slate-900 px-1.5 py-0.5 rounded-full font-bold"></span></button>
             <button data-tab="campaigns" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="repeat"></i><span>Chiến dịch</span></button>
             <button data-tab="guests" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="users"></i><span>Khách quen</span></button>
-            <button data-tab="referral" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="gift"></i><span>Giới thiệu</span></button>
-            <button data-tab="appointments" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="calendar"></i><span>Lịch hẹn</span></button>
           </div>
         </div>
 
@@ -180,7 +153,6 @@
           <div class="nav-group-body space-y-0.5">
             <button data-tab="hotels" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="building-2"></i><span>Khách sạn</span></button>
             <button data-tab="otadb" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="database-zap"></i><span>OTA DB</span></button>
-            <button data-tab="otapipeline" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="workflow"></i><span>OTA Pipeline</span><span id="otapipeline-badge" class="ml-auto hidden text-xs bg-amber-500 text-slate-900 px-1.5 py-0.5 rounded-full font-bold"></span></button>
             <button data-tab="channels" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="radio-tower"></i><span>Kênh liên lạc</span></button>
           </div>
         </div>
@@ -192,7 +164,6 @@
             <span>Nâng cao <span class="opacity-60 normal-case">🔒</span></span>
           </button>
           <div class="nav-group-body space-y-0.5">
-            <button data-tab="contentintel" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="sparkles"></i><span>Content Intel</span></button>
             <button data-tab="intents" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="brain-circuit"></i><span>Intent Router</span></button>
             <button data-tab="knowledge-sync" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm"><i data-lucide="database"></i><span>Knowledge Sync</span></button>
             <button data-tab="funnel-admin" class="nav-btn w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm" title="Phễu đăng ký subscription: pricing view → plan selected → bill submitted → approved"><i data-lucide="trending-down"></i><span>Phễu đăng ký</span></button>
