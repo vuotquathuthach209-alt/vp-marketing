@@ -2759,6 +2759,105 @@ safeAddColumn('v5t_posts', 'picked_footage_id', 'INTEGER');
 
 console.log('[db] V5T text/image post tables ready (v5t_posts + v5t_post_images + v5t_ab_results) + v5_footage media_type + v5t_posts.picked_footage_id');
 
+// ═══════════════════════════════════════════════════════════
+// SEO module tables (added 2026-05-11 after FB chat removal pivot)
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+CREATE TABLE IF NOT EXISTS seo_pages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  url TEXT UNIQUE NOT NULL,
+  title TEXT,
+  meta_description TEXT,
+  meta_keywords TEXT,
+  canonical_url TEXT,
+  h1 TEXT,
+  h2_count INTEGER NOT NULL DEFAULT 0,
+  word_count INTEGER NOT NULL DEFAULT 0,
+  status_code INTEGER NOT NULL DEFAULT 0,
+  load_time_ms INTEGER NOT NULL DEFAULT 0,
+  has_schema INTEGER NOT NULL DEFAULT 0,
+  schema_types TEXT NOT NULL DEFAULT '[]',
+  internal_links INTEGER NOT NULL DEFAULT 0,
+  external_links INTEGER NOT NULL DEFAULT 0,
+  image_count INTEGER NOT NULL DEFAULT 0,
+  images_with_alt INTEGER NOT NULL DEFAULT 0,
+  images_without_alt INTEGER NOT NULL DEFAULT 0,
+  og_title TEXT,
+  og_description TEXT,
+  og_image TEXT,
+  page_type TEXT NOT NULL DEFAULT 'other',
+  language TEXT,
+  last_crawled_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_seo_pages_type ON seo_pages(page_type, last_crawled_at DESC);
+CREATE INDEX IF NOT EXISTS idx_seo_pages_url ON seo_pages(url);
+
+CREATE TABLE IF NOT EXISTS seo_issues (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  page_id INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  message TEXT NOT NULL,
+  recommendation TEXT NOT NULL,
+  context TEXT,
+  fixed INTEGER NOT NULL DEFAULT 0,
+  fixed_at INTEGER,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (page_id) REFERENCES seo_pages(id)
+);
+CREATE INDEX IF NOT EXISTS idx_seo_issues_page ON seo_issues(page_id, fixed);
+CREATE INDEX IF NOT EXISTS idx_seo_issues_severity ON seo_issues(severity, fixed);
+
+CREATE TABLE IF NOT EXISTS seo_keywords (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  keyword TEXT UNIQUE NOT NULL,
+  target_url TEXT,
+  category TEXT,
+  search_volume INTEGER NOT NULL DEFAULT 0,
+  current_rank INTEGER,
+  prev_rank INTEGER,
+  last_checked_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS seo_keyword_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  keyword_id INTEGER NOT NULL,
+  rank INTEGER,
+  checked_at INTEGER NOT NULL,
+  FOREIGN KEY (keyword_id) REFERENCES seo_keywords(id)
+);
+CREATE INDEX IF NOT EXISTS idx_seo_kwh_kw ON seo_keyword_history(keyword_id, checked_at DESC);
+
+CREATE TABLE IF NOT EXISTS seo_image_alt (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  image_url TEXT UNIQUE NOT NULL,
+  page_url TEXT,
+  current_alt TEXT,
+  current_alt_lang TEXT,
+  suggested_alt_vi TEXT,
+  suggested_alt_en TEXT,
+  vision_keywords TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  applied_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_seo_alt_status ON seo_image_alt(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS seo_schemas (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotel_id INTEGER,
+  schema_type TEXT NOT NULL,
+  schema_json TEXT NOT NULL,
+  applied_to_url TEXT,
+  generated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_seo_schemas_hotel ON seo_schemas(hotel_id);
+`);
+
+console.log('[db] SEO module tables ready (seo_pages + seo_issues + seo_keywords + seo_keyword_history + seo_image_alt + seo_schemas)');
+
 // Indexes trên hotel_id
 try {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_pages_hotel ON pages(hotel_id)`);
