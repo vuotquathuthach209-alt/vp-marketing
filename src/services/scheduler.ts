@@ -631,31 +631,8 @@ export function startScheduler() {
     console.log('[scheduler] V5T Text/Image cron DISABLED (v5t_cron_enabled=false)');
   }
 
-  // ═══ Email Automation (Phase 3 — Listmonk + Resend + BullMQ) ═══
-  // Reference: skill sonder-tech-sovereignty
-  // Default ENABLED. Disable: setting `email_automation_enabled = 'false'`.
-  if ((require('../db').getSetting('email_automation_enabled') || 'true') !== 'false') {
-    // Start BullMQ worker (consume jobs from queue)
-    try {
-      const { startEmailWorker } = require('./email-automation');
-      startEmailWorker();
-    } catch (e: any) {
-      console.warn('[scheduler] email worker start fail:', e?.message);
-    }
+  // Email automation module removed in cleanup phase 3 (was never used).
+  // Admin alert emails still work via services/email.ts (sendAlertToAdmin).
 
-    // Cron: every 15 min — scan OTA bookings + schedule emails
-    cron.schedule('*/15 * * * *', async () => {
-      try {
-        const { runEmailAutomationCron } = require('./email-automation/cron');
-        await runEmailAutomationCron();
-      } catch (e: any) {
-        console.error('[scheduler] email-cron err:', e?.message);
-      }
-    });
-    console.log('[scheduler] Email automation ENABLED (welcome + review + loyalty, every 15 min)');
-  } else {
-    console.log('[scheduler] Email automation DISABLED (email_automation_enabled=false)');
-  }
-
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 1p, metrics 2h, ab decide 1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, zalo-refresh 6h, template-suggest CN 2h, auto-promote daily 3h, V5T text/image (T2/T4/T6/CN 10h)');
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 15s, fb-metrics 2h, ab decide 1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, template-suggest CN 2h, auto-promote daily 3h, V5T text/image (T2/T4/T6/CN 10h, gdrive-sync 15p, publish daily 11h)');
 }

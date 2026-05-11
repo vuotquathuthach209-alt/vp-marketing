@@ -47,14 +47,17 @@ export async function pullMetrics(): Promise<{ ok: number; fail: number }> {
       const comments = basic.data?.comments?.summary?.total_count || 0;
       const shares = basic.data?.shares?.count || 0;
 
-      // Insights metrics (có thể thiếu tùy loại page/token scope)
+      // Insights metrics — may fail with #100 if Page hasn't been verified by Meta
+      // (FB requires Page verification + ≥100 followers for insights API).
+      // We still save engagement counts (reactions/comments/shares) which always work.
       let impressions = 0;
       let reach = 0;
       let clicks = 0;
       try {
         const ins = await axios.get(`${GRAPH}/${r.fb_post_id}/insights`, {
           params: {
-            metric: 'post_impressions,post_impressions_unique,post_clicks',
+            // post_clicks deprecated in v18+; post_engaged_users is the modern equivalent
+            metric: 'post_impressions,post_impressions_unique,post_engaged_users',
             access_token: r.access_token,
           },
           timeout: 15000,
@@ -64,10 +67,10 @@ export async function pullMetrics(): Promise<{ ok: number; fail: number }> {
           const val = m?.values?.[0]?.value || 0;
           if (m.name === 'post_impressions') impressions = val;
           if (m.name === 'post_impressions_unique') reach = val;
-          if (m.name === 'post_clicks') clicks = val;
+          if (m.name === 'post_engaged_users') clicks = val;
         }
       } catch (_e) {
-        // Insights yêu cầu quyền pages_read_engagement, có thể thiếu — bỏ qua
+        // Insights blocked (Page unverified) — fall back to engagement-only metrics.
       }
 
       const engagementTotal = reactions + comments + shares;

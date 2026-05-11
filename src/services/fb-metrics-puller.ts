@@ -15,7 +15,7 @@ import axios from 'axios';
 import { db } from '../db';
 import { redactSecrets } from './text-utils';
 
-const GRAPH = 'https://graph.facebook.com/v18.0';
+const GRAPH = 'https://graph.facebook.com/v21.0';
 
 export interface PostInsight {
   post_id: number;
@@ -31,47 +31,76 @@ export interface PostInsight {
 }
 
 async function fetchPostInsights(fbPostId: string, accessToken: string): Promise<Partial<PostInsight>> {
+  // Fetch engagement counts + insights separately.
+  // Insights metrics that still work on FB Graph v21 (2024-2026):
+  //   post_impressions, post_impressions_unique (reach), post_engaged_users.
+  // DEPRECATED: post_clicks (returns "valid insights metric" error #100 on v18+).
+
+  let reactions = 0, comments = 0, shares = 0;
+  let impressions = 0, reach = 0, clicks = 0;
+
+  // Pass 1: engagement counts (cheap, always works on Page posts)
   try {
     const r = await axios.get(`${GRAPH}/${fbPostId}`, {
       params: {
-        fields: 'reactions.summary(total_count),comments.summary(total_count),shares,insights.metric(post_impressions,post_impressions_unique,post_clicks)',
+        fields: 'reactions.summary(total_count),comments.summary(total_count),shares',
         access_token: accessToken,
       },
       timeout: 15_000,
     });
-
     const data = r.data || {};
-    const reactions = data.reactions?.summary?.total_count || 0;
-    const comments = data.comments?.summary?.total_count || 0;
-    const shares = data.shares?.count || 0;
+    reactions = data.reactions?.summary?.total_count || 0;
+    comments = data.comments?.summary?.total_count || 0;
+    shares = data.shares?.count || 0;
+  } catch (e: any) {
+    const errMsg = e?.response?.data?.error?.message || e?.message || 'unknown';
+    console.warn(`[fb-metrics] engagement ${fbPostId} fail:`, redactSecrets(errMsg).slice(0, 120));
+    // If even engagement fails, the post is likely deleted/inaccessible — return empty
+    return {};
+  }
 
-    // Insights returned as array of metrics
-    const metricsArr = data.insights?.data || [];
+  // Pass 2: insights (may 400 if metric deprecated — try valid ones, fail soft)
+  try {
+    const r = await axios.get(`${GRAPH}/${fbPostId}/insights`, {
+      params: {
+        metric: 'post_impressions,post_impressions_unique,post_engaged_users',
+        access_token: accessToken,
+      },
+      timeout: 15_000,
+    });
+    const metricsArr = r.data?.data || [];
     const findMetric = (name: string) => {
       const m = metricsArr.find((x: any) => x.name === name);
       return m?.values?.[0]?.value || 0;
     };
-    const impressions = findMetric('post_impressions');
-    const reach = findMetric('post_impressions_unique');
-    const clicks = findMetric('post_clicks');
-
-    const engagementScore = reactions + 3 * comments + 5 * shares;
-    const engagementRate = reach > 0 ? engagementScore / reach : 0;
-
-    return {
-      impressions,
-      reach,
-      reactions,
-      comments,
-      shares,
-      clicks,
-      engagement_rate: +engagementRate.toFixed(4),
-    };
+    impressions = findMetric('post_impressions');
+    reach = findMetric('post_impressions_unique');
+    // post_engaged_users counts unique users who engaged — use as clicks proxy
+    clicks = findMetric('post_engaged_users');
   } catch (e: any) {
+    // Insights endpoint may return 100 (deprecated metric) or 17 (rate limit).
+    // Don't fail the whole record — engagement counts are still useful.
     const errMsg = e?.response?.data?.error?.message || e?.message || 'unknown';
-    console.warn(`[fb-metrics] fetch ${fbPostId} fail:`, redactSecrets(errMsg).slice(0, 120));
-    return {};
+    if (!errMsg.includes('rate')) {
+      console.warn(`[fb-metrics] insights ${fbPostId} fail:`, redactSecrets(errMsg).slice(0, 120));
+    }
   }
+
+  const engagementScore = reactions + 3 * comments + 5 * shares;
+  // If insights worked we have reach → ER vs reach. Otherwise fallback to ER vs impressions or
+  // raw engagement count (Reach=0 dashboard will at least show reactions).
+  const denom = reach || impressions || 0;
+  const engagementRate = denom > 0 ? engagementScore / denom : 0;
+
+  return {
+    impressions,
+    reach,
+    reactions,
+    comments,
+    shares,
+    clicks,
+    engagement_rate: +engagementRate.toFixed(4),
+  };
 }
 
 /** Main cron job: pull insights for all recent published posts. */
@@ -111,8 +140,13 @@ export async function pullFbMetricsBatch(): Promise<{ processed: number; updated
     result.processed++;
 
     const insights = await fetchPostInsights(post.fb_post_id, post.access_token);
-    if (!insights.reach && !insights.reactions) {
-      // Empty or error
+    // Skip only when fetch completely failed (no fields populated at all).
+    // Posts with 0 engagement are still valid snapshots — they prove the post got 0.
+    const hasAnyField = insights.impressions !== undefined
+                     || insights.reach !== undefined
+                     || insights.reactions !== undefined
+                     || insights.comments !== undefined;
+    if (!hasAnyField) {
       result.errors++;
       continue;
     }
