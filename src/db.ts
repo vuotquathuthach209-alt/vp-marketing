@@ -2882,6 +2882,107 @@ CREATE TABLE IF NOT EXISTS seo_page_scores (
 
 console.log('[db] SEO module tables ready (seo_pages + seo_issues + seo_keywords + seo_keyword_history + seo_image_alt + seo_schemas + seo_daily_snapshot + seo_page_scores)');
 
+// ═══════════════════════════════════════════════════════════
+// Social SEO audit table (FB Page, Instagram, TikTok, YouTube etc.)
+// Added 2026-05-11 (pivot phase 2 — multi-channel SEO)
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+CREATE TABLE IF NOT EXISTS seo_social_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  channel TEXT NOT NULL,            -- 'facebook' | 'instagram' | 'tiktok' | 'youtube'
+  page_id INTEGER,                  -- our pages.id if FB-based
+  profile_id TEXT,                  -- platform-side ID
+  name TEXT,
+  audit_json TEXT NOT NULL,         -- full audit object
+  score INTEGER NOT NULL,
+  audited_at INTEGER NOT NULL,
+  UNIQUE(channel, profile_id)
+);
+CREATE INDEX IF NOT EXISTS idx_social_audit_channel ON seo_social_audit(channel, audited_at DESC);
+`);
+console.log('[db] SEO social audit table ready (seo_social_audit)');
+
+// ═══════════════════════════════════════════════════════════
+// Customer Care tables (added 2026-05-11)
+// Aggregation + alerting only — NO auto-reply.
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+CREATE TABLE IF NOT EXISTS care_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source TEXT NOT NULL,                          -- 'facebook' | 'google_maps' | 'instagram' | 'tripadvisor' | 'manual'
+  source_id TEXT NOT NULL,
+  hotel_id INTEGER,
+  fb_page_id TEXT,
+  author_name TEXT,
+  author_id TEXT,
+  rating INTEGER,                                -- 1-5 or NULL
+  recommendation_type TEXT,                      -- FB 'positive'|'negative' or NULL
+  text TEXT NOT NULL,
+  language TEXT,
+  sentiment TEXT NOT NULL DEFAULT 'unknown',     -- positive | neutral | negative | unknown
+  sentiment_score REAL,                           -- -1 to 1
+  sentiment_reason TEXT,
+  is_urgent INTEGER NOT NULL DEFAULT 0,
+  has_response INTEGER NOT NULL DEFAULT 0,
+  response_text TEXT,
+  response_at INTEGER,
+  created_at_source INTEGER NOT NULL,
+  detected_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  notified_admin INTEGER NOT NULL DEFAULT 0,
+  notes TEXT,
+  UNIQUE(source, source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_care_reviews_src ON care_reviews(source, created_at_source DESC);
+CREATE INDEX IF NOT EXISTS idx_care_reviews_sentiment ON care_reviews(sentiment, has_response);
+CREATE INDEX IF NOT EXISTS idx_care_reviews_urgent ON care_reviews(is_urgent);
+
+CREATE TABLE IF NOT EXISTS care_comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source TEXT NOT NULL,                          -- 'facebook' | 'instagram'
+  source_id TEXT NOT NULL,
+  parent_post_id TEXT,
+  fb_page_id TEXT,
+  author_name TEXT,
+  author_id TEXT,
+  text TEXT NOT NULL,
+  sentiment TEXT NOT NULL DEFAULT 'unknown',
+  sentiment_score REAL,
+  is_question INTEGER NOT NULL DEFAULT 0,
+  needs_response INTEGER NOT NULL DEFAULT 0,
+  has_response INTEGER NOT NULL DEFAULT 0,
+  detected_at INTEGER NOT NULL,
+  notified_admin INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(source, source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_care_comments_needs ON care_comments(needs_response, has_response, detected_at DESC);
+
+CREATE TABLE IF NOT EXISTS care_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  category TEXT NOT NULL,
+  trigger_keywords TEXT NOT NULL DEFAULT '[]',
+  language TEXT NOT NULL DEFAULT 'vi',
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  variables TEXT NOT NULL DEFAULT '[]',
+  hotel_id INTEGER,
+  active INTEGER NOT NULL DEFAULT 1,
+  use_count INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_care_tpl_cat ON care_templates(category, active);
+
+CREATE TABLE IF NOT EXISTS care_notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  notified_via TEXT NOT NULL,
+  notified_at INTEGER NOT NULL
+);
+`);
+console.log('[db] Customer Care tables ready (care_reviews + care_comments + care_templates + care_notifications)');
+
 // Indexes trên hotel_id
 try {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_pages_hotel ON pages(hotel_id)`);

@@ -24,6 +24,7 @@ import knowledgeRouter from './routes/knowledge';
 import ocrRouter from './routes/ocr';
 import domainDataRouter from './routes/domain-data';
 import seoRouter from './routes/seo';
+import careRouter from './routes/care';
 import './services/ota-readonly-guard'; // self-test fires on boot (fail-fast if guard broken)
 import rateLimit from 'express-rate-limit';
 
@@ -102,6 +103,8 @@ app.use('/api/ocr', ocrRouter);                  // OCR testing + config
 app.use('/api/domain', domainDataRouter);        // Policies + pricing + promotions
 app.use('/api/seo', require('./middleware/auth').authMiddleware, seoRouter);
 app.use('/admin/seo', require('./middleware/auth').authMiddleware, seoRouter);  // Dashboard at /admin/seo/dashboard
+app.use('/api/care', require('./middleware/auth').authMiddleware, careRouter);
+app.use('/admin/care', require('./middleware/auth').authMiddleware, careRouter);  // Dashboard at /admin/care/dashboard
 app.use('/api/data-deletion', dataDeletionRouter);
 app.use('/data-deletion', dataDeletionRouter); // also accept /data-deletion/status (URL returned to FB)
 // V5 Content Pipeline — Real footage upload + management
