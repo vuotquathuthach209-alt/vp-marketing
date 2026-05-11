@@ -67,8 +67,12 @@ async function processDuePosts() {
           .get(post.media_id) as MediaRow | undefined;
         if (!media) throw new Error('Không tìm thấy media');
         // publishImage handles both URL (http...) and local path
+        // 🛡️ Pass source info so firewall logs to audit trail
         const src = /^https?:\/\//i.test(media.filename) ? media.filename : mediaFullPath(media.filename);
-        result = await publishImage(page.fb_page_id, page.access_token, post.caption, src);
+        result = await publishImage(page.fb_page_id, page.access_token, post.caption, src, {
+          source: 'scheduler',
+          source_id: post.id,
+        });
       } else if (post.media_type === 'video' && post.media_id) {
         const media = db
           .prepare(`SELECT filename FROM media WHERE id = ?`)
@@ -89,10 +93,18 @@ async function processDuePosts() {
       console.log(`[scheduler] Đăng thành công post #${post.id} → ${result.fbPostId}`);
       notifyAll(`✅ *Đăng thành công* post #${post.id}\n\`${result.fbPostId}\`\n\n${post.caption.slice(0, 200)}`).catch(() => {});
     } catch (err: any) {
+      const isFirewall = err?.name === 'FirewallBlockedError';
       const msg = err?.response?.data?.error?.message || err?.message || String(err);
-      db.prepare(`UPDATE posts SET status = 'failed', error_message = ? WHERE id = ?`).run(msg, post.id);
-      console.error(`[scheduler] Post #${post.id} thất bại: ${msg}`);
-      notifyAll(`❌ *Post #${post.id} FAIL*\n${msg}`).catch(() => {});
+      const newStatus = isFirewall ? 'blocked_firewall' : 'failed';
+      db.prepare(`UPDATE posts SET status = ?, error_message = ? WHERE id = ?`).run(newStatus, msg, post.id);
+
+      if (isFirewall) {
+        console.warn(`[scheduler] 🛡️ Post #${post.id} BLOCKED by firewall: ${msg}`);
+        notifyAll(`🛡️ *Post #${post.id} BLOCKED*\nFirewall đã chặn — kiểm tra /admin/copyright/dashboard\n\nReason: ${msg.slice(0, 200)}`).catch(() => {});
+      } else {
+        console.error(`[scheduler] Post #${post.id} thất bại: ${msg}`);
+        notifyAll(`❌ *Post #${post.id} FAIL*\n${msg}`).catch(() => {});
+      }
     }
   }
 }

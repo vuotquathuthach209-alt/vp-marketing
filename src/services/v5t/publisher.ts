@@ -56,9 +56,26 @@ async function uploadUnpublishedPhoto(
 export async function publishSingleImage(opts: {
   imagePath: string;
   caption: string;
+  post_id?: number;
 }): Promise<V5TPublishResult> {
   const page = pickFbPage();
   if (!page?.access_token) return { ok: false, error: 'no_fb_page' };
+
+  // 🛡️ Pre-publish firewall — block copyright-violating image or hard-sell caption
+  try {
+    const { checkBeforePublish } = require('../copyright/firewall');
+    const fw = await checkBeforePublish({
+      source: 'v5t',
+      source_id: opts.post_id,
+      image_paths: [opts.imagePath],
+      caption: opts.caption,
+    });
+    if (fw.blocked) {
+      return { ok: false, error: `firewall_blocked: ${fw.reasons[0] || 'risk_score_too_high'}` };
+    }
+  } catch (e: any) {
+    console.warn('[v5t-publish] firewall check fail (fail-open):', e?.message);
+  }
 
   try {
     const FormData = require('form-data');
@@ -84,10 +101,31 @@ export async function publishSingleImage(opts: {
 export async function publishCarousel(opts: {
   imagePaths: string[];
   caption: string;
+  post_id?: number;
 }): Promise<V5TPublishResult> {
   const page = pickFbPage();
   if (!page?.access_token) return { ok: false, error: 'no_fb_page' };
   if (opts.imagePaths.length < 2) return { ok: false, error: 'carousel_needs_2plus_images' };
+
+  // 🛡️ Pre-publish firewall — check ALL carousel images at once
+  try {
+    const { checkBeforePublish } = require('../copyright/firewall');
+    const fw = await checkBeforePublish({
+      source: 'v5t',
+      source_id: opts.post_id,
+      image_paths: opts.imagePaths,
+      caption: opts.caption,
+    });
+    if (fw.blocked) {
+      const blockedCount = fw.image_results.filter((r: any) => !r.ok).length;
+      return {
+        ok: false,
+        error: `firewall_blocked: ${blockedCount}/${opts.imagePaths.length} images flagged. ${fw.reasons.slice(0, 2).join('; ')}`,
+      };
+    }
+  } catch (e: any) {
+    console.warn('[v5t-publish] carousel firewall fail (fail-open):', e?.message);
+  }
 
   try {
     // 1. Upload each image as unpublished
@@ -181,17 +219,25 @@ export async function publishV5TPost(opts: {
 
   // TIPS post can be carousel (3-5 images) or single — depends on composer's inventory decision.
   // STORY + UGC always single.
+  // 🛡️ Pass post_id to firewall for audit trail
   if (post.type === 'tips_post' && images.length >= 2) {
     console.log(`[v5t-publish] post ${opts.post_id}: TIPS carousel with ${images.length} images`);
     result = await publishCarousel({
       imagePaths: images.map(i => i.composed_path).filter((p: string) => fs.existsSync(p)),
       caption,
+      post_id: opts.post_id,
     });
   } else if (post.type === 'tips_post' || post.type === 'story_post' || post.type === 'ugc_repost') {
     console.log(`[v5t-publish] post ${opts.post_id}: ${post.type} single image`);
-    result = await publishSingleImage({ imagePath: images[0].composed_path, caption });
+    result = await publishSingleImage({ imagePath: images[0].composed_path, caption, post_id: opts.post_id });
   } else {
     return { ok: false, error: `unsupported type ${post.type}` };
+  }
+
+  // If firewall blocked, mark post status so it doesn't keep retrying
+  if (!result.ok && result.error?.startsWith('firewall_blocked:')) {
+    db.prepare(`UPDATE v5t_posts SET status = 'failed' WHERE id = ?`).run(opts.post_id);
+    console.warn(`[v5t-publish] post #${opts.post_id} FIREWALL BLOCKED → marked failed`);
   }
 
   if (result.ok && result.fb_post_id) {

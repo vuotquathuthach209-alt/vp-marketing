@@ -3043,6 +3043,32 @@ CREATE INDEX IF NOT EXISTS idx_review_queue_status ON copyright_review_queue(sta
 `);
 console.log('[db] Copyright protection tables ready (copyright_phashes + copyright_assessments + copyright_takedown_blacklist + copyright_review_queue)');
 
+// ═══════════════════════════════════════════════════════════
+// Pre-Publish Firewall audit log (added 2026-05-11)
+// Every publish attempt — allowed or blocked — logged here.
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+CREATE TABLE IF NOT EXISTS prepublish_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source TEXT NOT NULL,                  -- 'v5t' | 'manual' | 'auto-post' | 'scheduler' | 'api'
+  source_id TEXT,
+  page_id INTEGER,
+  hotel_id INTEGER,
+  image_count INTEGER NOT NULL DEFAULT 0,
+  caption_length INTEGER NOT NULL DEFAULT 0,
+  decision TEXT NOT NULL,                -- 'allow' | 'block' | 'warn'
+  blocked INTEGER NOT NULL DEFAULT 0,
+  reasons_json TEXT NOT NULL DEFAULT '[]',
+  image_results_json TEXT NOT NULL DEFAULT '[]',
+  caption_issues_json TEXT NOT NULL DEFAULT '[]',
+  duration_ms INTEGER NOT NULL,
+  checked_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_prepub_decision ON prepublish_audit(decision, checked_at DESC);
+CREATE INDEX IF NOT EXISTS idx_prepub_source ON prepublish_audit(source, source_id);
+`);
+console.log('[db] Pre-publish firewall audit table ready (prepublish_audit)');
+
 // Indexes trên hotel_id
 try {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_pages_hotel ON pages(hotel_id)`);

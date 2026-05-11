@@ -30,17 +30,59 @@ export async function publishText(
 }
 
 /**
+ * 🛡️ Custom error thrown when pre-publish firewall blocks an upload.
+ * Caller MUST handle this distinctly — it's not a network/API error.
+ */
+export class FirewallBlockedError extends Error {
+  result: any;
+  constructor(message: string, result: any) {
+    super(message);
+    this.name = 'FirewallBlockedError';
+    this.result = result;
+  }
+}
+
+/**
  * Đăng ảnh + caption lên Facebook Page.
  * Auto-detect: URL (http/https) → dùng Graph API url= (FB tự fetch).
  * Local path → upload multipart.
  * Tránh ENOENT khi autopilot lưu URL vào media.filename.
+ *
+ * 🛡️ THE LOWEST-LEVEL CHOKEPOINT for image publishing — pre-publish firewall runs here.
+ * Every path (V5T, manual, scheduler, auto-post) eventually calls this function.
+ * Pass `source` and `sourceId` so the firewall audit log is informative.
  */
 export async function publishImage(
   pageId: string,
   accessToken: string,
   message: string,
-  imagePath: string
+  imagePath: string,
+  opts?: { source?: string; source_id?: number | string; bypass_firewall?: boolean; hotel_id?: number },
 ): Promise<PublishResult> {
+  // 🛡️ FIREWALL CHECK — runs before any FB API call
+  if (!opts?.bypass_firewall) {
+    try {
+      const { checkBeforePublish } = require('./copyright/firewall');
+      const isUrl = /^https?:\/\//i.test(imagePath);
+      const fw = await checkBeforePublish({
+        source: (opts?.source as any) || 'api',
+        source_id: opts?.source_id,
+        image_paths: isUrl ? [] : [imagePath],
+        external_image_urls: isUrl ? [imagePath] : [],
+        caption: message,
+        hotel_id: opts?.hotel_id,
+      });
+      if (fw.blocked) {
+        const reason = fw.reasons[0] || 'firewall_blocked';
+        console.warn(`[facebook] 🛡️ FIREWALL BLOCKED publishImage(${pageId}, ...) — ${reason}`);
+        throw new FirewallBlockedError(`Pre-publish firewall blocked: ${reason}`, fw);
+      }
+    } catch (e: any) {
+      if (e.name === 'FirewallBlockedError') throw e;
+      console.warn('[facebook] firewall check error (fail-open):', e?.message);
+    }
+  }
+
   // URL mode — FB tự fetch (vd Google Drive direct link, CDN, ...)
   if (/^https?:\/\//i.test(imagePath)) {
     const resp = await axios.post(`${GRAPH}/${pageId}/photos`, null, {

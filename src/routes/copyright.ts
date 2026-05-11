@@ -227,6 +227,37 @@ router.post('/blacklist-from-fb-post', async (req, res) => {
   });
 });
 
+/** Pre-publish firewall audit log — show recent blocks + reasons. */
+router.get('/firewall-audit', (req, res) => {
+  const onlyBlocked = req.query.blocked === 'true';
+  const limit = Math.min(parseInt(String(req.query.limit || '50'), 10), 200);
+  let sql = `SELECT * FROM prepublish_audit`;
+  if (onlyBlocked) sql += ` WHERE blocked = 1`;
+  sql += ` ORDER BY checked_at DESC LIMIT ?`;
+  const rows = db.prepare(sql).all(limit) as any[];
+  for (const r of rows) {
+    try { r.reasons = JSON.parse(r.reasons_json || '[]'); } catch {}
+    try { r.image_results = JSON.parse(r.image_results_json || '[]'); } catch {}
+    try { r.caption_issues = JSON.parse(r.caption_issues_json || '[]'); } catch {}
+    delete r.reasons_json; delete r.image_results_json; delete r.caption_issues_json;
+  }
+  res.json({ items: rows });
+});
+
+router.get('/firewall-stats', (_req, res) => {
+  const total = (db.prepare(`SELECT COUNT(*) AS n FROM prepublish_audit`).get() as any).n;
+  const blocked = (db.prepare(`SELECT COUNT(*) AS n FROM prepublish_audit WHERE blocked = 1`).get() as any).n;
+  const last_24h = (db.prepare(`SELECT COUNT(*) AS n FROM prepublish_audit WHERE checked_at > ?`).get(Date.now() - 86400_000) as any).n;
+  const last_24h_blocked = (db.prepare(`SELECT COUNT(*) AS n FROM prepublish_audit WHERE blocked = 1 AND checked_at > ?`).get(Date.now() - 86400_000) as any).n;
+  const by_source = db.prepare(`SELECT source, COUNT(*) AS total, SUM(CASE WHEN blocked = 1 THEN 1 ELSE 0 END) AS blocked FROM prepublish_audit GROUP BY source`).all();
+  res.json({
+    total, blocked,
+    block_rate_pct: total > 0 ? Math.round((blocked / total) * 100) : 0,
+    last_24h, last_24h_blocked,
+    by_source,
+  });
+});
+
 /** Stats per source — important for understanding where risk comes from. */
 router.get('/source-risk', (_req, res) => {
   const rows = db.prepare(`
@@ -305,7 +336,8 @@ router.get('/dashboard', (_req, res) => {
 <div id="overview"></div>
 
 <div class="tabs">
-  <div class="tab active" data-t="review-queue" onclick="switchTab('review-queue')">⚠️ Review queue</div>
+  <div class="tab active" data-t="firewall" onclick="switchTab('firewall')">🛡️ Firewall log</div>
+  <div class="tab" data-t="review-queue" onclick="switchTab('review-queue')">⚠️ Review queue</div>
   <div class="tab" data-t="auto-blocked" onclick="switchTab('auto-blocked')">🚫 Auto-blocked</div>
   <div class="tab" data-t="blacklist" onclick="switchTab('blacklist')">⛔ Takedown blacklist</div>
   <div class="tab" data-t="by-source" onclick="switchTab('by-source')">📊 Risk by source</div>
@@ -315,7 +347,7 @@ router.get('/dashboard', (_req, res) => {
 <div id="content">Loading…</div>
 
 <script>
-let activeTab = 'review-queue';
+let activeTab = 'firewall';
 
 async function load() {
   const r = await fetch('/api/copyright/overview').then((r) => r.json());
@@ -355,6 +387,55 @@ function thumbnail(imagePath) {
 
 async function loadTab(t) {
   const wrap = document.getElementById('content');
+
+  if (t === 'firewall') {
+    const stats = await fetch('/api/copyright/firewall-stats').then((x) => x.json());
+    const log = await fetch('/api/copyright/firewall-audit?limit=50').then((x) => x.json());
+
+    let h = '<h2>🛡️ Pre-Publish Firewall — Real-time gate</h2>';
+    h += '<p style="color:#555;font-size:13px">Mọi attempt đăng FB đều qua firewall này. Log shows pass/block + reasons.</p>';
+    h += '<div class="stats">';
+    h += card('total', 'Total checks', stats.total);
+    h += card('critical', 'Total blocked', stats.blocked);
+    h += card('warn', 'Block rate %', stats.block_rate_pct + '%');
+    h += card('total', 'Last 24h checks', stats.last_24h);
+    h += card('critical', 'Last 24h blocked', stats.last_24h_blocked);
+    h += '</div>';
+
+    if (stats.by_source && stats.by_source.length > 0) {
+      h += '<h3>By source</h3><table><thead><tr><th>Source</th><th>Total</th><th>Blocked</th><th>Rate</th></tr></thead><tbody>';
+      for (const s of stats.by_source) {
+        const rate = s.total > 0 ? Math.round((s.blocked / s.total) * 100) : 0;
+        h += '<tr><td><code>' + s.source + '</code></td><td>' + s.total + '</td><td>' + (s.blocked || 0) + '</td><td>' + rate + '%</td></tr>';
+      }
+      h += '</tbody></table>';
+    }
+
+    h += '<h3>Recent firewall decisions</h3>';
+    h += '<div style="margin:8px 0"><button onclick="loadFirewallBlocked()">Show only blocked</button> <button onclick="loadFirewallAll()">Show all</button></div>';
+    if (log.items.length === 0) {
+      h += '<div class="empty">No firewall activity yet. V5T cron mai 10h sáng (T2/T4/T6/CN) will trigger.</div>';
+    } else {
+      h += '<table><thead><tr><th>When</th><th>Source</th><th>ID</th><th>Decision</th><th>Reasons</th><th>Duration</th></tr></thead><tbody>';
+      for (const r of log.items) {
+        const time = new Date(r.checked_at).toLocaleString('vi-VN');
+        const decision = r.blocked
+          ? '<span class="badge level-critical">BLOCKED</span>'
+          : '<span class="badge level-safe">allow</span>';
+        const reasons = (r.reasons || []).slice(0, 2).map(escapeHtml).join('<br>') || '—';
+        h += '<tr><td style="font-size:11px">' + time + '</td>';
+        h += '<td><code>' + r.source + '</code></td>';
+        h += '<td>#' + (r.source_id || '?') + '</td>';
+        h += '<td>' + decision + '</td>';
+        h += '<td style="font-size:11px;max-width:400px">' + reasons + '</td>';
+        h += '<td>' + r.duration_ms + 'ms</td></tr>';
+      }
+      h += '</tbody></table>';
+    }
+    wrap.innerHTML = h;
+    return;
+  }
+
   if (t === 'review-queue') {
     const r = await fetch('/api/copyright/review-queue').then((x) => x.json());
     if (r.items.length === 0) return wrap.innerHTML = '<div class="empty">✅ No images pending review.</div>';
@@ -476,6 +557,26 @@ async function reject(p) {
   });
   loadTab(activeTab);
 }
+
+async function loadFirewallBlocked() {
+  const log = await fetch('/api/copyright/firewall-audit?blocked=true&limit=50').then((x) => x.json());
+  let h = '<h3>Recent BLOCKED items</h3>';
+  if (log.items.length === 0) { h += '<div class="empty">No blocks yet 🎉</div>'; }
+  else {
+    h += '<table><thead><tr><th>When</th><th>Source</th><th>ID</th><th>Reasons</th><th>Caption issues</th></tr></thead><tbody>';
+    for (const r of log.items) {
+      h += '<tr><td style="font-size:11px">' + new Date(r.checked_at).toLocaleString('vi-VN') + '</td>';
+      h += '<td><code>' + r.source + '</code></td>';
+      h += '<td>#' + (r.source_id || '?') + '</td>';
+      h += '<td style="font-size:11px;max-width:400px">' + (r.reasons || []).slice(0, 3).map(escapeHtml).join('<br>') + '</td>';
+      h += '<td style="font-size:11px">' + (r.caption_issues || []).slice(0, 2).map(escapeHtml).join('<br>') + '</td></tr>';
+    }
+    h += '</tbody></table>';
+  }
+  document.getElementById('content').innerHTML = h;
+}
+
+async function loadFirewallAll() { switchTab('firewall'); }
 
 async function reportTakedown() {
   const fbPostId = prompt(
