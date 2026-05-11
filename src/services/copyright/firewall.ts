@@ -193,16 +193,20 @@ function checkCaption(caption: string): CaptionIssue[] {
     issues.push({ severity: 'warning', type: 'emoji_spam', message: `${emojiCount} emoji — Meta đôi khi coi là spam (≤10 là an toàn)` });
   }
 
-  // 4. Banned URLs (only sondervn.com allowed in OTA marketplace context)
+  // 4. Banned URLs — detect with OR without protocol (bit.ly/abc still flagged)
+  const bannedShorteners = ['bit.ly', 'tinyurl.com', 'goo.gl', 't.co/', 'ow.ly', 'shorturl.at', 'rebrand.ly', 'cutt.ly', 'is.gd', 'buff.ly'];
+  for (const sh of bannedShorteners) {
+    if (textLower.includes(sh)) {
+      issues.push({ severity: 'critical', type: 'banned_url', message: `🚫 URL shortener detected (${sh}) — Meta flags as spam. Use full sondervn.com URL.` });
+    }
+  }
+
   const urls = text.match(/https?:\/\/[^\s]+/gi) || [];
   for (const url of urls) {
     try {
       const u = new URL(url);
       const allowed = ['sondervn.com', 'www.sondervn.com', 'app.sondervn.com', 'facebook.com', 'fb.com', 'instagram.com'];
-      const banned = ['bit.ly', 'tinyurl.com', 'goo.gl', 't.co', 'ow.ly', 'shorturl.at'];
-      if (banned.some((b) => u.hostname.includes(b))) {
-        issues.push({ severity: 'critical', type: 'banned_url', message: `🚫 URL shortener detected (${u.hostname}) — Meta thường flag là spam, dùng full sondervn.com URL` });
-      } else if (!allowed.some((a) => u.hostname.endsWith(a))) {
+      if (!allowed.some((a) => u.hostname.endsWith(a))) {
         issues.push({ severity: 'warning', type: 'external_url', message: `External URL "${u.hostname}" — chỉ nên link về sondervn.com (OTA marketplace context)` });
       }
     } catch {}
@@ -265,15 +269,21 @@ export async function checkBeforePublish(req: PrePublishRequest): Promise<PrePub
   }
 
   // Caption checks
-  const captionIssues = captionCheckEnabled && req.caption
-    ? checkCaption(req.caption).map((i) => `[${i.severity}] ${i.message}`)
-    : [];
+  const captionIssuesRaw = captionCheckEnabled && req.caption ? checkCaption(req.caption) : [];
+  const captionIssues = captionIssuesRaw.map((i) => `[${i.severity}] ${i.message}`);
 
-  const criticalCaption = captionCheckEnabled
-    ? checkCaption(req.caption || '').some((i) => i.severity === 'critical')
-    : false;
+  // Multi-warning escalation: if 3+ warnings → escalate to block.
+  // Rationale: any single warning is mild, but combo of (hard-sell + engagement bait + spammy)
+  // matches Meta's spam-classifier patterns → suppress reach OR remove.
+  const criticalCount = captionIssuesRaw.filter((i) => i.severity === 'critical').length;
+  const warningCount = captionIssuesRaw.filter((i) => i.severity === 'warning').length;
+  const criticalCaption = criticalCount > 0 || warningCount >= 3;
 
-  if (criticalCaption) reasons.push('Caption has CRITICAL issues — see caption_issues');
+  if (criticalCount > 0) {
+    reasons.push(`Caption: ${criticalCount} CRITICAL issue(s)`);
+  } else if (warningCount >= 3) {
+    reasons.push(`Caption: ${warningCount} warnings combined = looks like spam (escalated to block)`);
+  }
 
   // Decision
   const anyImageBlocked = imageResults.some((r) => !r.ok);
