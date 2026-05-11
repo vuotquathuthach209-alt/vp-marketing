@@ -10,6 +10,9 @@ import { db } from '../db';
 import { crawlUrl, crawlBatch, discoverFromSitemap, persistCrawlResult } from '../services/seo/crawler';
 import { generateAllHotelSchemas, generateHotelSchema } from '../services/seo/schema-gen';
 import { generateAltsForFootage, generateAltForUrl } from '../services/seo/alt-text';
+import { checkKeywordRank, recordKeywordRank, checkAllKeywords, setManualRank, getKeywordHistory } from '../services/seo/keyword-tracker';
+import { gradePage, gradeAllPages, getPageScore, persistScorecard } from '../services/seo/scorecard';
+import { runDailySeoCron, getSnapshotHistory } from '../services/seo/daily-cron';
 
 const router = Router();
 
@@ -197,8 +200,88 @@ router.post('/keywords', (req, res) => {
 });
 
 router.delete('/keywords/:id', (req, res) => {
+  db.prepare(`DELETE FROM seo_keyword_history WHERE keyword_id = ?`).run(req.params.id);
   db.prepare(`DELETE FROM seo_keywords WHERE id = ?`).run(req.params.id);
   res.json({ ok: true });
+});
+
+/** Check rank for ONE keyword (uses CSE or SerpAPI). */
+router.post('/keywords/:id/check', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const kw = db.prepare(`SELECT * FROM seo_keywords WHERE id = ?`).get(id) as any;
+  if (!kw) return res.status(404).json({ error: 'keyword not found' });
+  if (!kw.target_url) return res.status(400).json({ error: 'target_url required for auto-check' });
+  try {
+    const r = await checkKeywordRank(kw.keyword, kw.target_url);
+    if (!r.error) recordKeywordRank(id, r.rank);
+    res.json(r);
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+/** Batch check all keywords. Used by manual button + daily cron. */
+router.post('/keywords/check-all', async (_req, res) => {
+  try {
+    const r = await checkAllKeywords({ onlyStale: false });
+    res.json({ ok: true, ...r });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+/** Manual rank entry: admin types a rank they checked themselves. */
+router.post('/keywords/:id/manual-rank', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const rank = req.body?.rank;
+  if (rank !== null && (typeof rank !== 'number' || rank < 1 || rank > 100)) {
+    return res.status(400).json({ error: 'rank must be 1-100 or null' });
+  }
+  setManualRank(id, rank);
+  res.json({ ok: true });
+});
+
+/** Rank history for sparkline. */
+router.get('/keywords/:id/history', (req, res) => {
+  const limit = Math.min(parseInt(String(req.query.limit || '30'), 10), 100);
+  res.json({ items: getKeywordHistory(parseInt(req.params.id, 10), limit) });
+});
+
+/** Tell dashboard which auto-check provider is configured. */
+router.get('/keyword-config', (_req, res) => {
+  const { getSetting } = require('../db');
+  const hasCSE = !!(getSetting('google_cse_api_key') || getSetting('google_api_key')) && !!getSetting('google_cse_id');
+  const hasSerpAPI = !!getSetting('serpapi_key');
+  let configured = 'Manual only';
+  if (hasSerpAPI) configured = '✅ SerpAPI ($50/mo for 5000 queries, full SERP)';
+  else if (hasCSE) configured = '✅ Google Custom Search (100 free/day, $5/1000 above)';
+  res.json({ configured, has_cse: hasCSE, has_serpapi: hasSerpAPI });
+});
+
+/* ───────── Scorecard (Phase C) ───────── */
+
+router.get('/scorecard/:page_id', (req, res) => {
+  const id = parseInt(req.params.page_id, 10);
+  const r = getPageScore(id);
+  if (!r) return res.status(404).json({ error: 'page not found' });
+  res.json(r);
+});
+
+router.post('/scorecard/grade-all', (_req, res) => {
+  try {
+    const r = gradeAllPages();
+    res.json({ ok: true, ...r });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+/* ───────── Daily cron manual trigger + snapshot history (Phase A) ───────── */
+
+router.post('/cron/run-now', async (_req, res) => {
+  try {
+    const r = await runDailySeoCron();
+    res.json(r);
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+router.get('/snapshots', (req, res) => {
+  const days = Math.min(parseInt(String(req.query.days || '30'), 10), 90);
+  res.json({ items: getSnapshotHistory(days) });
 });
 
 /* ───────── Dashboard HTML ───────── */
@@ -254,6 +337,8 @@ router.get('/dashboard', (_req, res) => {
   <button onclick="crawlOne()">Crawl 1 URL</button>
   <button onclick="genSchemas()">🏷️ Generate hotel schemas</button>
   <button onclick="genAlts()">🖼️ Auto alt-text (20 photos)</button>
+  <button onclick="gradeAll()">⭐ Grade all pages</button>
+  <button onclick="runDailyCron()">📅 Run daily cron now</button>
   <button onclick="load()">🔄 Refresh</button>
 </div>
 
@@ -341,17 +426,22 @@ async function loadTab(t) {
   if (t === 'pages') {
     const r = await fetch('/api/seo/pages?limit=100').then((x) => x.json());
     if (r.items.length === 0) return wrap.innerHTML = '<div class="empty">No pages crawled. Bấm "Crawl sitemap" ở trên.</div>';
-    let h = '<table><thead><tr><th>URL</th><th>Type</th><th>Title</th><th>Words</th><th>Schema</th><th>Issues</th></tr></thead><tbody>';
+    let h = '<table><thead><tr><th>URL</th><th>Type</th><th>Title</th><th>Words</th><th>Schema</th><th>Issues</th><th>Score</th><th></th></tr></thead><tbody>';
     for (const p of r.items) {
       h += '<tr><td class="url-cell"><a href="' + escapeAttr(p.url) + '" target="_blank">' + escapeHtml(p.url.slice(0, 60)) + '</a></td>';
       h += '<td>' + p.page_type + '</td>';
       h += '<td>' + escapeHtml((p.title || '—').slice(0, 50)) + '</td>';
       h += '<td>' + p.word_count + '</td>';
       h += '<td>' + (p.has_schema ? '✅' : '❌') + '</td>';
-      h += '<td>' + (p.open_issues > 0 ? '<span class="badge b-warning">' + p.open_issues + '</span>' : '0') + '</td></tr>';
+      h += '<td>' + (p.open_issues > 0 ? '<span class="badge b-warning">' + p.open_issues + '</span>' : '0') + '</td>';
+      h += '<td><span id="score-' + p.id + '">…</span></td>';
+      h += '<td><button onclick="showScore(' + p.id + ')">📊</button></td></tr>';
     }
     h += '</tbody></table>';
+    h += '<div id="scoreView"></div>';
     wrap.innerHTML = h;
+    // Load scores async
+    for (const p of r.items) loadScoreCell(p.id);
     return;
   }
   if (t === 'schemas') {
@@ -395,22 +485,38 @@ async function loadTab(t) {
     h += '<input type="text" id="kw" placeholder="Keyword (e.g. khách sạn Q1 Sài Gòn)" />';
     h += '<input type="url" id="kwUrl" placeholder="Target URL" />';
     h += '<button class="btn-primary" onclick="addKeyword()">Add keyword</button>';
+    if (r.items.length > 0) h += '<button onclick="checkAllRanks()">🔄 Check all ranks now</button>';
     h += '</div>';
+    h += '<div style="font-size:12px;color:#666;margin:8px 0">Configured: ' + (await checkKeywordConfig()) + '</div>';
     if (r.items.length === 0) {
-      h += '<div class="empty">Chưa có keyword nào. Thêm keyword phía trên để track ranking.</div>';
+      h += '<div class="empty">Chưa có keyword nào. Thêm keyword phía trên để track ranking.<br><br>Ví dụ keyword tốt: "khách sạn tân bình giá rẻ", "homestay q1 sài gòn", "phòng nghỉ tân sơn nhất"</div>';
     } else {
-      h += '<table><thead><tr><th>Keyword</th><th>Category</th><th>Target URL</th><th>Volume</th><th>Rank</th><th></th></tr></thead><tbody>';
+      h += '<table><thead><tr><th>Keyword</th><th>Target URL</th><th>Rank</th><th>Δ</th><th>Trend (last 10)</th><th>Last checked</th><th>Actions</th></tr></thead><tbody>';
       for (const k of r.items) {
-        h += '<tr><td><strong>' + escapeHtml(k.keyword) + '</strong></td>';
-        h += '<td>' + (k.category || '—') + '</td>';
-        h += '<td class="url-cell">' + escapeHtml(k.target_url || '—') + '</td>';
-        h += '<td>' + (k.search_volume || 0) + '</td>';
-        h += '<td>' + (k.current_rank ? '#' + k.current_rank : '—') + '</td>';
-        h += '<td><button onclick="delKeyword(' + k.id + ')">🗑️</button></td></tr>';
+        const change = (k.prev_rank !== null && k.current_rank !== null) ? (k.prev_rank - k.current_rank) : null;
+        const changeHtml = change === null ? '—'
+          : change > 0 ? '<span style="color:#5a8a5a">▲ ' + change + '</span>'
+          : change < 0 ? '<span style="color:#c43">▼ ' + Math.abs(change) + '</span>'
+          : '<span style="color:#888">—</span>';
+        const lastCheck = k.last_checked_at ? new Date(k.last_checked_at).toLocaleDateString('vi-VN') : 'never';
+        h += '<tr><td><strong>' + escapeHtml(k.keyword) + '</strong>'
+           + (k.category ? '<br><span class="badge b-info">' + k.category + '</span>' : '') + '</td>';
+        h += '<td class="url-cell" title="' + escapeAttr(k.target_url || '') + '">' + escapeHtml((k.target_url || '—').slice(0, 50)) + '</td>';
+        h += '<td><strong style="font-size:18px;color:' + (k.current_rank && k.current_rank <= 10 ? '#5a8a5a' : k.current_rank && k.current_rank <= 30 ? '#a86b3c' : '#888') + '">' + (k.current_rank ? '#' + k.current_rank : '—') + '</strong></td>';
+        h += '<td>' + changeHtml + '</td>';
+        h += '<td><span id="spark-' + k.id + '" style="font-family:monospace;font-size:11px;color:#5a7a9a">…</span></td>';
+        h += '<td style="font-size:11px;color:#888">' + lastCheck + '</td>';
+        h += '<td>';
+        h += '<button onclick="checkOneRank(' + k.id + ')" title="Auto-check via API">🔄</button> ';
+        h += '<button onclick="manualRank(' + k.id + ')" title="Type rank manually">✏️</button> ';
+        h += '<button onclick="delKeyword(' + k.id + ')">🗑️</button>';
+        h += '</td></tr>';
       }
       h += '</tbody></table>';
     }
     wrap.innerHTML = h;
+    // Load sparklines async
+    for (const k of r.items) loadSparkline(k.id);
     return;
   }
 }
@@ -460,6 +566,110 @@ async function delKeyword(id) {
   if (!confirm('Delete?')) return;
   await fetch('/api/seo/keywords/' + id, { method: 'DELETE' });
   loadTab('keywords');
+}
+
+async function checkOneRank(id) {
+  const r = await fetch('/api/seo/keywords/' + id + '/check', { method: 'POST' }).then((x) => x.json());
+  if (r.error) alert('Error: ' + r.error);
+  else alert('Source=' + r.source + ' Rank=' + (r.rank || 'not in top 50') + ' Cost=$' + (r.cost_usd || 0).toFixed(4));
+  loadTab('keywords');
+}
+
+async function checkAllRanks() {
+  if (!confirm('Auto-check all keywords now? Uses Google CSE or SerpAPI quota.')) return;
+  const r = await fetch('/api/seo/keywords/check-all', { method: 'POST' }).then((x) => x.json());
+  alert('Checked: ' + r.checked + '\\nErrors: ' + r.errors + '\\nSkipped: ' + r.skipped + '\\nCost: $' + (r.cost_usd || 0).toFixed(4));
+  loadTab('keywords');
+}
+
+async function manualRank(id) {
+  const raw = prompt('Nhập rank (1-100, để trống = không có trong top 100):', '');
+  if (raw === null) return;
+  const rank = raw.trim() === '' ? null : parseInt(raw, 10);
+  if (rank !== null && (isNaN(rank) || rank < 1 || rank > 100)) { alert('Rank phải là số 1-100'); return; }
+  await fetch('/api/seo/keywords/' + id + '/manual-rank', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rank }) });
+  loadTab('keywords');
+}
+
+async function loadScoreCell(pageId) {
+  try {
+    const r = await fetch('/api/seo/scorecard/' + pageId).then((x) => x.json());
+    const el = document.getElementById('score-' + pageId);
+    if (!el) return;
+    const color = r.grade === 'A' ? '#5a8a5a' : r.grade === 'B' ? '#7ba37b' : r.grade === 'C' ? '#a86b3c' : r.grade === 'D' ? '#c54' : '#a30';
+    el.innerHTML = '<strong style="color:' + color + '">' + r.score + '</strong> <span class="badge" style="background:' + color + ';color:white">' + r.grade + '</span>';
+  } catch {}
+}
+
+async function showScore(pageId) {
+  const r = await fetch('/api/seo/scorecard/' + pageId).then((x) => x.json());
+  if (r.error) return alert(r.error);
+  let h = '<h3>Page #' + pageId + ' — Score: ' + r.score + ' (' + r.grade + ')</h3>';
+  h += '<table><thead><tr><th>Factor</th><th>Score</th><th>Reason</th></tr></thead><tbody>';
+  for (const [k, v] of Object.entries(r.breakdown)) {
+    const pct = Math.round((v.score / v.max) * 100);
+    const color = pct === 100 ? '#5a8a5a' : pct >= 70 ? '#7ba37b' : pct >= 40 ? '#a86b3c' : '#c54';
+    h += '<tr><td><code>' + k + '</code></td>';
+    h += '<td><strong style="color:' + color + '">' + v.score + '/' + v.max + '</strong></td>';
+    h += '<td>' + escapeHtml(v.reason) + '</td></tr>';
+  }
+  h += '</tbody></table>';
+  document.getElementById('scoreView').innerHTML = h;
+  document.getElementById('scoreView').scrollIntoView({ behavior: 'smooth' });
+}
+
+async function gradeAll() {
+  if (!confirm('Grade all crawled pages?')) return;
+  const r = await fetch('/api/seo/scorecard/grade-all', { method: 'POST' }).then((x) => x.json());
+  alert('Graded ' + r.graded + ' pages. Avg score: ' + r.avg_score + '\\nDistribution: ' + JSON.stringify(r.distribution));
+  load();
+}
+
+async function runDailyCron() {
+  if (!confirm('Run daily SEO cron now? (crawl + audit + keyword check)')) return;
+  const r = await fetch('/api/seo/cron/run-now', { method: 'POST' }).then((x) => x.json());
+  alert('Crawled: ' + r.crawled + '\\nNew issues: ' + r.issues_added + '\\nCost: $' + (r.cost_usd || 0).toFixed(4) + '\\n\\nDiff vs yesterday:\\n' + (r.diff_vs_yesterday || []).join('\\n'));
+  load();
+}
+
+async function loadSparkline(id) {
+  try {
+    const r = await fetch('/api/seo/keywords/' + id + '/history?limit=10').then((x) => x.json());
+    const items = (r.items || []).reverse();  // oldest first
+    if (items.length === 0) {
+      const el = document.getElementById('spark-' + id);
+      if (el) el.textContent = '(no history)';
+      return;
+    }
+    // Sparkline using unicode block chars
+    const ranks = items.map((i) => i.rank);
+    const valid = ranks.filter((r) => r !== null);
+    if (valid.length === 0) {
+      const el = document.getElementById('spark-' + id);
+      if (el) el.textContent = items.map(() => '·').join('');
+      return;
+    }
+    const min = Math.min(...valid);
+    const max = Math.max(...valid);
+    const range = max - min || 1;
+    const blocks = '▁▂▃▄▅▆▇█';
+    const spark = ranks.map((r) => {
+      if (r === null) return '·';
+      // Inverted: rank #1 = top = █, rank #50 = bottom = ▁
+      const norm = 1 - ((r - min) / range);
+      const idx = Math.min(7, Math.floor(norm * 7));
+      return blocks[idx];
+    }).join('');
+    const el = document.getElementById('spark-' + id);
+    if (el) el.textContent = spark + ' (best #' + min + ', worst #' + max + ')';
+  } catch {}
+}
+
+async function checkKeywordConfig() {
+  try {
+    const r = await fetch('/api/seo/keyword-config').then((x) => x.json());
+    return r.configured || 'Manual only (configure google_cse_api_key + google_cse_id, or serpapi_key, in Settings for auto-check)';
+  } catch { return 'Manual only'; }
 }
 
 load();

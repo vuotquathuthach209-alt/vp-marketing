@@ -2854,9 +2854,33 @@ CREATE TABLE IF NOT EXISTS seo_schemas (
   generated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_seo_schemas_hotel ON seo_schemas(hotel_id);
+
+CREATE TABLE IF NOT EXISTS seo_daily_snapshot (
+  date TEXT PRIMARY KEY,            -- YYYY-MM-DD VN time
+  total_pages INTEGER NOT NULL,
+  total_issues_open INTEGER NOT NULL,
+  critical_count INTEGER NOT NULL,
+  warning_count INTEGER NOT NULL,
+  info_count INTEGER NOT NULL,
+  schema_coverage_pct INTEGER NOT NULL,
+  alt_coverage_pct INTEGER NOT NULL,
+  avg_load_time_ms INTEGER NOT NULL,
+  keywords_tracked INTEGER NOT NULL,
+  keywords_top10 INTEGER NOT NULL,
+  keywords_top30 INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS seo_page_scores (
+  page_id INTEGER PRIMARY KEY,
+  score INTEGER NOT NULL,           -- 0-100
+  breakdown TEXT NOT NULL,          -- JSON: { meta: 20, headings: 15, ... }
+  graded_at INTEGER NOT NULL,
+  FOREIGN KEY (page_id) REFERENCES seo_pages(id)
+);
 `);
 
-console.log('[db] SEO module tables ready (seo_pages + seo_issues + seo_keywords + seo_keyword_history + seo_image_alt + seo_schemas)');
+console.log('[db] SEO module tables ready (seo_pages + seo_issues + seo_keywords + seo_keyword_history + seo_image_alt + seo_schemas + seo_daily_snapshot + seo_page_scores)');
 
 // Indexes trên hotel_id
 try {

@@ -510,5 +510,28 @@ export function startScheduler() {
   // Email automation module removed in cleanup phase 3 (was never used).
   // Admin alert emails still work via services/email.ts (sendAlertToAdmin).
 
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, fb-metrics 2h, ab decide 1h, ai-cache 3h, backup 4h, weekly-report CN 8h, retention 2h, knowledge-sync 3h, product-auto-post (7h gen + 9h publish), V5T text/image (T2/T4/T6/CN 10h gen + 11h publish + gdrive-sync 15p)');
+  // ═══ SEO Daily Crawl + Audit + Keyword Rank ═══
+  // 3:30 AM VN — after backup at 4 AM (different cron block, runs before backup completes)
+  // Reference: skill sonder-tech-sovereignty
+  cron.schedule('30 3 * * *', async () => {
+    if (require('../db').getSetting('seo_daily_cron_enabled') === 'false') {
+      return;
+    }
+    try {
+      const { runDailySeoCron } = require('./seo/daily-cron');
+      const r = await runDailySeoCron();
+      console.log(`[scheduler] seo-daily: crawled=${r.crawled} new_issues=${r.issues_added} cost=$${r.cost_usd.toFixed(4)} | snap=${JSON.stringify({
+        pages: r.snapshot.total_pages,
+        critical: r.snapshot.critical_count,
+        warnings: r.snapshot.warning_count,
+        schema_pct: r.snapshot.schema_coverage_pct,
+        alt_pct: r.snapshot.alt_coverage_pct,
+      })}`);
+    } catch (e: any) {
+      console.error('[scheduler] seo-daily error:', e?.message);
+    }
+  }, { timezone: 'Asia/Ho_Chi_Minh' });
+
+  console.log('[scheduler] SEO daily cron ENABLED (3:30 AM VN — crawl + audit + keyword ranks)');
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, fb-metrics 2h, ab decide 1h, ai-cache 3h, backup 4h, weekly-report CN 8h, retention 2h, knowledge-sync 3h, product-auto-post (7h gen + 9h publish), V5T text/image (T2/T4/T6/CN 10h gen + 11h publish + gdrive-sync 15p), SEO daily 3:30h');
 }
