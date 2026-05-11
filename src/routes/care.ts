@@ -12,6 +12,7 @@ import { syncInbox, listComments, inboxStats, markCommentResponded } from '../se
 import { listTemplates, getTemplate, upsertTemplate, deleteTemplate, renderTemplate, suggestTemplates, seedDefaultTemplates } from '../services/care/templates';
 import { auditAllFacebookPages, getLatestFacebookAudit } from '../services/seo/channels/facebook';
 import { auditAllInstagram, getLatestInstagramAudit } from '../services/seo/channels/instagram';
+import { saveManualTiktokAudit, recommendHashtagsForHotel, getLaunchChecklist, TIKTOK_HASHTAG_LIBRARY } from '../services/seo/channels/tiktok';
 
 const router = Router();
 
@@ -159,6 +160,48 @@ router.get('/social/instagram', (_req, res) => {
   res.json({ items: getLatestInstagramAudit() });
 });
 
+/* ───────── TikTok SEO ───────── */
+
+router.post('/social/tiktok/audit', (req, res) => {
+  const { username, followers, posts_last_30d, avg_views, bio_text, has_link_in_bio, uses_trending_sounds } = req.body || {};
+  if (!username) return res.status(400).json({ error: 'username required' });
+  try {
+    const r = saveManualTiktokAudit({
+      username: String(username).replace('@', '').trim(),
+      followers: followers ? parseInt(followers, 10) : undefined,
+      posts_last_30d: posts_last_30d ? parseInt(posts_last_30d, 10) : undefined,
+      avg_views: avg_views ? parseInt(avg_views, 10) : undefined,
+      bio_text,
+      has_link_in_bio,
+      uses_trending_sounds,
+    });
+    res.json({ ok: true, audit: r });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+router.get('/social/tiktok', (_req, res) => {
+  const rows = db.prepare(
+    `SELECT audit_json FROM seo_social_audit WHERE channel = 'tiktok' ORDER BY audited_at DESC LIMIT 10`,
+  ).all() as Array<{ audit_json: string }>;
+  res.json({ items: rows.map((r) => JSON.parse(r.audit_json)) });
+});
+
+router.post('/social/tiktok/hashtags', (req, res) => {
+  const { hotel_city, hotel_district, target_audience, content_angle } = req.body || {};
+  try {
+    const r = recommendHashtagsForHotel({ hotel_city, hotel_district, target_audience, content_angle });
+    res.json({ ok: true, ...r });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+router.get('/social/tiktok/launch-checklist', (_req, res) => {
+  res.json({ items: getLaunchChecklist() });
+});
+
+router.get('/social/tiktok/hashtag-library', (_req, res) => {
+  res.json({ items: TIKTOK_HASHTAG_LIBRARY });
+});
+
 /* ───────── Dashboard HTML ───────── */
 
 router.get('/dashboard', (_req, res) => {
@@ -223,6 +266,7 @@ router.get('/dashboard', (_req, res) => {
   <div class="tab" data-t="templates" onclick="switchTab('templates')">📝 Response templates</div>
   <div class="tab" data-t="social-fb" onclick="switchTab('social-fb')">📘 Facebook SEO</div>
   <div class="tab" data-t="social-ig" onclick="switchTab('social-ig')">📷 Instagram SEO</div>
+  <div class="tab" data-t="social-tt" onclick="switchTab('social-tt')">🎵 TikTok SEO</div>
 </div>
 
 <div id="overview"></div>
@@ -336,6 +380,65 @@ async function loadTab(t) {
     wrap.innerHTML = h;
     return;
   }
+  if (t === 'social-tt') {
+    const audits = await fetch('/api/care/social/tiktok').then((x) => x.json());
+    const checklist = await fetch('/api/care/social/tiktok/launch-checklist').then((x) => x.json());
+    let h = '<h2>🎵 TikTok SEO — Sondervn</h2>';
+
+    if (audits.items.length === 0) {
+      h += '<div style="background:#fde8d4;border:1px solid #e8b87a;padding:14px;border-radius:6px;margin:10px 0">';
+      h += '<strong>Sondervn chưa có TikTok official?</strong> Module này hỗ trợ:<br>';
+      h += '• Launch checklist (3 phases) — xem dưới<br>';
+      h += '• Hashtag research per hotel (city, audience, content angle)<br>';
+      h += '• Manual audit khi đã launch (TikTok không cho API access dễ)<br>';
+      h += '</div>';
+    } else {
+      for (const a of audits.items) {
+        h += '<h3>@' + escapeHtml(a.username) + '</h3>';
+        h += '<div class="stats">';
+        h += card('total', 'Followers', a.followers ?? '—');
+        h += card('total', 'Posts /week', a.posts_per_week);
+        h += card('total', 'Avg views', a.avg_views ?? '—');
+        h += card('total', 'Bio quality', a.bio_quality);
+        h += '</div>';
+        if (a.recommendations?.length > 0) {
+          h += '<h4>Recommendations</h4><ul>';
+          for (const rec of a.recommendations) h += '<li>' + escapeHtml(rec) + '</li>';
+          h += '</ul>';
+        }
+      }
+    }
+
+    h += '<h3>🚀 Manual audit (nhập từ TikTok Insights)</h3>';
+    h += '<div class="actions">';
+    h += '<input type="text" id="ttUsername" placeholder="@sondervn" />';
+    h += '<input type="number" id="ttFollowers" placeholder="followers" style="width:100px" />';
+    h += '<input type="number" id="ttPosts" placeholder="posts last 30d" style="width:140px" />';
+    h += '<input type="number" id="ttViews" placeholder="avg views" style="width:120px" />';
+    h += '<button class="btn-primary" onclick="auditTiktok()">Save audit</button>';
+    h += '</div>';
+
+    h += '<h3>🏷️ Hashtag recommender</h3>';
+    h += '<div class="actions">';
+    h += '<input type="text" id="hCity" placeholder="hotel city (saigon, danang, dalat...)" />';
+    h += '<select id="hAudience"><option value="">Any audience</option><option>budget</option><option>couple</option><option>family</option><option>luxury</option></select>';
+    h += '<button class="btn-primary" onclick="getHashtags()">Get hashtags</button>';
+    h += '</div>';
+    h += '<div id="hashtagOut"></div>';
+
+    h += '<h3>📋 Launch checklist</h3>';
+    for (const phase of checklist.items) {
+      h += '<h4>' + escapeHtml(phase.phase) + '</h4><ul>';
+      for (const task of phase.tasks) {
+        h += '<li>[ ] ' + escapeHtml(task.task) + ' <span style="color:#888;font-size:11px">(' + task.effort + ')</span></li>';
+      }
+      h += '</ul>';
+    }
+
+    wrap.innerHTML = h;
+    return;
+  }
+
   if (t === 'social-ig') {
     const r = await fetch('/api/care/social/instagram').then((x) => x.json());
     if (r.items.length === 0) return wrap.innerHTML = '<div class="empty">No IG audit. Bấm "Audit Instagram" (cần IG Business linked to FB Page).</div>';
@@ -388,6 +491,38 @@ async function auditIG() {
   const r = await fetch('/api/care/social/instagram/audit', { method: 'POST' }).then((x) => x.json());
   alert(JSON.stringify(r, null, 2));
   load();
+}
+
+async function auditTiktok() {
+  const username = document.getElementById('ttUsername').value.trim();
+  if (!username) return alert('Enter username');
+  const r = await fetch('/api/care/social/tiktok/audit', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      username,
+      followers: parseInt(document.getElementById('ttFollowers').value || '0', 10),
+      posts_last_30d: parseInt(document.getElementById('ttPosts').value || '0', 10),
+      avg_views: parseInt(document.getElementById('ttViews').value || '0', 10),
+    }),
+  }).then((x) => x.json());
+  alert(JSON.stringify(r, null, 2));
+  loadTab('social-tt');
+}
+
+async function getHashtags() {
+  const city = document.getElementById('hCity').value.trim();
+  const audience = document.getElementById('hAudience').value;
+  const r = await fetch('/api/care/social/tiktok/hashtags', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hotel_city: city, target_audience: audience || undefined }),
+  }).then((x) => x.json());
+  let html = '<h4>Recommended hashtags</h4>';
+  html += '<div style="margin:8px 0"><strong>Primary (city/brand):</strong> ' + (r.primary || []).map((t) => '<span class="badge b-positive" style="margin:2px">' + escapeHtml(t) + '</span>').join(' ') + '</div>';
+  html += '<div style="margin:8px 0"><strong>Secondary (category):</strong> ' + (r.secondary || []).map((t) => '<span class="badge b-neutral" style="margin:2px">' + escapeHtml(t) + '</span>').join(' ') + '</div>';
+  html += '<div style="margin:8px 0"><strong>Niche (long-tail):</strong> ' + (r.niche || []).map((t) => '<span class="badge b-info" style="margin:2px">' + escapeHtml(t) + '</span>').join(' ') + '</div>';
+  html += '<div style="margin:14px 0;font-size:12px;color:#666"><strong>Notes:</strong><ul style="margin-top:6px">' + (r.notes || []).map((n) => '<li>' + escapeHtml(n) + '</li>').join('') + '</ul></div>';
+  html += '<div style="margin:8px 0;font-family:monospace;background:#f8f8e8;padding:10px;border-radius:6px;font-size:12px">' + (r.total || []).join(' ') + '</div>';
+  document.getElementById('hashtagOut').innerHTML = html;
 }
 async function seedTemplates() {
   const r = await fetch('/api/care/templates/seed', { method: 'POST' }).then((x) => x.json());

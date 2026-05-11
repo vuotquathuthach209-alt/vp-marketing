@@ -382,6 +382,46 @@ export function startScheduler() {
   // Email automation module removed in cleanup phase 3 (was never used).
   // Admin alert emails still work via services/email.ts (sendAlertToAdmin).
 
+  // ═══ Customer Care — auto-sync reviews + comments + SLA alert ═══
+  //   Setting care_cron_enabled (default true). Sondervn FB Page reviews + post comments.
+
+  if (require('../db').getSetting('care_cron_enabled') !== 'false') {
+    // Reviews sync — every 2 hours (FB recommendations don't change fast)
+    cron.schedule('0 */2 * * *', async () => {
+      try {
+        const { syncReviews } = require('./care/reviews');
+        const r = await syncReviews({ since_days: 30 });
+        if (r.new > 0) {
+          console.log(`[scheduler] care-reviews: ${r.new} new, ${r.notified_admin} alerted (cost classify=$${(r.classified * 0.0001).toFixed(4)})`);
+        }
+      } catch (e: any) { console.error('[scheduler] care-reviews err:', e?.message); }
+    });
+
+    // Comments inbox sync — every 30 min (faster, comments are time-sensitive)
+    cron.schedule('*/30 * * * *', async () => {
+      try {
+        const { syncInbox } = require('./care/inbox');
+        const r = await syncInbox({ since_days: 7 });
+        if (r.new > 0) {
+          console.log(`[scheduler] care-inbox: ${r.new} new, questions=${r.questions}, needs_response=${r.needs_response}`);
+        }
+      } catch (e: any) { console.error('[scheduler] care-inbox err:', e?.message); }
+    });
+
+    // SLA check — every 2 hours, alert if overdue items exist
+    cron.schedule('30 */2 * * *', async () => {
+      try {
+        const { runSlaCheck } = require('./care/sla-tracker');
+        const r = await runSlaCheck();
+        if (r.overdue > 0) {
+          console.log(`[scheduler] care-sla: ${r.overdue} overdue, alerted=${r.alerted}`);
+        }
+      } catch (e: any) { console.error('[scheduler] care-sla err:', e?.message); }
+    });
+
+    console.log('[scheduler] Customer Care cron ENABLED (reviews 2h + inbox 30p + SLA 2h)');
+  }
+
   // ═══ SEO Daily Crawl + Audit + Keyword Rank ═══
   // 3:30 AM VN — after backup at 4 AM (different cron block, runs before backup completes)
   // Reference: skill sonder-tech-sovereignty
@@ -405,5 +445,5 @@ export function startScheduler() {
   }, { timezone: 'Asia/Ho_Chi_Minh' });
 
   console.log('[scheduler] SEO daily cron ENABLED (3:30 AM VN — crawl + audit + keyword ranks)');
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, fb-metrics 2h, ab decide 1h, ai-cache 3h, backup 4h, weekly-report CN 8h, retention 2h, knowledge-sync 3h, product-auto-post (7h gen + 9h publish), V5T text/image (T2/T4/T6/CN 10h gen + 11h publish + gdrive-sync 15p), SEO daily 3:30h');
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, fb-metrics 2h, ab decide 1h, ai-cache 3h, backup 4h, weekly-report CN 8h, retention 2h, knowledge-sync 3h, V5T text/image (T2/T4/T6/CN 10h gen + 11h publish + gdrive-sync 15p), SEO daily 3:30h, Customer Care (reviews 2h + inbox 30p + SLA 2h)');
 }

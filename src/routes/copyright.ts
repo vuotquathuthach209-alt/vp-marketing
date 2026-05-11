@@ -149,6 +149,84 @@ router.post('/blacklist', (req, res) => {
   res.json({ ok: true, will_blacklist: !!phash || fs.existsSync(p) });
 });
 
+/**
+ * Auto-blacklist by FB post ID: admin pastes fb_post_id of takedown'd post → we look up
+ * its images (from v5t_post_images or posts) → compute pHash → add all to blacklist.
+ * Future posts with similar images will be auto-blocked.
+ */
+router.post('/blacklist-from-fb-post', async (req, res) => {
+  const fbPostId = (req.body?.fb_post_id || '').trim();
+  const reason = req.body?.reason || 'FB Rights Manager takedown';
+  if (!fbPostId) return res.status(400).json({ error: 'fb_post_id required' });
+
+  const blacklisted: string[] = [];
+  const errors: string[] = [];
+
+  // Strategy A: V5T post with fb_post_id
+  const v5tPost = db.prepare(`SELECT id FROM v5t_posts WHERE fb_post_id = ?`).get(fbPostId) as { id: number } | undefined;
+  if (v5tPost) {
+    const images = db.prepare(`SELECT composed_path FROM v5t_post_images WHERE post_id = ?`).all(v5tPost.id) as Array<{ composed_path: string }>;
+    for (const img of images) {
+      if (!fs.existsSync(img.composed_path)) {
+        errors.push(`file missing: ${img.composed_path}`);
+        continue;
+      }
+      try {
+        const phash = await computePHash(img.composed_path);
+        if (phash) {
+          db.prepare(
+            `INSERT OR REPLACE INTO copyright_takedown_blacklist (phash, image_path, reason, fb_post_id, added_at) VALUES (?, ?, ?, ?, ?)`,
+          ).run(phash, img.composed_path, reason, fbPostId, Date.now());
+          blacklisted.push(img.composed_path);
+        }
+      } catch (e: any) { errors.push(`pHash fail: ${e.message}`); }
+    }
+  }
+
+  // Strategy B: legacy posts table with fb_post_id
+  const legacyPost = db.prepare(`SELECT p.id, m.filename FROM posts p LEFT JOIN media m ON m.id = p.media_id WHERE p.fb_post_id = ?`).get(fbPostId) as { id: number; filename: string } | undefined;
+  if (legacyPost?.filename) {
+    const filename = legacyPost.filename;
+    if (filename.startsWith('http')) {
+      errors.push(`legacy post used URL: ${filename.slice(0, 80)} — cannot pHash without download`);
+    } else {
+      const fullPath = `/opt/vp-marketing/data/media/${filename}`;
+      if (fs.existsSync(fullPath)) {
+        try {
+          const phash = await computePHash(fullPath);
+          if (phash) {
+            db.prepare(
+              `INSERT OR REPLACE INTO copyright_takedown_blacklist (phash, image_path, reason, fb_post_id, added_at) VALUES (?, ?, ?, ?, ?)`,
+            ).run(phash, fullPath, reason, fbPostId, Date.now());
+            blacklisted.push(fullPath);
+          }
+        } catch (e: any) { errors.push(`pHash fail: ${e.message}`); }
+      }
+    }
+  }
+
+  // Also flag any v5_footage row that linked to this fb_post via v5t_post_images
+  if (v5tPost) {
+    db.prepare(
+      `UPDATE copyright_assessments SET status = 'rejected', notes = ? , reviewed_at = ?
+       WHERE image_path IN (SELECT composed_path FROM v5t_post_images WHERE post_id = ?)`,
+    ).run('FB takedown: ' + reason, Date.now(), v5tPost.id);
+  }
+
+  if (blacklisted.length === 0 && errors.length === 0) {
+    return res.json({ ok: false, message: 'No matching post found in DB for fb_post_id', fb_post_id: fbPostId });
+  }
+
+  res.json({
+    ok: true,
+    fb_post_id: fbPostId,
+    blacklisted_count: blacklisted.length,
+    blacklisted,
+    errors,
+    message: `Blocked ${blacklisted.length} image(s) from future use. Similar images (pHash distance ≤5) will auto-block.`,
+  });
+});
+
 /** Stats per source — important for understanding where risk comes from. */
 router.get('/source-risk', (_req, res) => {
   const rows = db.prepare(`
@@ -218,8 +296,9 @@ router.get('/dashboard', (_req, res) => {
 <div class="meta" id="last">Loading…</div>
 
 <div class="actions">
-  <button class="btn-primary" onclick="scanAll()">⚡ Scan ALL images (no web search — fast)</button>
-  <button class="btn-primary" onclick="scanAllWithWeb()">🔍 Scan ALL with Google Vision (~$0.20)</button>
+  <button class="btn-primary" onclick="scanAll()">⚡ Scan ALL images (fast, no web search)</button>
+  <button class="btn-primary" onclick="scanAllWithWeb()">🔍 Scan with Google Vision (~$0.20)</button>
+  <button onclick="reportTakedown()" style="background:#a00;color:#fff;border-color:#a00">🚨 Report FB takedown</button>
   <button onclick="load()">⟳ Refresh</button>
 </div>
 
@@ -396,6 +475,21 @@ async function reject(p) {
     body: JSON.stringify({ path: p, reason }),
   });
   loadTab(activeTab);
+}
+
+async function reportTakedown() {
+  const fbPostId = prompt(
+    'FB Post ID bị gỡ?\\n\\nVí dụ: 892083053979896_122128287051105277\\n(copy từ FB → Sự việc → notification)',
+    '',
+  );
+  if (!fbPostId || !fbPostId.trim()) return;
+  const reason = prompt('Lý do gỡ? (default: FB Rights Manager takedown)', 'FB Rights Manager takedown') || 'FB takedown';
+  const r = await fetch('/api/copyright/blacklist-from-fb-post', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fb_post_id: fbPostId.trim(), reason }),
+  }).then((x) => x.json());
+  alert(JSON.stringify(r, null, 2));
+  load();
 }
 
 load();

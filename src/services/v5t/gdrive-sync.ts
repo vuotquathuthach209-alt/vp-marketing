@@ -18,6 +18,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import axios from 'axios';
 import { db, getSetting } from '../../db';
 import { analyzeImageContent } from './vision-analyzer';
@@ -114,7 +115,7 @@ export async function syncGoogleDriveFolder(): Promise<{
     // Generate safe filename
     const ext = (f.name.match(/\.[a-zA-Z0-9]+$/) || ['.bin'])[0];
     const safeName = f.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 60);
-    const localPath = path.join(FOOTAGE_DIR, `gdrive-${f.id.slice(-8)}-${safeName}`);
+    let localPath = path.join(FOOTAGE_DIR, `gdrive-${f.id.slice(-8)}-${safeName}`);
 
     // Download
     const ok = await downloadDriveFile(f.id, apiKey, localPath);
@@ -123,6 +124,42 @@ export async function syncGoogleDriveFolder(): Promise<{
       continue;
     }
     result.downloaded++;
+
+    // ── 2026-05-11: HEIC/HEIF/AVIF auto-convert to JPEG ──
+    // Sharp doesn't bundle libheif → these formats fail downstream (vision, pHash, alt-text, etc).
+    // Convert to JPEG at sync time so the rest of the pipeline doesn't have to worry.
+    const lowerExt = ext.toLowerCase();
+    if (['.heic', '.heif', '.avif'].includes(lowerExt)) {
+      const jpegPath = localPath.replace(/\.(heic|heif|avif)$/i, '.jpg');
+      try {
+        const conv = spawnSync('ffmpeg', [
+          '-y', '-loglevel', 'error',
+          '-i', localPath,
+          '-frames:v', '1',
+          '-q:v', '4',  // high quality JPEG
+          jpegPath,
+        ], { timeout: 60_000 });
+        if (conv.status === 0 && fs.existsSync(jpegPath) && fs.statSync(jpegPath).size > 10_000) {
+          // Success: delete original HEIC + use JPEG path
+          try { fs.unlinkSync(localPath); } catch {}
+          localPath = jpegPath;
+          console.log(`[gdrive-sync] converted HEIC → JPG: ${f.name}`);
+        } else {
+          // Conversion failed (file might be corrupted from Drive download)
+          console.warn(`[gdrive-sync] HEIC conversion failed for ${f.name} — keeping original (may not be usable for pipeline)`);
+          result.errors.push(`heic_convert_fail: ${f.name}`);
+        }
+      } catch (e: any) {
+        console.warn(`[gdrive-sync] ffmpeg HEIC convert error for ${f.name}:`, e?.message);
+      }
+    }
+
+    // Verify file is valid (>10KB and readable). Skip metadata extraction if not.
+    if (!fs.existsSync(localPath) || fs.statSync(localPath).size < 10_000) {
+      console.warn(`[gdrive-sync] file too small/missing after sync: ${f.name} — skip`);
+      result.errors.push(`corrupted: ${f.name}`);
+      continue;
+    }
 
     // Analyze image with Gemini Vision (skip videos for now)
     let location = null;

@@ -266,6 +266,28 @@ async function resolveImageSource(opts: {
   return null;
 }
 
+/** Build watermark SVG — small "sondervn.com" mark at bottom-right.
+ *  Helps Meta Rights Manager identify Sondervn as image source + visual brand reinforcement.
+ *  Setting: v5t_watermark_enabled (default true). v5t_watermark_text (default "sondervn.com").
+ */
+function buildWatermarkSvg(): string | null {
+  const { getSetting } = require('../../db');
+  if (getSetting('v5t_watermark_enabled') === 'false') return null;
+  const text = (getSetting('v5t_watermark_text') || 'sondervn.com').slice(0, 30);
+  const opacity = parseFloat(getSetting('v5t_watermark_opacity') || '0.55');
+
+  // Rough text-width estimate for backing rectangle width (≈ 14px/char at font-size 24)
+  const estWidth = text.length * 14 + 28;
+  const x = TARGET_SIZE - estWidth - 24;
+  const y = TARGET_SIZE - 50;
+
+  return `<svg width="${TARGET_SIZE}" height="${TARGET_SIZE}" xmlns="http://www.w3.org/2000/svg">
+  <rect x="${x}" y="${y}" width="${estWidth}" height="34" rx="6" fill="rgba(0,0,0,${(opacity * 0.6).toFixed(2)})"/>
+  <text x="${x + 14}" y="${y + 22}" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="20" font-weight="600"
+        fill="white" fill-opacity="${opacity}">${text}</text>
+</svg>`;
+}
+
 /** Apply text overlay (hook line) to image — sharp SVG composite */
 async function addTextOverlay(opts: {
   inputPath: string;
@@ -292,9 +314,13 @@ async function addTextOverlay(opts: {
         fill="white" stroke="rgba(0,0,0,0.6)" stroke-width="0.5">${escapedHook}</text>
 </svg>`;
 
+    const composites: any[] = [{ input: Buffer.from(svgOverlay), top: 0, left: 0 }];
+    const watermark = buildWatermarkSvg();
+    if (watermark) composites.push({ input: Buffer.from(watermark), top: 0, left: 0 });
+
     await sharp(opts.inputPath)
       .resize(TARGET_SIZE, TARGET_SIZE, { fit: 'cover' })
-      .composite([{ input: Buffer.from(svgOverlay), top: 0, left: 0 }])
+      .composite(composites)
       .jpeg({ quality: 85 })
       .toFile(opts.outputPath);
     return true;
@@ -304,13 +330,17 @@ async function addTextOverlay(opts: {
   }
 }
 
-/** Just resize to 1080×1080 (no overlay) */
+/** Just resize to 1080×1080 + watermark (no hook text overlay) */
 async function resizeOnly(inputPath: string, outputPath: string): Promise<boolean> {
   try {
-    await sharp(inputPath)
-      .resize(TARGET_SIZE, TARGET_SIZE, { fit: 'cover' })
-      .jpeg({ quality: 85 })
-      .toFile(outputPath);
+    const composites: any[] = [];
+    const watermark = buildWatermarkSvg();
+    if (watermark) composites.push({ input: Buffer.from(watermark), top: 0, left: 0 });
+
+    let pipeline = sharp(inputPath).resize(TARGET_SIZE, TARGET_SIZE, { fit: 'cover' });
+    if (composites.length > 0) pipeline = pipeline.composite(composites);
+
+    await pipeline.jpeg({ quality: 85 }).toFile(outputPath);
     return true;
   } catch {
     return false;
