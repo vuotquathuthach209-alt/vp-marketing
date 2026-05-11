@@ -84,13 +84,8 @@ async function processDuePosts() {
         `UPDATE posts SET status = 'published', published_at = ?, fb_post_id = ?, error_message = NULL WHERE id = ?`
       ).run(Date.now(), result.fbPostId, post.id);
 
-      // v24: Cross-post FB → IG + Zalo OA (non-blocking fire-and-forget)
-      try {
-        const { crossPostFromPostId } = require('./cross-post-sync');
-        crossPostFromPostId(post.id, 'scheduler').catch((e: any) =>
-          console.warn('[scheduler] cross-post fail:', e?.message)
-        );
-      } catch {}
+      // Cross-post (IG + Zalo) REMOVED 2026-05-11 — modules deleted in pivot.
+      // FB → IG cross-posting can be re-built later if needed via official Graph API.
       console.log(`[scheduler] Đăng thành công post #${post.id} → ${result.fbPostId}`);
       notifyAll(`✅ *Đăng thành công* post #${post.id}\n\`${result.fbPostId}\`\n\n${post.caption.slice(0, 200)}`).catch(() => {});
     } catch (err: any) {
@@ -185,34 +180,9 @@ export function startScheduler() {
     }
   });
 
-  // ── v22: Weekly cleanup — old drafts, AI images, OCR receipts ──
-  // Chủ Nhật 3h sáng VN = 20h UTC Saturday
-  cron.schedule('0 20 * * 6', () => {
-    try {
-      const sixMonthsAgo = Date.now() - 180 * 24 * 3600_000;
-      const thirtyDaysAgo = Date.now() - 30 * 24 * 3600_000;
-
-      const oldDrafts = db.prepare(
-        `DELETE FROM news_post_drafts WHERE created_at < ? AND status IN ('rejected', 'draft', 'failed')`
-      ).run(sixMonthsAgo);
-
-      const oldRemix = db.prepare(
-        `DELETE FROM remix_drafts WHERE created_at < ? AND status IN ('draft', 'discarded', 'cancelled')`
-      ).run(sixMonthsAgo);
-
-      const oldAiImages = db.prepare(
-        `DELETE FROM media WHERE source LIKE 'ai-image%' AND created_at < ?`
-      ).run(thirtyDaysAgo);
-
-      const oldOcr = db.prepare(
-        `DELETE FROM ocr_receipts WHERE created_at < ? AND verification_status IN ('manual_rejected', 'low_ocr_confidence')`
-      ).run(sixMonthsAgo);
-
-      console.log(`[scheduler] weekly-cleanup: drafts=${oldDrafts.changes} remix=${oldRemix.changes} ai_images=${oldAiImages.changes} ocr=${oldOcr.changes}`);
-    } catch (e: any) {
-      console.error('[scheduler] cleanup error:', e?.message);
-    }
-  });
+  // Weekly cleanup REMOVED 2026-05-11: targeted tables (news_post_drafts, remix_drafts) no longer
+  // populated since news pipeline was removed. AI images now only via V5T (rare). OCR receipts table
+  // dropped in earlier cleanup. Retention-cleanup cron at 2am handles the rest.
 
   // v25: DISABLED — ci-auto-weekly (VnExpress remix) thay bằng product-first daily.
   //      Logic cũ: mỗi T2 lấy 1 bài VnExpress → remix → post.
@@ -263,109 +233,11 @@ export function startScheduler() {
     }
   }, { timezone: 'Asia/Ho_Chi_Minh' });
 
-  // ── v25: Auto-sync new hotels từ OTA mỗi 6h ──
-  //   Khách sạn mới register OTA → tự động vào bot rotation ngày mai.
-  cron.schedule('0 */6 * * *', async () => {
-    try {
-      const { syncNewHotelsFromOta } = require('./product-auto-post/ota-sync-new-hotels');
-      const r = await syncNewHotelsFromOta();
-      if (r.created > 0 || r.updated > 0) {
-        console.log(`[scheduler] ota-new-hotels-sync: created=${r.created} updated=${r.updated}`);
-      }
-    } catch (e: any) {
-      console.error('[scheduler] ota-new-hotels-sync error:', e?.message);
-    }
-  });
-
-  // ── v26 Phase A: Vectorize hotels daily 6:30h VN (sau OTA sync, trước generate) ──
-  cron.schedule('30 6 * * *', async () => {
-    try {
-      const { vectorizeAllActiveHotels } = require('./product-auto-post/hotel-vectorizer');
-      const r = await vectorizeAllActiveHotels();
-      console.log('[scheduler] hotel-vectorize:', JSON.stringify(r));
-    } catch (e: any) {
-      console.error('[scheduler] hotel-vectorize error:', e?.message);
-    }
-  }, { timezone: 'Asia/Ho_Chi_Minh' });
-
-  // ── v26 Phase B: Engagement feedback loop mỗi 4h ──
-  //   Fetch FB metrics → update auto_post_history.engagement_json
-  //   Picker dùng data này tính multiplier cho future picks.
-  cron.schedule('15 */4 * * *', async () => {
-    try {
-      const { updateEngagementFeedback } = require('./product-auto-post/engagement-feedback');
-      const r = await updateEngagementFeedback();
-      if (r.updated > 0) {
-        console.log(`[scheduler] engagement-feedback: updated=${r.updated} high=${r.high_perform.length} low=${r.low_perform.length}`);
-      }
-    } catch (e: any) {
-      console.error('[scheduler] engagement-feedback error:', e?.message);
-    }
-  });
-
-  // Zalo OA token refresh — v22: cron mỗi 6h (thay vì 20h) + notify admin nếu fail
-  //                              Trước đó 20h nhưng nếu miss 1 cycle → 40h → token expire (~25h life).
-  cron.schedule('0 */6 * * *', async () => {
-    try {
-      const { refreshZaloToken } = require('./zalo');
-      const { getSetting } = require('../db');
-      const appId = getSetting('zalo_app_id');
-      const appSecret = getSetting('zalo_app_secret');
-
-      if (!appId || !appSecret) {
-        console.warn('[scheduler] zalo-refresh SKIP — missing credentials in settings (zalo_app_id + zalo_app_secret). Use POST /api/zalo/set-credentials');
-        // Notify admin 1 lần/ngày
-        const today = new Date().toISOString().slice(0, 10);
-        const notifyKey = `zalo_missing_creds_${today}`;
-        if (!getSetting(notifyKey)) {
-          try {
-            const { notifyAll } = require('./telegram');
-            notifyAll(`🚨 *Zalo bot không hoạt động*\nThiếu zalo_app_id + zalo_app_secret trong settings.\n→ Call POST /api/zalo/set-credentials với App ID + App Secret từ Zalo Developer Console.`).catch(() => {});
-            const { setSetting } = require('../db');
-            setSetting(notifyKey, '1');
-          } catch {}
-        }
-        return;
-      }
-
-      const rows = db.prepare(`SELECT * FROM zalo_oa WHERE enabled = 1`).all() as any[];
-      let refreshed = 0, failed = 0;
-      const failedOAs: any[] = [];
-      for (const row of rows) {
-        const { decrypt } = require('./crypto');
-        const oa = {
-          ...row,
-          access_token: decrypt(row.access_token) || '',
-          refresh_token: decrypt(row.refresh_token),
-          app_secret: decrypt(row.app_secret),
-        };
-        const ok = await refreshZaloToken(oa);
-        if (ok) refreshed++;
-        else {
-          failed++;
-          failedOAs.push({ oa_id: row.oa_id, name: row.oa_name });
-        }
-      }
-      if (rows.length > 0) {
-        console.log(`[scheduler] zalo-refresh: ${refreshed} OK, ${failed} failed (of ${rows.length})`);
-
-        // Notify admin nếu có fail
-        if (failed > 0) {
-          try {
-            const { notifyAll } = require('./telegram');
-            notifyAll(
-              `⚠️ *Zalo token refresh fail*\n` +
-              `${failed}/${rows.length} OA(s) failed to refresh:\n` +
-              failedOAs.map((o: any) => `  • ${o.name || o.oa_id}`).join('\n') +
-              `\n→ Có thể refresh_token cũng hết hạn (> 3 tháng). Cần re-authorize qua Zalo OAuth.`
-            ).catch(() => {});
-          } catch {}
-        }
-      }
-    } catch (e: any) {
-      console.error('[scheduler] zalo-refresh error:', e?.message);
-    }
-  });
+  // ── OTA-sync-new-hotels + hotel-vectorize + engagement-feedback + Zalo-refresh ──
+  // ALL REMOVED in 2026-05-11 pivot.
+  // - product-auto-post supporting crons no longer needed (product-auto-post disabled due to takedown)
+  // - Zalo module deleted in earlier cleanup
+  // V5T pipeline now handles content (uses Drive divider photos, not OTA partner images).
 
   // Knowledge Sync (Tier 2 RAG embeddings) — 3:00 AM daily
   // Chạy sau retention cleanup, populate embeddings cho Tier 2

@@ -165,52 +165,82 @@ async function resolveImageSource(opts: {
     ? `AND v5_footage.id NOT IN (${excludeIds.map(() => '?').join(',')})`
     : '';
 
-  // 1a. Try preferred content_type first (matches post style — tips for tips_post carousel slot)
+  // 1a. Try preferred content_type first (matches post style — tips for tips_post carousel slot).
+  // Loop up to 5 candidates; reject any that fail copyright check; keep trying.
   if (opts.preferContentType) {
-    const matched = db.prepare(
-      `SELECT * FROM v5_footage
-       WHERE (media_type = 'image' OR media_type IS NULL)
-         AND notes LIKE ?
-         AND NOT EXISTS (
-           SELECT 1 FROM v5t_post_images vpi WHERE vpi.footage_id = v5_footage.id
-         )
-         ${exclusionSql}
-       ORDER BY RANDOM()
-       LIMIT 1`,
-    ).get(`%content_type:${opts.preferContentType}%`, ...excludeIds) as any;
-    if (matched?.path && fs.existsSync(matched.path)) {
+    const tried: number[] = [];
+    for (let tryN = 0; tryN < 5; tryN++) {
+      const matchExclusion = [...excludeIds, ...tried];
+      const matchExclusionSql = matchExclusion.length > 0
+        ? `AND v5_footage.id NOT IN (${matchExclusion.map(() => '?').join(',')})`
+        : '';
+      const matched = db.prepare(
+        `SELECT * FROM v5_footage
+         WHERE (media_type = 'image' OR media_type IS NULL)
+           AND notes LIKE ?
+           AND NOT EXISTS (
+             SELECT 1 FROM v5t_post_images vpi WHERE vpi.footage_id = v5_footage.id
+           )
+           ${matchExclusionSql}
+         ORDER BY RANDOM()
+         LIMIT 1`,
+      ).get(`%content_type:${opts.preferContentType}%`, ...matchExclusion) as any;
+      if (!matched) break;
+      tried.push(matched.id);
+      if (!matched.path || !fs.existsSync(matched.path)) continue;
       const ext = path.extname(matched.path).toLowerCase();
-      if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
-        db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(matched.id);
-        return { path: matched.path, source: 'real_footage', footage_id: matched.id, cost: 0 };
+      if (!['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) continue;
+
+      // ⚠️ COPYRIGHT GATE for carousel slot
+      const safe = await checkCopyright(matched.path);
+      if (!safe) {
+        console.warn(`[v5t-composer] carousel slot ${opts.position} BLOCKED ${matched.id} by copyright, trying next`);
+        continue;
       }
+
+      db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(matched.id);
+      return { path: matched.path, source: 'real_footage', footage_id: matched.id, cost: 0 };
     }
   }
 
-  // 1b. Fallback: any never-used photo with NO-DUPLICATE filter
-  const footage = db.prepare(
-    `SELECT * FROM v5_footage
-     WHERE (media_type = 'image' OR media_type IS NULL)
-       AND NOT EXISTS (
-         SELECT 1 FROM v5t_post_images vpi WHERE vpi.footage_id = v5_footage.id
-       )
-       ${exclusionSql}
-     ORDER BY RANDOM()
-     LIMIT 1`,
-  ).get(...excludeIds) as any;
-
-  if (footage?.path && fs.existsSync(footage.path)) {
-    const ext = path.extname(footage.path).toLowerCase();
-    if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
-      db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(footage.id);
-      return { path: footage.path, source: 'real_footage', footage_id: footage.id, cost: 0 };
-    }
-    // Sonder staff video → extract frame (still real, free)
-    if (['.mp4', '.mov', '.webm'].includes(ext)) {
-      const framePath = path.join(TMP_FRAMES_DIR, `v5t-${opts.postId}-real-${opts.position}-${Date.now()}.jpg`);
-      if (extractFrameFromVideo(footage.path, 1.0, framePath)) {
+  // 1b. Fallback: any never-used photo with NO-DUPLICATE filter (also copyright-gated).
+  {
+    const tried: number[] = [];
+    for (let tryN = 0; tryN < 5; tryN++) {
+      const fbExclusion = [...excludeIds, ...tried];
+      const fbExclusionSql = fbExclusion.length > 0
+        ? `AND v5_footage.id NOT IN (${fbExclusion.map(() => '?').join(',')})`
+        : '';
+      const footage = db.prepare(
+        `SELECT * FROM v5_footage
+         WHERE (media_type = 'image' OR media_type IS NULL)
+           AND NOT EXISTS (
+             SELECT 1 FROM v5t_post_images vpi WHERE vpi.footage_id = v5_footage.id
+           )
+           ${fbExclusionSql}
+         ORDER BY RANDOM()
+         LIMIT 1`,
+      ).get(...fbExclusion) as any;
+      if (!footage?.path || !fs.existsSync(footage.path)) break;
+      tried.push(footage.id);
+      const ext = path.extname(footage.path).toLowerCase();
+      if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
+        // ⚠️ COPYRIGHT GATE for all positions (not just pos 0)
+        const safe = await checkCopyright(footage.path);
+        if (!safe) {
+          console.warn(`[v5t-composer] fallback slot ${opts.position} BLOCKED ${footage.id} by copyright, trying next`);
+          continue;
+        }
         db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(footage.id);
-        return { path: framePath, source: 'real_footage', footage_id: footage.id, cost: 0 };
+        return { path: footage.path, source: 'real_footage', footage_id: footage.id, cost: 0 };
+      }
+      // Sonder staff video → extract frame (still real, free)
+      if (['.mp4', '.mov', '.webm'].includes(ext)) {
+        const framePath = path.join(TMP_FRAMES_DIR, `v5t-${opts.postId}-real-${opts.position}-${Date.now()}.jpg`);
+        if (extractFrameFromVideo(footage.path, 1.0, framePath)) {
+          db.prepare(`UPDATE v5_footage SET used_count = used_count + 1 WHERE id = ?`).run(footage.id);
+          return { path: framePath, source: 'real_footage', footage_id: footage.id, cost: 0 };
+        }
       }
     }
   }

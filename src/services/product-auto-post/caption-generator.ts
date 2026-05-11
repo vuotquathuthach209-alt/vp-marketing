@@ -188,14 +188,16 @@ export async function generateCaption(
   const prompt = buildPrompt(hotel, angle, opts.imageContext);
 
   try {
-    const { smartCascade } = require('../smart-cascade');
-    const result = await smartCascade({
+    // smart-cascade removed in 2026-05-11 pivot — use unified router instead.
+    const { generate } = require('../router');
+    const text = await generate({
+      task: 'caption',
       system: 'Bạn tạo bài đăng marketing cho Sonder. Luôn tuân thủ brand voice + CTA rõ ràng.',
       user: prompt,
-      temperature: 0.8,      // cao hơn để creative
+      temperature: 0.8,
       maxTokens: 500,
-      startFrom: 'gemini_flash',
     });
+    const result = { text, provider: 'router' };
 
     let caption = (result.text || '').trim();
     // Remove markdown residue
