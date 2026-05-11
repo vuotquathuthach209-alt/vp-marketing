@@ -11,30 +11,19 @@ import aiRoutes from './routes/ai';
 import mediaRoutes from './routes/media';
 import postsRoutes from './routes/posts';
 import campaignsRoutes from './routes/campaigns';
-import autoreplyRoutes from './routes/autoreply';
-import wikiRoutes from './routes/wiki';
 import analyticsRoutes from './routes/analytics';
-import bookingRouter from './routes/booking';
 import otaRouter from './routes/ota';
 import adminRouter from './routes/admin';
 import onboardingRouter from './routes/onboarding';
 import monitoringRouter from './routes/monitoring';
 import productAutoPostRouter from './routes/product-auto-post';
-import agentRouter from './routes/agent';
 import dataDeletionRouter from './routes/data-deletion';
 import hotelsEditorRouter from './routes/hotels-editor';
-import conversationsRouter from './routes/conversations';
-import funnelAnalyticsRouter from './routes/funnel-analytics';
 import retentionRouter from './routes/retention';
 import knowledgeRouter from './routes/knowledge';
-import agenticTemplatesRouter from './routes/agentic-templates';
 import ocrRouter from './routes/ocr';
 import domainDataRouter from './routes/domain-data';
-import './services/agent-tools'; // init table + register tools
 import './services/ota-readonly-guard'; // self-test fires on boot (fail-fast if guard broken)
-// v8: Intent matcher self-test
-import { selfTest as intentMatcherSelfTest } from './services/intent-matcher';
-intentMatcherSelfTest().catch(e => console.warn('[intent-matcher] boot selftest fail:', e?.message));
 import rateLimit from 'express-rate-limit';
 
 const app = express();
@@ -100,21 +89,14 @@ app.use('/api/media', mediaRoutes);
 app.use('/api/posts', postsRoutes);
 app.use('/api/auto-post', productAutoPostRouter);
 app.use('/api/campaigns', campaignsRoutes);
-app.use('/api/auto-reply', autoreplyRoutes);
-app.use('/api/wiki', wikiRoutes);
 app.use('/api/analytics', analyticsRoutes);
-app.use('/api/booking', bookingRouter);
-app.use('/api/funnel', funnelAnalyticsRouter);
 app.use('/api/retention', retentionRouter);
 app.use('/api/knowledge', knowledgeRouter);
 app.use('/api/ota', otaRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/onboarding', onboardingRouter);
 app.use('/api/monitoring', monitoringRouter);
-app.use('/api/agent', agentRouter);
 app.use('/api/hotels-editor', hotelsEditorRouter);
-app.use('/api/conversations', conversationsRouter);
-app.use('/api/agentic-templates', agenticTemplatesRouter);
 app.use('/api/ocr', ocrRouter);                  // OCR testing + config
 app.use('/api/domain', domainDataRouter);        // Policies + pricing + promotions
 app.use('/api/data-deletion', dataDeletionRouter);

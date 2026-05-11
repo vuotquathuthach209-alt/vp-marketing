@@ -2,7 +2,6 @@ import { Router } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { pullMetrics, getLatestMetrics, getOverview, getBestPostingTime, getDailyTrend } from '../services/analytics';
 import { createExperiment, listExperiments, decidePendingWinners } from '../services/abtest';
-import { syncBooking, getLatestBooking } from '../services/booking';
 import { getCostOverview } from '../services/costtrack';
 
 const router = Router();
@@ -63,18 +62,7 @@ router.get('/trend', (req, res) => {
 });
 
 // ===== Sprint 4: Booking data sync =====
-router.post('/booking/sync', async (req, res) => {
-  try {
-    const r = await syncBooking(req.body || {});
-    res.json({ ok: true, ...r });
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-router.get('/booking', (req, res) => {
-  res.json(getLatestBooking() || null);
-});
+// /booking endpoints REMOVED in pivot 2026-05-11 (FB chat handled by Meta AI now).
 
 // ===== Sprint 5: Cost tracker =====
 router.get('/cost', (req, res) => {
@@ -190,42 +178,7 @@ router.get('/router-health', (_req, res) => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════
-// Sprint 7: Revenue / conversion funnel
-// ═══════════════════════════════════════════════════════════════
-import { getFunnelStats } from '../services/conversion-tracker';
-import { listBlocked, blockSender, unblockSender } from '../services/spam-guard';
-
-router.get('/revenue', (req, res) => {
-  const days = Math.max(1, Math.min(90, parseInt(String(req.query.days || '30'), 10) || 30));
-  // TODO: per-hotel filter via auth. For now hotel_id = null (global) or from req.user.hotelId if present.
-  const hotelId = (req as any).user?.hotelId || null;
-  try {
-    const stats = getFunnelStats(hotelId, days);
-    res.json(stats);
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-router.get('/spam', (req, res) => {
-  const hotelId = (req as any).user?.hotelId;
-  res.json({ items: listBlocked(hotelId) });
-});
-
-router.post('/spam/block', (req, res) => {
-  const { sender_id, reason, days } = req.body || {};
-  const hotelId = (req as any).user?.hotelId || 1;
-  if (!sender_id) return res.status(400).json({ error: 'sender_id required' });
-  try { blockSender(String(sender_id), hotelId, String(reason || 'manual'), days ? parseInt(days, 10) : undefined); res.json({ ok: true }); }
-  catch (e: any) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/spam/unblock', (req, res) => {
-  const { sender_id } = req.body || {};
-  if (!sender_id) return res.status(400).json({ error: 'sender_id required' });
-  try { unblockSender(String(sender_id)); res.json({ ok: true }); }
-  catch (e: any) { res.status(500).json({ error: e.message }); }
-});
+// Revenue / spam endpoints REMOVED in pivot 2026-05-11
+// (depended on conversion-tracker + spam-guard which were FB chat dependencies).
 
 export default router;

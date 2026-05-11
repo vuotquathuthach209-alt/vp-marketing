@@ -17,8 +17,13 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { db } from '../../db';
 import { generateAIImage, generateAIVideo } from './fal-generator';
-import { synthesizeSonderVoice } from '../sonder-voice';
 import type { V5Script, V5Shot, V5RenderedClip } from './types';
+
+// sonder-voice deleted in pivot 2026-05-11 — V5 reels paused, V5T uses static images (no TTS).
+// Stub kept for any legacy code that calls it.
+async function synthesizeSonderVoice(_text: string, _outPath?: string): Promise<{ ok: boolean; path?: string; mode?: string; error?: string }> {
+  return { ok: false, error: 'sonder-voice module removed in 2026-05-11 pivot' };
+}
 
 const V5_OUT_DIR = '/opt/vp-marketing/data/media/v5-out';
 const BGM_DIR = '/opt/vp-marketing/data/bgm';

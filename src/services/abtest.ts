@@ -1,6 +1,8 @@
 import { db } from '../db';
 import { generate } from './router';
-import { buildContext } from './wiki';
+
+// wiki RAG removed in pivot 2026-05-11.
+function buildContext(_q: string, _opts?: any): string { return ''; }
 
 /**
  * A/B hook testing:

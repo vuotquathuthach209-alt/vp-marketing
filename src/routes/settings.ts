@@ -6,7 +6,7 @@ import { authMiddleware, AuthRequest, getHotelId } from '../middleware/auth';
 import { countKeys, getAllKeys } from '../services/keyrotator';
 import { getRouterStatus } from '../services/router';
 import { config } from '../config';
-import { setBotToken, getBotStatus, startBot, stopBot, notifyAll } from '../services/telegram';
+import { startBot, notifyAll } from '../services/telegram';
 
 const router = Router();
 router.use(authMiddleware);
@@ -319,15 +319,14 @@ router.delete('/pages/:id', (req: AuthRequest, res) => {
 // ═══ Telegram (global admin) ═══
 
 router.get('/telegram', (req, res) => {
-  const status = getBotStatus();
   const chats = db.prepare(
-    `SELECT chat_id, username, first_name, authorized, notify, created_at, last_seen
-     FROM telegram_chats ORDER BY last_seen DESC LIMIT 50`
+    `SELECT chat_id, username, first_name, authorized, notify, created_at, last_seen_at
+     FROM telegram_chats ORDER BY last_seen_at DESC LIMIT 50`
   ).all();
   const token = getSetting('telegram_bot_token');
   const code = getSetting('telegram_unlock_code');
   res.json({
-    ...status,
+    running: !!token,
     token_masked: token ? `${token.slice(0, 8)}...${token.slice(-4)}` : null,
     unlock_code: code || null,
     chats,
@@ -337,14 +336,13 @@ router.get('/telegram', (req, res) => {
 router.post('/telegram', (req, res) => {
   const { bot_token, unlock_code } = req.body;
   if (bot_token && typeof bot_token === 'string' && !bot_token.startsWith('***')) {
-    setBotToken(bot_token.trim());
-    stopBot();
-    setTimeout(startBot, 500);
+    setSetting('telegram_bot_token', bot_token.trim());
+    // Restart requires pm2 — admin can restart manually after updating token
   }
   if (unlock_code !== undefined) {
     setSetting('telegram_unlock_code', String(unlock_code).trim());
   }
-  res.json({ ok: true, ...getBotStatus() });
+  res.json({ ok: true, note: 'Restart pm2 for token change to take effect' });
 });
 
 router.post('/telegram/test', async (req, res) => {

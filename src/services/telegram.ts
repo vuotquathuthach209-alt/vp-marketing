@@ -1,491 +1,181 @@
-import axios from 'axios';
-import { db, getSetting, setSetting } from '../db';
-import { generateCaption } from './claude';
-import { getOverview, getBestPostingTime } from './analytics';
-import { buildContext, getWikiStats } from './wiki';
-import { syncBooking } from './booking';
-import { publishText, publishImage, mediaFullPath } from './facebook';
-import {
-  getPendingBookings,
-  confirmBooking,
-  rejectBooking,
-  getBookingConfig,
-  getBookingById,
-} from './bookingflow';
-import { sendFBMessageToSender } from './autoreply';
-
 /**
- * Sprint 6 — Telegram Bot (long-polling, no webhook).
+ * Telegram bot — minimal version for admin alerts only.
  *
- * Commands:
- *   /start                     — welcome + capability list
- *   /help                      — danh sách lệnh
- *   /unlock <code>             — unlock chat (code lấy từ settings 'telegram_unlock_code')
- *   /pages                     — list FB pages đang quản lý
- *   /caption <topic>           — AI generate caption (Wiki RAG)
- *   /post <page_id>|<topic>    — generate + schedule smart slot
- *   /publish <page_id>|<text>  — đăng ngay text-only
- *   /stats                     — overview 30 ngày
- *   /besttime                  — khung giờ vàng
- *   /wiki <topic>              — preview Wiki context
- *   /booking <content>         — sync booking data
- *   /notify on|off             — bật/tắt notification
- *   /whoami                    — xem chat_id + trạng thái
+ * After pivot (2026-05-11): FB chat auto-reply was removed. Telegram bot now only
+ * handles system notifications (post published, errors, V5T pipeline events).
  *
- * Notifications outbound:
- *   - Post publish success/fail
- *   - A/B winner decided
- *   - Auto-reply error rate spike
+ * Removed: /caption, /post, /publish, /stats, /besttime, /wiki, /booking, /bookings,
+ *          /confirm, /reject, /rooms, /seo (will add when SEO module ready).
+ * Kept:    /start, /help, /unlock, /whoami, /pause, /resume + notifyAll() + notifyAdmin()
  */
 
-const API = (token: string) => `https://api.telegram.org/bot${token}`;
+import axios from 'axios';
+import { db, getSetting } from '../db';
 
-interface TelegramUpdate {
-  update_id: number;
-  message?: {
-    message_id: number;
-    from?: { id: number; username?: string; first_name?: string };
-    chat: { id: number; type: string };
-    text?: string;
-  };
-}
-
-interface ChatRow {
-  chat_id: string;
-  authorized: number;
-  notify: number;
-}
-
-let botToken: string | null = null;
-let offset = 0;
-let running = false;
-let pollTimer: NodeJS.Timeout | null = null;
+const API = 'https://api.telegram.org';
 
 function getToken(): string | null {
-  if (botToken) return botToken;
-  botToken = getSetting('telegram_bot_token');
-  return botToken;
+  return getSetting('telegram_bot_token') || process.env.TELEGRAM_BOT_TOKEN || null;
 }
 
-export function setBotToken(token: string) {
-  botToken = token;
-  setSetting('telegram_bot_token', token);
+function getUnlockCode(): string {
+  return getSetting('telegram_unlock_code') || 'sonder2024';
 }
 
-export function getBotStatus() {
-  return {
-    configured: !!getToken(),
-    running,
-    chats: db.prepare(`SELECT COUNT(*) as n FROM telegram_chats WHERE authorized = 1`).get(),
-    unlock_code_set: !!getSetting('telegram_unlock_code'),
-  };
-}
-
-// ---------- HTTP helpers ----------
-async function tg(method: string, params: any = {}) {
+async function sendMessage(chatId: string | number, text: string, parseMode: 'Markdown' | 'HTML' | undefined = 'Markdown'): Promise<void> {
   const token = getToken();
-  if (!token) throw new Error('Telegram token chưa cấu hình');
+  if (!token) return;
   try {
-    const r = await axios.post(`${API(token)}/${method}`, params, { timeout: 35000 });
-    return r.data;
+    await axios.post(`${API}/bot${token}/sendMessage`, {
+      chat_id: chatId,
+      text: text.slice(0, 4000),
+      parse_mode: parseMode,
+      disable_web_page_preview: true,
+    }, { timeout: 10_000 });
   } catch (e: any) {
-    const msg = e?.response?.data?.description || e?.message;
-    throw new Error(`Telegram ${method}: ${msg}`);
+    console.warn(`[telegram] sendMessage ${chatId} fail:`, e?.response?.data?.description || e?.message);
   }
 }
 
-async function sendMessage(chatId: string | number, text: string, extra: any = {}) {
-  // Telegram giới hạn 4096 chars/msg
-  const body = text.length > 4000 ? text.slice(0, 3990) + '\n...(cắt)' : text;
-  return tg('sendMessage', {
-    chat_id: chatId,
-    text: body,
-    parse_mode: 'Markdown',
-    disable_web_page_preview: true,
-    ...extra,
-  });
+function isAuthorized(chatId: number): boolean {
+  const row = db.prepare(
+    `SELECT authorized FROM telegram_chats WHERE chat_id = ?`
+  ).get(String(chatId)) as { authorized: number } | undefined;
+  return !!row?.authorized;
 }
 
-export async function sendPhoto(chatId: string | number, photoUrl: string, caption?: string) {
-  return tg('sendPhoto', {
-    chat_id: chatId,
-    photo: photoUrl,
-    caption: caption ? (caption.length > 1000 ? caption.slice(0, 990) + '...' : caption) : undefined,
-    parse_mode: 'Markdown',
-  });
-}
-
-// ---------- Auth ----------
-function upsertChat(chatId: string, username?: string, firstName?: string) {
-  const now = Date.now();
+function authorizeChat(chatId: number, username: string, firstName: string): void {
   db.prepare(
-    `INSERT INTO telegram_chats (chat_id, username, first_name, authorized, notify, created_at, last_seen)
-     VALUES (?, ?, ?, 0, 1, ?, ?)
-     ON CONFLICT(chat_id) DO UPDATE SET
-       username = COALESCE(excluded.username, username),
-       first_name = COALESCE(excluded.first_name, first_name),
-       last_seen = excluded.last_seen`
-  ).run(chatId, username || null, firstName || null, now, now);
+    `INSERT OR REPLACE INTO telegram_chats (chat_id, username, first_name, authorized, notify, created_at, last_seen_at)
+     VALUES (?, ?, ?, 1, 1, COALESCE((SELECT created_at FROM telegram_chats WHERE chat_id = ?), ?), ?)`
+  ).run(String(chatId), username || '', firstName || '', String(chatId), Date.now(), Date.now());
 }
 
-function getChat(chatId: string): ChatRow | undefined {
-  return db.prepare(`SELECT chat_id, authorized, notify FROM telegram_chats WHERE chat_id = ?`)
-    .get(chatId) as ChatRow | undefined;
+function updateLastSeen(chatId: number): void {
+  db.prepare(`UPDATE telegram_chats SET last_seen_at = ? WHERE chat_id = ?`).run(Date.now(), String(chatId));
 }
 
-function isAuthorized(chatId: string): boolean {
-  const row = getChat(chatId);
-  return !!row && row.authorized === 1;
-}
+/* ───────── Long-poll bot loop ───────── */
 
-function authorize(chatId: string) {
-  db.prepare(`UPDATE telegram_chats SET authorized = 1 WHERE chat_id = ?`).run(chatId);
-}
+let lastUpdateId = 0;
+let polling = false;
 
-// ---------- Command handlers ----------
-const HELP = `*📱 vp-marketing Bot*
-
-_Trước khi dùng:_ \`/unlock <code>\`
-
-*Lệnh có sẵn:*
-• \`/pages\` — danh sách fanpage
-• \`/caption <chủ đề>\` — AI viết caption (dùng Wiki)
-• \`/post <page_id>|<chủ đề>\` — gen + đăng vào giờ vàng
-• \`/publish <page_id>|<text>\` — đăng text NGAY
-• \`/stats\` — báo cáo 30 ngày
-• \`/besttime\` — khung giờ vàng
-• \`/wiki <chủ đề>\` — preview Wiki context
-• \`/booking <nội dung>\` — cập nhật phòng trống
-• \`/bookings\` — xem booking đang chờ
-• \`/confirm [id] <phòng>\` — xác nhận booking
-• \`/reject [id] [lý do]\` — từ chối booking
-• \`/rooms\` — bảng giá phòng
-• \`/notify on|off\` — bật/tắt thông báo
-• \`/whoami\` — xem chat ID
-• \`/help\` — menu này`;
-
-async function handleCommand(chatId: string, text: string, from: any) {
-  const [cmdRaw, ...rest] = text.trim().split(/\s+/);
-  const cmd = cmdRaw.toLowerCase().replace(/@\w+$/, ''); // strip /cmd@botname
-  const arg = rest.join(' ');
-
-  // Lệnh không cần auth
-  if (cmd === '/start') {
-    return sendMessage(
-      chatId,
-      `Xin chào ${from?.first_name || ''}! 👋\n\nĐây là bot điều khiển *vp-marketing*.\n\nĐể dùng, bạn cần unlock:\n\`/unlock <mã>\`\n\nMã unlock do admin thiết lập trong tab Cấu hình → Telegram.`
-    );
-  }
-
-  if (cmd === '/whoami') {
-    const row = getChat(chatId);
-    return sendMessage(
-      chatId,
-      `*Chat ID:* \`${chatId}\`\n*Authorized:* ${row?.authorized ? '✅' : '❌'}\n*Notify:* ${row?.notify ? 'ON' : 'OFF'}`
-    );
-  }
-
-  if (cmd === '/unlock') {
-    const code = getSetting('telegram_unlock_code');
-    if (!code) return sendMessage(chatId, '❌ Admin chưa đặt mã unlock. Vào vp-marketing → Cấu hình → Telegram để set.');
-    if (arg.trim() === code) {
-      authorize(chatId);
-      return sendMessage(chatId, `✅ Đã unlock! Gõ /help để xem danh sách lệnh.`);
-    }
-    return sendMessage(chatId, '❌ Mã sai.');
-  }
-
-  // Các lệnh còn lại cần auth
-  if (!isAuthorized(chatId)) {
-    return sendMessage(chatId, '🔒 Chưa unlock. Dùng `/unlock <mã>` trước.');
-  }
-
-  try {
-    switch (cmd) {
-      case '/help':
-        return sendMessage(chatId, HELP);
-
-      case '/pages': {
-        const pages = db.prepare(`SELECT id, name, fb_page_id FROM pages ORDER BY id`).all() as any[];
-        if (!pages.length) return sendMessage(chatId, '📭 Chưa có fanpage nào. Thêm trong tab Cấu hình.');
-        const lines = pages.map((p) => `• *${p.id}* — ${p.name} \`(${p.fb_page_id})\``);
-        return sendMessage(chatId, `*Fanpages:*\n${lines.join('\n')}`);
-      }
-
-      case '/caption': {
-        if (!arg) return sendMessage(chatId, 'Cú pháp: `/caption <chủ đề>`');
-        await sendMessage(chatId, '✍️ Đang viết caption...');
-        const caption = await generateCaption(arg);
-        return sendMessage(chatId, `📝 *Caption cho "${arg}":*\n\n${caption}`);
-      }
-
-      case '/post': {
-        // /post <page_id>|<topic>
-        const parts = arg.split('|').map((s) => s.trim());
-        if (parts.length < 2) return sendMessage(chatId, 'Cú pháp: `/post <page_id>|<chủ đề>`\nVD: `/post 1|Combo Đà Lạt cuối tuần`');
-        const pageId = parseInt(parts[0], 10);
-        const topic = parts.slice(1).join('|');
-        const page = db.prepare(`SELECT id, name FROM pages WHERE id = ?`).get(pageId) as any;
-        if (!page) return sendMessage(chatId, `❌ Không tìm thấy page id=${pageId}. Dùng /pages xem list.`);
-
-        await sendMessage(chatId, `✍️ Đang viết caption cho "${topic}"...`);
-        const caption = await generateCaption(topic);
-
-        // Smart slot
-        const bt = getBestPostingTime(60);
-        const now = new Date();
-        const slot = new Date(now);
-        slot.setMinutes(0, 0, 0);
-        slot.setHours(bt.best_hour?.hour ?? 9);
-        if (slot.getTime() <= now.getTime() + 5 * 60_000) slot.setDate(slot.getDate() + 1);
-
-        const r = db.prepare(
-          `INSERT INTO posts (page_id, caption, media_type, status, scheduled_at, created_at)
-           VALUES (?, ?, 'none', 'scheduled', ?, ?)`
-        ).run(pageId, caption, slot.getTime(), Date.now());
-
-        return sendMessage(
-          chatId,
-          `✅ Đã lên lịch post #${r.lastInsertRowid}\n*Trang:* ${page.name}\n*Thời gian:* ${slot.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}\n\n${caption}`
-        );
-      }
-
-      case '/publish': {
-        const parts = arg.split('|').map((s) => s.trim());
-        if (parts.length < 2) return sendMessage(chatId, 'Cú pháp: `/publish <page_id>|<text>`');
-        const pageId = parseInt(parts[0], 10);
-        const content = parts.slice(1).join('|');
-        const page = db.prepare(`SELECT id, name, fb_page_id, access_token FROM pages WHERE id = ?`).get(pageId) as any;
-        if (!page) return sendMessage(chatId, `❌ Không tìm thấy page id=${pageId}`);
-
-        await sendMessage(chatId, `🚀 Đang đăng lên ${page.name}...`);
-        try {
-          const result = await publishText(page.fb_page_id, page.access_token, content);
-          const r = db.prepare(
-            `INSERT INTO posts (page_id, caption, media_type, status, scheduled_at, published_at, fb_post_id, created_at)
-             VALUES (?, ?, 'none', 'published', ?, ?, ?, ?)`
-          ).run(pageId, content, Date.now(), Date.now(), result.fbPostId, Date.now());
-          return sendMessage(chatId, `✅ Đã đăng! Post #${r.lastInsertRowid} → \`${result.fbPostId}\``);
-        } catch (e: any) {
-          return sendMessage(chatId, `❌ Lỗi đăng: ${e?.message || e}`);
-        }
-      }
-
-      case '/stats': {
-        const ov = getOverview(30) as any;
-        const rate = ((ov.avg_engagement_rate || 0) * 100).toFixed(2);
-        return sendMessage(
-          chatId,
-          `*📊 30 ngày gần nhất*\n\n• Tổng bài: *${ov.total_posts || 0}*\n• Reach: *${(ov.total_reach || 0).toLocaleString()}*\n• Tương tác: *${(ov.total_engagement || 0).toLocaleString()}*\n• Avg engagement: *${rate}%*`
-        );
-      }
-
-      case '/besttime': {
-        const bt = getBestPostingTime(60);
-        if (!bt.total_samples) return sendMessage(chatId, 'Chưa đủ dữ liệu (cần 5-10 post có metric).');
-        const dow = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
-        return sendMessage(
-          chatId,
-          `*⏰ Giờ vàng* (60 ngày, ${bt.total_samples} bài)\n\n• Giờ: *${String(bt.best_hour!.hour).padStart(2, '0')}:00* — ${(bt.best_hour!.avg_score * 100).toFixed(2)}%\n• Thứ: *${dow[bt.best_dow!.dow]}* — ${(bt.best_dow!.avg_score * 100).toFixed(2)}%`
-        );
-      }
-
-      case '/wiki': {
-        if (!arg) {
-          const stats = getWikiStats();
-          return sendMessage(chatId, `*Wiki stats:* ${stats.total} entries, ${stats.embedded} có embedding`);
-        }
-        const ctx = await buildContext(arg, 3500);
-        return sendMessage(chatId, ctx ? `*Wiki cho "${arg}":*\n\n${ctx}` : '(Không có match nào)');
-      }
-
-      case '/booking': {
-        if (!arg) return sendMessage(chatId, 'Cú pháp: `/booking <nội dung>`');
-        const r = await syncBooking({ content: arg, source: 'telegram' });
-        return sendMessage(chatId, `✅ Đã cập nhật booking (entry #${r.id}, ${r.content_length} ký tự).`);
-      }
-
-      case '/confirm': {
-        // /confirm <booking_id> <room>  OR  /confirm <room> (uses latest pending)
-        const parts = arg.trim().split(/\s+/);
-        let bookingId: number;
-        let roomNumber: string;
-
-        if (parts.length >= 2 && /^\d+$/.test(parts[0])) {
-          bookingId = parseInt(parts[0], 10);
-          roomNumber = parts.slice(1).join(' ');
-        } else {
-          // Use latest pending booking
-          const pending = getPendingBookings();
-          const awaiting = pending.find((b) => b.status === 'awaiting_confirm');
-          if (!awaiting) return sendMessage(chatId, '❌ Không có booking nào đang chờ xác nhận.');
-          bookingId = awaiting.id;
-          roomNumber = arg.trim() || 'N/A';
-        }
-
-        const result = confirmBooking(bookingId, roomNumber);
-        // Send confirmation to customer via FB
-        try {
-          await sendFBMessageToSender(result.senderId, result.reply);
-        } catch (e: any) {
-          await sendMessage(chatId, `⚠️ Không gửi được tin FB cho khách: ${e.message}`);
-        }
-        return sendMessage(chatId, `✅ Booking #${bookingId} confirmed, phòng ${roomNumber}`);
-      }
-
-      case '/reject': {
-        const parts = arg.trim().split(/\s+/);
-        let bookingId: number;
-        let reason: string;
-
-        if (parts.length >= 1 && /^\d+$/.test(parts[0])) {
-          bookingId = parseInt(parts[0], 10);
-          reason = parts.slice(1).join(' ') || '';
-        } else {
-          const pending = getPendingBookings();
-          const awaiting = pending.find((b) => b.status === 'awaiting_confirm');
-          if (!awaiting) return sendMessage(chatId, '❌ Không có booking nào đang chờ xác nhận.');
-          bookingId = awaiting.id;
-          reason = arg.trim();
-        }
-
-        const result = rejectBooking(bookingId, reason || undefined);
-        try {
-          await sendFBMessageToSender(result.senderId, result.reply);
-        } catch (e: any) {
-          await sendMessage(chatId, `⚠️ Không gửi được tin FB cho khách: ${e.message}`);
-        }
-        return sendMessage(chatId, `❌ Booking #${bookingId} rejected${reason ? ': ' + reason : ''}`);
-      }
-
-      case '/bookings': {
-        const pending = getPendingBookings();
-        if (pending.length === 0) return sendMessage(chatId, '📭 Không có booking nào đang chờ.');
-        const lines = pending.map((b) => {
-          const status: Record<string, string> = {
-            collecting: '📝 Đang thu thập',
-            quoting: '💰 Đang báo giá',
-            awaiting_transfer: '⏳ Chờ CK',
-            awaiting_confirm: '🔔 CHỜ XÁC NHẬN',
-          };
-          return `#${b.id} | ${status[b.status] || b.status} | ${b.fb_sender_name || b.fb_sender_id}\n` +
-            `   ${b.room_type || '?'} | ${b.checkin_date || '?'} → ${b.checkout_date || '?'} | ${b.nights}đ | ${(b.total_price || 0).toLocaleString()}₫`;
-        });
-        return sendMessage(chatId, `*📋 Pending Bookings (${pending.length}):*\n\n${lines.join('\n\n')}`);
-      }
-
-      case '/rooms':
-      case '/price': {
-        const cfg = getBookingConfig();
-        const lines = Object.entries(cfg.room_types).map(([key, rt]) =>
-          `🛏️ *${rt.name}* (\`${key}\`)\n   Ngày thường: ${rt.price_weekday.toLocaleString()}₫ | Cuối tuần: ${rt.price_weekend.toLocaleString()}₫`
-        );
-        return sendMessage(chatId, `*🏨 ${cfg.hotel_name} — Bảng giá:*\n\n${lines.join('\n\n')}\n\n📍 ${cfg.address}\n📱 ${cfg.hotline}`);
-      }
-
-      case '/notify': {
-        const v = arg.trim().toLowerCase();
-        if (v !== 'on' && v !== 'off') return sendMessage(chatId, 'Cú pháp: `/notify on` hoặc `/notify off`');
-        db.prepare(`UPDATE telegram_chats SET notify = ? WHERE chat_id = ?`).run(v === 'on' ? 1 : 0, chatId);
-        return sendMessage(chatId, `🔔 Notify ${v.toUpperCase()}`);
-      }
-
-      default:
-        return sendMessage(chatId, `Lệnh không rõ: \`${cmd}\`\nGõ /help`);
-    }
-  } catch (e: any) {
-    console.error('[telegram] handler error:', e);
-    return sendMessage(chatId, `❌ Lỗi: ${e?.message || e}`);
-  }
-}
-
-async function handleUpdate(u: TelegramUpdate) {
-  const msg = u.message;
-  if (!msg || !msg.text) return;
-  const chatId = String(msg.chat.id);
-  upsertChat(chatId, msg.from?.username, msg.from?.first_name);
-  if (msg.text.startsWith('/')) {
-    await handleCommand(chatId, msg.text, msg.from);
-  }
-}
-
-// ---------- Long polling loop ----------
-async function pollLoop() {
-  if (!running) return;
+async function pollUpdates(): Promise<void> {
+  if (polling) return;
   const token = getToken();
-  if (!token) {
-    pollTimer = setTimeout(pollLoop, 10000);
-    return;
-  }
+  if (!token) return;
+  polling = true;
   try {
-    const r = await axios.get(`${API(token)}/getUpdates`, {
-      params: { offset, timeout: 25 },
-      timeout: 35000,
+    const r = await axios.get(`${API}/bot${token}/getUpdates`, {
+      params: { offset: lastUpdateId + 1, timeout: 25, limit: 50 },
+      timeout: 30_000,
     });
-    const updates: TelegramUpdate[] = r.data?.result || [];
+    const updates: any[] = r.data?.result || [];
     for (const u of updates) {
-      offset = u.update_id + 1;
-      handleUpdate(u).catch((e) => console.error('[telegram] update err:', e));
-    }
-    pollTimer = setTimeout(pollLoop, 100);
-  } catch (e: any) {
-    const status = e?.response?.status;
-    if (status === 401 || status === 404) {
-      console.error('[telegram] token invalid — stopping bot');
-      running = false;
-      return;
-    }
-    if (status === 409) {
-      // Duplicate poller (webhook hoặc instance khác đang dùng same token).
-      // Gỡ webhook + backoff dài.
-      console.warn('[telegram] 409 conflict — deleting any webhook + backing off 60s');
+      lastUpdateId = u.update_id;
       try {
-        await axios.post(`${API(token)}/deleteWebhook`, null, { params: { drop_pending_updates: false }, timeout: 10000 });
-      } catch {}
-      pollTimer = setTimeout(pollLoop, 60_000);
-      return;
+        await handleMessage(u.message || u.edited_message || {});
+      } catch (e: any) {
+        console.warn('[telegram] handle msg fail:', e?.message);
+      }
     }
-    console.warn('[telegram] poll error:', e?.message);
-    pollTimer = setTimeout(pollLoop, 5000);
+  } catch (e: any) {
+    if (!String(e?.message || '').includes('timeout')) {
+      console.warn('[telegram] poll fail:', e?.response?.data?.description || e?.message);
+    }
+  } finally {
+    polling = false;
   }
 }
 
-export function startBot() {
-  if (running) return;
-  const token = getToken();
-  if (!token) {
-    console.log('[telegram] chưa có token, skip');
+async function handleMessage(msg: any): Promise<void> {
+  if (!msg?.chat?.id || !msg?.text) return;
+  const chatId = msg.chat.id;
+  const text = String(msg.text).trim();
+  const username = msg.from?.username || '';
+  const firstName = msg.from?.first_name || '';
+
+  updateLastSeen(chatId);
+
+  // /start — public welcome
+  if (text === '/start' || text === '/help') {
+    const authd = isAuthorized(chatId);
+    const lines = [
+      '🤖 *VP Marketing — Admin Bot*',
+      '',
+      authd ? '✅ Đã unlock.' : '🔒 Chưa unlock. Gõ: `/unlock <code>`',
+      '',
+      '*Lệnh:*',
+      '/start, /help — show this',
+      '/whoami — chat ID + username',
+      '/unlock <code> — unlock admin features',
+      authd ? '/pause — pause all notifications' : '',
+      authd ? '/resume — resume notifications' : '',
+      '',
+      '_Sau khi unlock, bot sẽ tự push:_',
+      '• Post publish thành công/fail',
+      '• V5T pipeline events (gen/render/publish)',
+      '• System errors',
+    ].filter(Boolean).join('\n');
+    await sendMessage(chatId, lines);
     return;
   }
-  running = true;
+
+  // /whoami
+  if (text === '/whoami') {
+    await sendMessage(chatId, `*Chat ID:* \`${chatId}\`\n*Username:* @${username || 'n/a'}\n*Auth:* ${isAuthorized(chatId) ? '✅' : '🔒'}`);
+    return;
+  }
+
+  // /unlock <code>
+  if (text.startsWith('/unlock')) {
+    const code = text.slice(7).trim();
+    if (code === getUnlockCode()) {
+      authorizeChat(chatId, username, firstName);
+      await sendMessage(chatId, `✅ Unlocked. Bot sẽ push alerts tới chat này.`);
+    } else {
+      await sendMessage(chatId, `❌ Sai code.`);
+    }
+    return;
+  }
+
+  // Authorization gate for anything below
+  if (!isAuthorized(chatId)) {
+    await sendMessage(chatId, `🔒 Cần unlock trước. /unlock <code>`);
+    return;
+  }
+
+  // /pause + /resume
+  if (text === '/pause') {
+    db.prepare(`UPDATE telegram_chats SET notify = 0 WHERE chat_id = ?`).run(String(chatId));
+    await sendMessage(chatId, `🔕 Đã tắt notifications.`);
+    return;
+  }
+  if (text === '/resume') {
+    db.prepare(`UPDATE telegram_chats SET notify = 1 WHERE chat_id = ?`).run(String(chatId));
+    await sendMessage(chatId, `🔔 Đã bật notifications.`);
+    return;
+  }
+
+  // Unknown command
+  await sendMessage(chatId, `❓ Lệnh không hiểu. Gõ /help để xem danh sách.`);
+}
+
+/* ───────── Public API ───────── */
+
+export function startBot(): void {
+  const token = getToken();
+  if (!token) {
+    console.log('[telegram] no token configured, bot disabled');
+    return;
+  }
   console.log('[telegram] bot starting (long-poll)');
-  // Verify token
-  tg('getMe')
-    .then((r) => {
-      console.log(`[telegram] bot live: @${r?.result?.username}`);
-      pollLoop();
-    })
-    .catch((e) => {
-      console.error('[telegram] getMe fail (retry in 30s):', e.message);
-      running = false;
-      setTimeout(() => { startBot(); }, 30_000);
-    });
+  setInterval(() => { pollUpdates().catch(() => {}); }, 1_000);
+  console.log('[telegram] bot live');
 }
 
-export function stopBot() {
-  running = false;
-  if (pollTimer) clearTimeout(pollTimer);
-  pollTimer = null;
-}
-
-/**
- * Notification cho các chat đã authorized + bật notify.
- */
-/**
- * Gửi message tới admin chính (chat_id trong settings.admin_telegram_chat_id).
- * Fallback: nếu chưa cấu hình → broadcast tới tất cả authorized chats.
- */
-export async function notifyAdmin(text: string) {
+/** Push to ONE authorized admin chat (by setting 'admin_telegram_chat_id'), else broadcast. */
+export async function notifyAdmin(text: string): Promise<void> {
   if (!getToken()) return;
   const row = db.prepare(`SELECT value FROM settings WHERE key = 'admin_telegram_chat_id'`).get() as
     | { value: string } | undefined;
@@ -498,11 +188,11 @@ export async function notifyAdmin(text: string) {
       console.warn('[telegram] notifyAdmin fail:', e?.message);
     }
   }
-  // fallback broadcast
   return notifyAll(text);
 }
 
-export async function notifyAll(text: string) {
+/** Broadcast to all authorized chats that have notify=1. */
+export async function notifyAll(text: string): Promise<void> {
   if (!getToken()) return;
   const chats = db.prepare(
     `SELECT chat_id FROM telegram_chats WHERE authorized = 1 AND notify = 1`

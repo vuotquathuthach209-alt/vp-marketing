@@ -2,14 +2,11 @@ import cron from 'node-cron';
 import { db } from '../db';
 import { publishText, publishImage, publishVideo, mediaFullPath, autoRefreshPageTokens } from './facebook';
 import { runCampaigns } from './campaigns';
-import { runAutoReply } from './autoreply';
 import { pullMetrics } from './analytics';
 import { decidePendingWinners } from './abtest';
 import { notifyAll } from './telegram';
 import { getSetting } from '../db';
-import { runFullSync, runBookingSync } from './ota-sync';
 import { cleanupAiCache } from './ai-cache';
-import { pruneLearned } from './learning';
 import { sendWeeklyReport } from './weekly-report';
 import { checkAndAlert } from './email';
 import { runBackup } from './backup';
@@ -111,19 +108,8 @@ export function startScheduler() {
     processDuePosts().catch((e) => console.error('[scheduler] posts error:', e));
     runCampaigns().catch((e) => console.error('[scheduler] campaigns error:', e));
   });
-  // Auto reply: poll mỗi 15 giây (near real-time)
-  let replyRunning = false;
-  setInterval(async () => {
-    if (replyRunning) return; // Tránh chạy chồng
-    replyRunning = true;
-    try {
-      await runAutoReply();
-    } catch (e) {
-      console.error('[scheduler] auto-reply error:', e);
-    } finally {
-      replyRunning = false;
-    }
-  }, 15_000);
+  // Auto-reply REMOVED (2026-05-11 pivot): FB Messenger AI handles chat now.
+  //
   // Mỗi 2 giờ: pull FB insights cho các post đã đăng
   cron.schedule('0 */2 * * *', () => {
     pullMetrics()
@@ -178,57 +164,12 @@ export function startScheduler() {
     runBackup();
   });
 
-  // ── Learned Q-A cache prune: 5h sáng mỗi ngày, xoá candidate >90 ngày không đạt MIN_HITS ──
-  cron.schedule('0 5 * * *', () => {
-    try {
-      const n = pruneLearned();
-      if (n > 0) console.log(`[scheduler] learned-cache prune: removed ${n} stale candidates`);
-    } catch (e) {
-      console.error('[scheduler] learned prune error:', e);
-    }
-  });
-
-  // ── v6 Sprint 8: Stalled-lead re-engagement — mỗi 30 phút ──
-  cron.schedule('*/30 * * * *', async () => {
-    try {
-      const { runReengagement } = require('./stalled-lead');
-      await runReengagement();
-    } catch (e: any) {
-      console.error('[scheduler] stalled-lead error:', e?.message);
-    }
-  });
-
-  // ── v6 Sprint 8: Bot health check — 8 sáng hàng ngày ──
-  cron.schedule('0 8 * * *', async () => {
-    try {
-      const { runDailyHealthCheck } = require('./bot-health');
-      await runDailyHealthCheck();
-    } catch (e: any) {
-      console.error('[scheduler] bot-health error:', e?.message);
-    }
-  });
+  // Learned-cache, stalled-lead, bot-health, outcome-classifier crons REMOVED in pivot 2026-05-11.
+  // (All depended on chat pipeline that's now Meta AI's responsibility.)
 
   // ── Weekly quality report: Chủ nhật 8h sáng ──
   cron.schedule('0 8 * * 0', () => {
     sendWeeklyReport().catch(e => console.error('[scheduler] weekly report error:', e));
-  });
-
-  // ── v13 Feedback Loop — Outcome classifier ─────────────────────────
-  // Mỗi 15 phút: quét bot_reply_outcomes status='pending' và classify based on user behavior
-  cron.schedule('*/15 * * * *', () => {
-    try {
-      const { classifyPendingOutcomes, aggregateFunnelDaily } = require('./outcome-classifier');
-      const r = classifyPendingOutcomes();
-      if (r.processed > 0) {
-        const updated = Object.entries(r.updated_by_outcome)
-          .map(([k, v]) => `${k}=${v}`).join(' ');
-        console.log(`[scheduler] outcome-classify: processed=${r.processed} still_pending=${r.still_pending} | ${updated}`);
-      }
-      // Daily rollup của funnel metrics
-      aggregateFunnelDaily();
-    } catch (e: any) {
-      console.error('[scheduler] outcome-classify error:', e?.message);
-    }
   });
 
   // ── v22: FB Post Metrics puller — hourly insights ──
@@ -455,73 +396,8 @@ export function startScheduler() {
     }
   });
 
-  // Funnel follow-up: mỗi 30 phút, remind Telegram nếu booking 'new' > 1h
-  cron.schedule('*/30 * * * *', async () => {
-    try {
-      const cutoff = Date.now() - 60 * 60 * 1000;  // 1h ago
-      const stuck = db.prepare(
-        `SELECT * FROM bot_booking_drafts
-         WHERE status = 'new' AND created_at < ?
-         ORDER BY created_at ASC LIMIT 10`
-      ).all(cutoff) as any[];
-      if (stuck.length === 0) return;
-
-      // Group theo hotel_id để gửi 1 message summary cho mỗi hotel
-      const byHotel: Record<number, any[]> = {};
-      for (const b of stuck) {
-        if (!byHotel[b.hotel_id]) byHotel[b.hotel_id] = [];
-        byHotel[b.hotel_id].push(b);
-      }
-
-      for (const [hotelIdStr, bookings] of Object.entries(byHotel)) {
-        const hotelId = parseInt(hotelIdStr, 10);
-        const lines = [
-          `⏰ *FOLLOW-UP NEEDED* — ${bookings.length} bookings quá 1h chưa gọi`,
-          ``,
-          ...bookings.map((b: any) => {
-            const age = Math.round((Date.now() - b.created_at) / 60000);
-            return `• ${b.name || '?'} 📞 ${b.phone || '?'} — ${age} phút trước`;
-          }),
-          ``,
-          `_Check_: app.sondervn.com/funnel`,
-        ];
-        const message = lines.join('\n');
-
-        try {
-          const { notifyAll } = await import('./telegram');
-          await notifyAll(message);
-        } catch {}
-      }
-      console.log(`[scheduler] funnel follow-up: ${stuck.length} stuck bookings, ${Object.keys(byHotel).length} hotels notified`);
-    } catch (e: any) {
-      console.error('[scheduler] funnel follow-up error:', e?.message);
-    }
-  });
-
-  // ── v27B: Template suggestion analyzer — mỗi Chủ nhật 2h sáng ──
-  //         Gemini phân tích stuck/handoff conversations → đề xuất template mới
-  cron.schedule('0 2 * * 0', async () => {
-    try {
-      const { runTemplateSuggestionAnalysis } = require('./agentic/template-suggester');
-      const r = await runTemplateSuggestionAnalysis();
-      console.log(`[scheduler] template-suggestions: evidence=${JSON.stringify(r.evidence_stats)} proposed=${r.suggestions?.length || 0} saved=${r.suggestions_created || 0}`);
-    } catch (e: any) {
-      console.error('[scheduler] template-suggestions error:', e?.message);
-    }
-  });
-
-  // ── v27 Phase 6: Auto-promote A/B winner — hàng ngày 3h sáng ──
-  //        Log winner analysis today + check 7-day streak + auto-promote nếu đủ điều kiện
-  //        Chỉ active khi setting `auto_promote_variants = 'true'`
-  cron.schedule('0 3 * * *', async () => {
-    try {
-      const { runDailyAutoPromote } = require('./agentic/template-variants');
-      const r = await runDailyAutoPromote();
-      console.log(`[scheduler] auto-promote: checked=${r.checked} logged=${r.logged} eligible=${r.eligible.length} promoted=${r.eligible.filter((e: any) => e.promoted).length} enabled=${r.enabled}`);
-    } catch (e: any) {
-      console.error('[scheduler] auto-promote error:', e?.message);
-    }
-  });
+  // Funnel follow-up, template-suggester, auto-promote crons REMOVED in pivot 2026-05-11.
+  // (All depended on chat bot pipeline / agentic templates.)
 
 
   // ═══ V5 Content Pipeline (Hybrid 60% real + AI assist) ═══
@@ -634,5 +510,5 @@ export function startScheduler() {
   // Email automation module removed in cleanup phase 3 (was never used).
   // Admin alert emails still work via services/email.ts (sendAlertToAdmin).
 
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, auto-reply 15s, fb-metrics 2h, ab decide 1h, ai-cache 3h, backup 4h, learned 5h, weekly-report CN 8h, template-suggest CN 2h, auto-promote daily 3h, V5T text/image (T2/T4/T6/CN 10h, gdrive-sync 15p, publish daily 11h)');
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, fb-metrics 2h, ab decide 1h, ai-cache 3h, backup 4h, weekly-report CN 8h, retention 2h, knowledge-sync 3h, product-auto-post (7h gen + 9h publish), V5T text/image (T2/T4/T6/CN 10h gen + 11h publish + gdrive-sync 15p)');
 }

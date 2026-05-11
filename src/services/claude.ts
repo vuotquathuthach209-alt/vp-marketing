@@ -1,5 +1,8 @@
-import { buildContext } from './wiki';
 import { generate } from './router';
+
+// buildContext (wiki RAG) removed in pivot 2026-05-11 — bot wiki module deleted.
+// Caption generation no longer pulls FAQ context; relies on hotel_knowledge directly.
+function buildContext(_q: string, _opts?: any): string { return ''; }
 
 /**
  * Module này giờ là facade mỏng, chỉ định nghĩa task-specific logic
