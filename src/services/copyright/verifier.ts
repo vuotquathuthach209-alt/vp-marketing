@@ -18,7 +18,9 @@
  */
 
 import * as fs from 'fs';
+import * as path from 'path';
 import * as crypto from 'crypto';
+import { spawnSync } from 'child_process';
 import sharp from 'sharp';
 import axios from 'axios';
 import { db, getSetting } from '../../db';
@@ -26,12 +28,37 @@ import type { ImageRiskAssessment, ImageSource, RiskLevel } from './types';
 
 const GOOGLE_VISION_URL = 'https://vision.googleapis.com/v1/images:annotate';
 const HASH_SIZE = 8;  // 8x8 = 64-bit pHash
+const TMP_CONVERT_DIR = '/tmp/copyright-convert';
+if (!fs.existsSync(TMP_CONVERT_DIR)) fs.mkdirSync(TMP_CONVERT_DIR, { recursive: true });
+
+/** Convert HEIC/HEIF/AVIF to JPEG using ffmpeg. Returns path of converted file (caller cleans up). */
+function maybeConvertToJpeg(imagePath: string): string {
+  const ext = path.extname(imagePath).toLowerCase();
+  if (!['.heic', '.heif', '.avif'].includes(ext)) return imagePath;
+
+  const hash = crypto.createHash('md5').update(imagePath).digest('hex').slice(0, 12);
+  const outPath = path.join(TMP_CONVERT_DIR, `${hash}.jpg`);
+  if (fs.existsSync(outPath)) return outPath;
+
+  try {
+    const r = spawnSync('ffmpeg', [
+      '-y', '-loglevel', 'error',
+      '-i', imagePath,
+      '-frames:v', '1',
+      '-q:v', '4',
+      outPath,
+    ], { timeout: 30_000 });
+    if (r.status === 0 && fs.existsSync(outPath)) return outPath;
+  } catch {}
+  return imagePath;  // fallback — let sharp try (and fail with logged warning)
+}
 
 /** Compute pHash (perceptual hash) — robust to resizing/recompression. */
 export async function computePHash(imagePath: string): Promise<string | null> {
+  const readable = maybeConvertToJpeg(imagePath);
   try {
     // Resize to (hashSize+1) × hashSize and grayscale → DCT-like difference
-    const buf = await sharp(imagePath)
+    const buf = await sharp(readable)
       .resize(HASH_SIZE + 1, HASH_SIZE, { fit: 'fill' })
       .grayscale()
       .raw()
@@ -79,8 +106,9 @@ export async function extractExif(imagePath: string): Promise<{
   width: number;
   height: number;
 }> {
+  const readable = maybeConvertToJpeg(imagePath);
   try {
-    const meta = await sharp(imagePath).metadata();
+    const meta = await sharp(readable).metadata();
     const exif = (meta.exif ? parseExifBuffer(meta.exif) : {}) as any;
     return {
       camera: exif.make && exif.model ? `${exif.make} ${exif.model}`.trim() : (exif.make || null),
