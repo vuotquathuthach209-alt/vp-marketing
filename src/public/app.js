@@ -1750,23 +1750,44 @@ async function loadOverview() {
   const r = await api('/analytics/overview?days=30');
   const el = document.getElementById('analytics-overview');
   const rate = ((r.avg_engagement_rate || 0) * 100).toFixed(2);
+  const reachZero = (r.total_reach || 0) === 0 && (r.total_posts || 0) > 0;
+  const engZero = (r.total_engagement || 0) === 0 && (r.total_posts || 0) > 0;
+
   el.innerHTML = `
     <div class="bg-white border rounded-lg p-4">
       <div class="text-xs text-slate-500">Tổng bài (30d)</div>
       <div class="text-2xl font-bold text-blue-600 mt-1">${r.total_posts || 0}</div>
     </div>
-    <div class="bg-white border rounded-lg p-4">
-      <div class="text-xs text-slate-500">Tổng Reach</div>
+    <div class="bg-white border rounded-lg p-4 ${reachZero ? 'border-amber-300 bg-amber-50' : ''}">
+      <div class="text-xs text-slate-500 flex items-center gap-1">
+        Tổng Reach
+        ${reachZero ? '<span title="FB Insights API bị chặn — Page cần verify với Meta hoặc đủ 100 followers" class="text-amber-600 cursor-help">ⓘ</span>' : ''}
+      </div>
       <div class="text-2xl font-bold text-green-600 mt-1">${(r.total_reach || 0).toLocaleString()}</div>
+      ${reachZero ? '<div class="text-[10px] text-amber-700 mt-1">FB Insights API chưa unlock</div>' : ''}
     </div>
-    <div class="bg-white border rounded-lg p-4">
-      <div class="text-xs text-slate-500">Tổng tương tác</div>
+    <div class="bg-white border rounded-lg p-4 ${engZero ? 'border-amber-300 bg-amber-50' : ''}">
+      <div class="text-xs text-slate-500 flex items-center gap-1">
+        Tổng tương tác
+        ${engZero ? '<span title="Posts chưa có reaction/comment/share. Có thể do Page bị Meta suppress AI content." class="text-amber-600 cursor-help">ⓘ</span>' : ''}
+      </div>
       <div class="text-2xl font-bold text-purple-600 mt-1">${(r.total_engagement || 0).toLocaleString()}</div>
     </div>
     <div class="bg-white border rounded-lg p-4">
       <div class="text-xs text-slate-500">Engagement rate TB</div>
       <div class="text-2xl font-bold text-orange-600 mt-1">${rate}%</div>
     </div>
+    ${reachZero ? `
+    <div class="col-span-full bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900">
+      <strong>⚠️ Reach hiển thị 0 do FB Insights API bị chặn:</strong>
+      <ul class="mt-1 ml-4 list-disc space-y-0.5">
+        <li>Token có scope <code>read_insights</code> đầy đủ ✅</li>
+        <li>Nhưng FB requires: Page verified với Meta + ≥100 followers + activity ≥7 ngày</li>
+        <li><strong>Action</strong>: vào <a href="https://business.facebook.com/settings" target="_blank" class="underline">Meta Business Suite</a> → Settings → submit Page verification</li>
+        <li>Trong khi đó, engagement counts (reactions/comments/shares) vẫn được lưu — bot vẫn hoạt động bình thường</li>
+      </ul>
+    </div>
+    ` : ''}
   `;
 }
 
@@ -1776,6 +1797,18 @@ async function loadTopPosts() {
   const list = r.top_posts || [];
   if (list.length === 0) {
     el.innerHTML = '<p class="text-sm text-slate-500">Chưa có data. Bấm "Pull metrics ngay" sau khi đã đăng bài.</p>';
+    return;
+  }
+  // All scores zero? Probably Insights API blocked. Show explanatory note instead of misleading "Top 5".
+  const allZero = list.every(p => (p.engagement || 0) === 0 && (p.reach || 0) === 0);
+  if (allZero) {
+    el.innerHTML = `
+      <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-900">
+        Tất cả ${list.length} posts có engagement = 0 trong 30 ngày qua.
+        Khả năng: (a) Page chưa unlock FB Insights API, hoặc (b) Meta đang suppress reach do hard-sell pattern.
+        Khi V5T post mới bắt đầu engagement, danh sách này sẽ tự cập nhật.
+      </div>
+    `;
     return;
   }
   el.innerHTML = list.map((p, i) => `
