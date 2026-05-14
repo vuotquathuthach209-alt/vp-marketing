@@ -254,6 +254,102 @@ router.get('/keyword-config', (_req, res) => {
   res.json({ configured, has_cse: hasCSE, has_serpapi: hasSerpAPI });
 });
 
+/* ───────── SEO Article Writer ───────── */
+
+router.post('/articles/generate', async (req, res) => {
+  const { keyword_target, angle, hotel_id, language, target_word_count } = req.body || {};
+  if (!keyword_target) return res.status(400).json({ error: 'keyword_target required' });
+  try {
+    const { generateArticle, saveArticle } = require('../services/seo/article-writer');
+    const draft = await generateArticle({
+      keyword_target,
+      angle,
+      hotel_id: hotel_id ? parseInt(hotel_id, 10) : null,
+      language: language || 'vi',
+      target_word_count: target_word_count ? parseInt(target_word_count, 10) : 1800,
+    });
+    if (!draft) return res.status(500).json({ error: 'generation failed (LLM returned invalid JSON)' });
+    const id = saveArticle(draft, { hotel_id, angle });
+    res.json({ ok: true, id, draft });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+router.get('/articles', (req, res) => {
+  const { listArticles } = require('../services/seo/article-writer');
+  res.json({ items: listArticles({
+    status: req.query.status as any,
+    limit: req.query.limit ? parseInt(String(req.query.limit), 10) : undefined,
+  }) });
+});
+
+router.get('/articles/:id', (req, res) => {
+  const { getArticle } = require('../services/seo/article-writer');
+  const a = getArticle(parseInt(req.params.id, 10));
+  if (!a) return res.status(404).json({ error: 'not found' });
+  res.json(a);
+});
+
+router.post('/articles/:id/approve', (req, res) => {
+  const { approveArticle } = require('../services/seo/article-writer');
+  const ok = approveArticle(parseInt(req.params.id, 10));
+  res.json({ ok });
+});
+
+router.post('/articles/:id/mark-published', (req, res) => {
+  const { markPublished } = require('../services/seo/article-writer');
+  const url = (req.body?.url || '').trim();
+  if (!url) return res.status(400).json({ error: 'url required' });
+  const ok = markPublished(parseInt(req.params.id, 10), url);
+  res.json({ ok });
+});
+
+router.delete('/articles/:id', (req, res) => {
+  const { deleteArticle } = require('../services/seo/article-writer');
+  const ok = deleteArticle(parseInt(req.params.id, 10));
+  res.json({ ok });
+});
+
+router.get('/articles-suggest-topics', (_req, res) => {
+  const { suggestTopics } = require('../services/seo/article-writer');
+  res.json({ items: suggestTopics({ limit: 15 }) });
+});
+
+router.get('/articles/:id/copy', (req, res) => {
+  const { getArticle } = require('../services/seo/article-writer');
+  const a = getArticle(parseInt(req.params.id, 10));
+  if (!a) return res.status(404).json({ error: 'not found' });
+  // Render the full Markdown package admin can paste into sondervn.com CMS
+  const fullMd = `---
+title: ${a.title}
+slug: ${a.slug}
+meta_description: ${a.meta_description}
+---
+
+# ${a.h1}
+
+${a.body_md}
+
+## FAQ
+
+${(a.faq || []).map((f: any) => `**${f.question}**\n\n${f.answer}\n`).join('\n')}
+
+---
+
+## SEO Schema (paste vào <head>)
+
+\`\`\`html
+<script type="application/ld+json">${JSON.stringify(a.article_schema, null, 2)}</script>
+${a.faq_schema ? '<script type="application/ld+json">' + JSON.stringify(a.faq_schema, null, 2) + '</script>' : ''}
+\`\`\`
+`;
+  res.json({
+    markdown: fullMd,
+    html: a.body_html,
+    article_schema: a.article_schema,
+    faq_schema: a.faq_schema,
+  });
+});
+
 /* ───────── Scorecard (Phase C) ───────── */
 
 router.get('/scorecard/:page_id', (req, res) => {
@@ -384,7 +480,7 @@ async function load() {
 
   // Tabs
   html += '<div class="tabs">';
-  for (const t of ['issues', 'pages', 'schemas', 'alts', 'keywords']) {
+  for (const t of ['articles', 'issues', 'pages', 'schemas', 'alts', 'keywords']) {
     html += '<div class="tab ' + (activeTab === t ? 'active' : '') + '" onclick="switchTab(\\'' + t + '\\')">' + tabLabel(t) + '</div>';
   }
   html += '</div>';
@@ -396,7 +492,7 @@ async function load() {
 }
 
 function tabLabel(t) {
-  return { issues: '🔴 Issues', pages: '📄 Pages', schemas: '🏷️ Schemas', alts: '🖼️ Alt-text', keywords: '🔑 Keywords' }[t] || t;
+  return { articles: '📝 Articles (Write for web)', issues: '🔴 Issues', pages: '📄 Pages', schemas: '🏷️ Schemas', alts: '🖼️ Alt-text', keywords: '🔑 Keywords' }[t] || t;
 }
 
 function card(slug, label, num) {
@@ -407,6 +503,62 @@ async function switchTab(t) { activeTab = t; await load(); }
 
 async function loadTab(t) {
   const wrap = document.getElementById('tabContent');
+
+  if (t === 'articles') {
+    const r = await fetch('/api/seo/articles?limit=50').then((x) => x.json());
+    const topics = await fetch('/api/seo/articles-suggest-topics').then((x) => x.json());
+
+    let h = '<h3>✍️ Write a new SEO article</h3>';
+    h += '<div style="background:#fff;border:1px solid #e0d8c0;border-radius:6px;padding:14px;margin:8px 0">';
+    h += '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:8px">';
+    h += '<input type="text" id="artKw" placeholder="Keyword target (e.g., khách sạn Q1 Sài Gòn)" style="flex:1;min-width:300px" />';
+    h += '<select id="artAngle"><option value="destination_guide">🗺️ Destination guide</option><option value="hotel_comparison">⭐ Hotel comparison</option><option value="travel_tips">💡 Travel tips</option><option value="local_insider">🌃 Local insider</option><option value="how_to">📋 How-to</option><option value="list_post">🔢 Listicle</option><option value="seasonal">🍂 Seasonal</option><option value="news_local">📰 News local</option></select>';
+    h += '<input type="number" id="artWords" placeholder="Words (default 1800)" style="width:120px" />';
+    h += '<button class="btn-primary" onclick="generateArticle()">Generate Article ($0.01-0.03)</button>';
+    h += '</div>';
+
+    if (topics.items && topics.items.length > 0) {
+      h += '<div style="font-size:12px;color:#666;margin-top:8px"><strong>💡 Suggested topics:</strong> ';
+      h += topics.items.slice(0, 5).map(function (t) {
+        return '<a href="#" onclick="document.getElementById(\\'artKw\\').value=\\'' + escapeAttr(t.keyword) + '\\';return false" style="margin:0 6px;color:#a86b3c">"' + escapeHtml(t.keyword) + '"</a>';
+      }).join(' | ');
+      h += '</div>';
+    }
+    h += '</div>';
+
+    h += '<h3>📚 Article library</h3>';
+    if (r.items.length === 0) {
+      h += '<div class="empty">Chưa có bài. Generate 1 bài ở form trên.</div>';
+    } else {
+      h += '<table><thead><tr><th>Title</th><th>Keyword</th><th>Words</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>';
+      for (const a of r.items) {
+        const statusBadge = a.status === 'published' ? '<span class="badge b-safe">published</span>'
+          : a.status === 'reviewed' ? '<span class="badge b-info">reviewed</span>'
+          : a.status === 'rejected' ? '<span class="badge b-critical">rejected</span>'
+          : '<span class="badge b-warning">draft</span>';
+        h += '<tr><td><strong>' + escapeHtml((a.title || '').slice(0, 60)) + '</strong>';
+        if (a.published_url) h += '<br><a href="' + escapeAttr(a.published_url) + '" target="_blank" style="font-size:11px">' + escapeHtml(a.published_url.slice(0, 50)) + '</a>';
+        h += '</td>';
+        h += '<td style="font-size:11px">' + escapeHtml(a.keyword_target || '—') + '</td>';
+        h += '<td>' + a.word_count + '</td>';
+        h += '<td>' + statusBadge + '</td>';
+        h += '<td style="font-size:11px">' + new Date(a.created_at).toLocaleDateString('vi-VN') + '</td>';
+        h += '<td>';
+        h += '<button onclick="viewArticle(' + a.id + ')">👀 View</button> ';
+        if (a.status === 'draft') h += '<button onclick="approveArt(' + a.id + ')">✓ Approve</button> ';
+        if (a.status !== 'published') h += '<button onclick="markPub(' + a.id + ')">🚀 Mark published</button> ';
+        h += '<button onclick="copyArt(' + a.id + ')">📋 Copy</button> ';
+        h += '<button onclick="delArt(' + a.id + ')">🗑️</button>';
+        h += '</td></tr>';
+      }
+      h += '</tbody></table>';
+    }
+
+    h += '<div id="articleView" style="margin-top:20px"></div>';
+    wrap.innerHTML = h;
+    return;
+  }
+
   if (t === 'issues') {
     const r = await fetch('/api/seo/issues').then((x) => x.json());
     if (r.items.length === 0) return wrap.innerHTML = '<div class="empty">No open issues 🎉</div>';
@@ -589,6 +741,124 @@ async function manualRank(id) {
   if (rank !== null && (isNaN(rank) || rank < 1 || rank > 100)) { alert('Rank phải là số 1-100'); return; }
   await fetch('/api/seo/keywords/' + id + '/manual-rank', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rank }) });
   loadTab('keywords');
+}
+
+/* ───── Article (SEO writer) handlers ───── */
+
+async function generateArticle() {
+  const keyword_target = document.getElementById('artKw').value.trim();
+  if (!keyword_target) return alert('Nhập keyword target trước (ví dụ: "khách sạn Q1 Sài Gòn giá dưới 500k")');
+  const angle = document.getElementById('artAngle').value;
+  const wordsRaw = document.getElementById('artWords').value.trim();
+  const target_word_count = wordsRaw ? parseInt(wordsRaw, 10) : 1800;
+  if (target_word_count < 600 || target_word_count > 4000) { alert('Word count: 600-4000'); return; }
+
+  if (!confirm('Generate SEO article cho "' + keyword_target + '"?\\n\\nAngle: ' + angle + '\\nWords: ' + target_word_count + '\\nCost: ~$0.01-0.03 (Claude Sonnet)\\n\\nMất ~30-60s.')) return;
+
+  const view = document.getElementById('articleView');
+  if (view) view.innerHTML = '<div style="background:#fff3e0;border:1px solid #ffb74d;border-radius:6px;padding:14px"><strong>⏳ Đang generate...</strong> Claude đang viết bài, vui lòng đợi ~30-60s (đừng refresh)</div>';
+
+  try {
+    const r = await fetch('/api/seo/articles/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keyword_target, angle, target_word_count }),
+    }).then((x) => x.json());
+    if (r.error) { alert('Generate failed: ' + r.error); if (view) view.innerHTML = ''; return; }
+    document.getElementById('artKw').value = '';
+    document.getElementById('artWords').value = '';
+    await loadTab('articles');
+    viewArticle(r.id);
+  } catch (e) {
+    alert('Network error: ' + e.message);
+  }
+}
+
+async function viewArticle(id) {
+  const a = await fetch('/api/seo/articles/' + id).then((x) => x.json());
+  if (a.error) return alert(a.error);
+  let h = '<div style="background:#fff;border:2px solid #a86b3c;border-radius:8px;padding:20px;margin-top:14px">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:10px">';
+  h += '<h2 style="margin:0;flex:1">' + escapeHtml(a.title || '—') + '</h2>';
+  h += '<button onclick="document.getElementById(\\'articleView\\').innerHTML=\\'\\'" style="background:#eee;border:none;border-radius:4px;padding:4px 10px;cursor:pointer">✕ Close</button>';
+  h += '</div>';
+  h += '<div style="font-size:12px;color:#666;margin-bottom:8px">';
+  h += 'Slug: <code>' + escapeHtml(a.slug) + '</code> · ';
+  h += 'Words: ' + a.word_count + ' · ';
+  h += 'Keyword: <strong>' + escapeHtml(a.keyword_target || '—') + '</strong> · ';
+  h += 'Status: <span class="badge b-' + (a.status === 'published' ? 'safe' : a.status === 'reviewed' ? 'info' : 'warning') + '">' + a.status + '</span>';
+  h += '</div>';
+  h += '<div style="background:#faf6e8;border-left:3px solid #a86b3c;padding:8px 12px;margin:10px 0;font-style:italic;color:#666">Meta: ' + escapeHtml(a.meta_description || '—') + '</div>';
+
+  if (a.related_keywords && a.related_keywords.length > 0) {
+    h += '<div style="margin:10px 0"><strong>Related keywords:</strong> ' + a.related_keywords.map((k) => '<span class="badge b-info" style="margin:2px">' + escapeHtml(k) + '</span>').join('') + '</div>';
+  }
+  if (a.internal_links && a.internal_links.length > 0) {
+    h += '<div style="margin:10px 0"><strong>Internal link suggestions:</strong><ul style="margin:4px 0">';
+    for (const l of a.internal_links) h += '<li><code>' + escapeHtml(l.url) + '</code> — anchor: "' + escapeHtml(l.anchor) + '"</li>';
+    h += '</ul></div>';
+  }
+  if (a.image_suggestions && a.image_suggestions.length > 0) {
+    h += '<div style="margin:10px 0"><strong>Image suggestions:</strong><ul style="margin:4px 0">';
+    for (const s of a.image_suggestions) h += '<li>' + escapeHtml(s) + '</li>';
+    h += '</ul></div>';
+  }
+
+  h += '<hr style="margin:14px 0;border:none;border-top:1px solid #e0d8c0">';
+  h += '<div style="background:#fafafa;padding:14px;border-radius:6px;line-height:1.7;font-size:14px">' + (a.body_html || '<pre>' + escapeHtml(a.body_md || '') + '</pre>') + '</div>';
+
+  if (a.faq && a.faq.length > 0) {
+    h += '<hr style="margin:14px 0;border:none;border-top:1px solid #e0d8c0">';
+    h += '<h3>FAQ</h3>';
+    for (const f of a.faq) {
+      h += '<div style="margin:8px 0"><strong>Q: ' + escapeHtml(f.question) + '</strong><br><span style="color:#444">A: ' + escapeHtml(f.answer) + '</span></div>';
+    }
+  }
+
+  h += '<hr style="margin:14px 0;border:none;border-top:1px solid #e0d8c0">';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+  if (a.status === 'draft') h += '<button class="btn-primary" onclick="approveArt(' + a.id + ')">✓ Approve</button>';
+  if (a.status !== 'published') h += '<button onclick="markPub(' + a.id + ')">🚀 Mark published</button>';
+  h += '<button onclick="copyArt(' + a.id + ')">📋 Copy full package (MD + Schema)</button>';
+  h += '<button onclick="delArt(' + a.id + ')" style="background:#fee;border-color:#c54;color:#c54">🗑️ Delete</button>';
+  h += '</div>';
+  h += '</div>';
+
+  document.getElementById('articleView').innerHTML = h;
+  document.getElementById('articleView').scrollIntoView({ behavior: 'smooth' });
+}
+
+async function approveArt(id) {
+  await fetch('/api/seo/articles/' + id + '/approve', { method: 'POST' });
+  loadTab('articles');
+}
+
+async function markPub(id) {
+  const url = prompt('URL bài đã đăng trên sondervn.com (ví dụ: https://sondervn.com/blog/khach-san-q1-sai-gon):', 'https://sondervn.com/blog/');
+  if (!url) return;
+  const r = await fetch('/api/seo/articles/' + id + '/mark-published', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: url.trim() }) }).then((x) => x.json());
+  if (r.error) alert(r.error);
+  loadTab('articles');
+}
+
+async function copyArt(id) {
+  const r = await fetch('/api/seo/articles/' + id + '/copy').then((x) => x.json());
+  if (r.error) return alert(r.error);
+  const pkg = r.markdown;
+  try {
+    await navigator.clipboard.writeText(pkg);
+    alert('✅ Đã copy full package (MD + Schema) vào clipboard.\\n\\nPaste vào sondervn.com CMS:\\n1. Body: paste phần Markdown (chỉ phần content, bỏ frontmatter & schema)\\n2. Meta title/description: lấy từ frontmatter\\n3. <head>: paste 2 thẻ <script type="application/ld+json"> ở cuối');
+  } catch {
+    // Fallback: show in textarea
+    const w = window.open('', '_blank', 'width=800,height=600');
+    w.document.write('<textarea style="width:100%;height:100%;font-family:monospace;font-size:12px">' + pkg.replace(/</g, '&lt;') + '</textarea>');
+  }
+}
+
+async function delArt(id) {
+  if (!confirm('Xoá bài này? Không thể undo.')) return;
+  await fetch('/api/seo/articles/' + id, { method: 'DELETE' });
+  loadTab('articles');
 }
 
 async function loadScoreCell(pageId) {

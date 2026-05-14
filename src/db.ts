@@ -3069,6 +3069,42 @@ CREATE INDEX IF NOT EXISTS idx_prepub_source ON prepublish_audit(source, source_
 `);
 console.log('[db] Pre-publish firewall audit table ready (prepublish_audit)');
 
+// ═══════════════════════════════════════════════════════════
+// SEO Articles (Sondervn.com blog content writer) — 2026-05-11
+// vp-mkt generates → admin reviews → admin manually publishes to sondervn.com
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+CREATE TABLE IF NOT EXISTS seo_articles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  slug TEXT NOT NULL,
+  meta_description TEXT,
+  h1 TEXT,
+  body_md TEXT NOT NULL,
+  body_html TEXT,
+  faq_json TEXT NOT NULL DEFAULT '[]',
+  keyword_target TEXT,
+  related_keywords_json TEXT NOT NULL DEFAULT '[]',
+  internal_links_json TEXT NOT NULL DEFAULT '[]',
+  image_suggestions_json TEXT NOT NULL DEFAULT '[]',
+  article_schema_json TEXT,
+  faq_schema_json TEXT,
+  word_count INTEGER NOT NULL DEFAULT 0,
+  hotel_id INTEGER,
+  category TEXT,
+  angle TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',   -- draft | reviewed | published | rejected
+  published_url TEXT,
+  published_at INTEGER,
+  reviewed_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_seo_articles_status ON seo_articles(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_seo_articles_kw ON seo_articles(keyword_target);
+`);
+console.log('[db] SEO Articles table ready (seo_articles)');
+
 // Indexes trên hotel_id
 try {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_pages_hotel ON pages(hotel_id)`);
