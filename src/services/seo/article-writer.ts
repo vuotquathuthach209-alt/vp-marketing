@@ -212,8 +212,9 @@ QUAN TRỌNG:
 - FAQ phải là câu hỏi THẬT người Việt search Google (vd "khách sạn Q1 giá dưới 500k có không?")
 - internal_links PHẢI tới sondervn.com (sondervn.com/khach-san/* hoặc sondervn.com/khu-vuc/*)`;
 
-  // Estimate maxTokens: ~1.5 tokens / word for Vietnamese + JSON overhead + FAQ + ~30% buffer
-  const estimatedMaxTokens = Math.max(2048, Math.ceil(targetWords * 2.5));
+  // Estimate maxTokens: Vietnamese uses ~3 tokens / word in JSON wrapper (incl. escape, indent, FAQ, schema fields).
+  // Cap at 8192 (Claude Sonnet 4.6 default max output without extended-output beta).
+  const estimatedMaxTokens = Math.min(8192, Math.max(3000, Math.ceil(targetWords * 4)));
 
   // Try LLM up to 2 times
   let lastErr = '';

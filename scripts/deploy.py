@@ -10,8 +10,9 @@ PASS = "cCxEvKZ0J3Ee6NJG"
 CMDS = [
     "cd /opt/vp-marketing && git pull",
     "cd /opt/vp-marketing && npm install --no-audit --no-fund 2>&1 | tail -3",
+    "cd /opt/vp-marketing && npm run build 2>&1 | tail -10",
     "pm2 restart vp-mkt",
-    "sleep 3 && pm2 logs vp-mkt --lines 20 --nostream",
+    "sleep 3 && pm2 logs vp-mkt --lines 10 --nostream 2>&1 | tail -15",
 ]
 
 def run():

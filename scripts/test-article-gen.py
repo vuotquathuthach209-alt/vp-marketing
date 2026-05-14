@@ -19,7 +19,7 @@ cat > /tmp/test-article.js <<'EOF'
     keyword_target: 'khách sạn Q1 Sài Gòn giá dưới 500k',
     angle: 'destination_guide',
     language: 'vi',
-    target_word_count: 1800,
+    target_word_count: 1500,
   });
   const t1 = Date.now();
 
