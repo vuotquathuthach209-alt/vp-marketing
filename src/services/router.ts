@@ -161,14 +161,19 @@ interface GenInput {
   task: TaskType;
   system: string;
   user: string;
+  /** Optional per-call override of route.maxTokens (e.g. SEO article needs 4096+). */
+  maxTokensOverride?: number;
 }
 
 /**
  * Main entry point — gọi AI theo task type, tự route sang model phù hợp.
  */
-export async function generate({ task, system, user }: GenInput): Promise<string> {
-  const route = resolveRoute(task);
-  console.log(`[router] ${task} → ${route.provider}/${route.model}`);
+export async function generate({ task, system, user, maxTokensOverride }: GenInput): Promise<string> {
+  const baseRoute = resolveRoute(task);
+  const route: RouteConfig = maxTokensOverride && maxTokensOverride > baseRoute.maxTokens
+    ? { ...baseRoute, maxTokens: maxTokensOverride }
+    : baseRoute;
+  console.log(`[router] ${task} → ${route.provider}/${route.model}${maxTokensOverride ? ` (maxTokens=${route.maxTokens})` : ''}`);
 
   try {
     let result: { text: string; inTok: number; outTok: number };

@@ -212,6 +212,9 @@ QUAN TRỌNG:
 - FAQ phải là câu hỏi THẬT người Việt search Google (vd "khách sạn Q1 giá dưới 500k có không?")
 - internal_links PHẢI tới sondervn.com (sondervn.com/khach-san/* hoặc sondervn.com/khu-vuc/*)`;
 
+  // Estimate maxTokens: ~1.5 tokens / word for Vietnamese + JSON overhead + FAQ + ~30% buffer
+  const estimatedMaxTokens = Math.max(2048, Math.ceil(targetWords * 2.5));
+
   // Try LLM up to 2 times
   let lastErr = '';
   for (let attempt = 1; attempt <= 2; attempt++) {
@@ -220,6 +223,7 @@ QUAN TRỌNG:
         task: 'caption',          // routes to Claude Sonnet 4.6
         system: systemPrompt,
         user: 'Generate ONLY the JSON. No markdown wrapper, no text before/after.',
+        maxTokensOverride: estimatedMaxTokens,
       })).trim();
 
       // Robust JSON extract (mirror post-writer)
@@ -234,8 +238,11 @@ QUAN TRỌNG:
         if (m) try { parsed = JSON.parse(m[0]); } catch {}
       }
       if (!parsed || !parsed.title || !parsed.body_md) {
-        lastErr = `pass${attempt}: invalid JSON or missing fields`;
-        if (attempt === 1) continue;
+        const len = raw.length;
+        const head = raw.slice(0, 200).replace(/\s+/g, ' ');
+        const tail = raw.slice(-200).replace(/\s+/g, ' ');
+        lastErr = `pass${attempt}: invalid JSON or missing fields (raw ${len} chars, head="${head}", tail="${tail}")`;
+        if (attempt === 1) { console.warn('[seo-article-writer]', lastErr, '— retrying'); continue; }
         throw new Error(lastErr);
       }
 
