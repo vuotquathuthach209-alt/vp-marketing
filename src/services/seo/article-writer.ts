@@ -166,7 +166,14 @@ export async function generateArticle(opts: {
     news_local: 'Tin local relevant cho khách du lịch — đường xá, sự kiện, thông tin mới',
   };
 
-  const systemPrompt = `Em là content strategist Sondervn (nền tảng đặt phòng khách sạn Việt Nam). Viết bài blog SEO.
+  /* ───────── PASS 1: Body + title ─────────
+   * Vietnamese in JSON wrapper costs ~3-4 tokens/word once you account for
+   * \" escapes, \n, and indent. A 1800-word body alone ≈ 6000-7200 tokens.
+   * Putting body + FAQ + related + internal_links + image_suggestions ALL
+   * in one JSON makes the response ≥ 10000 tokens — well past the Sonnet
+   * 4.6 default 8192 output cap → truncation. Hence 2-pass.
+   */
+  const bodyPrompt = `Em là content strategist Sondervn (nền tảng đặt phòng khách sạn Việt Nam). Viết bài blog SEO.
 
 PHILOSOPHY (BẮT BUỘC):
 - Google Helpful Content guidelines: giá trị thật cho người đọc trước, keyword sau
@@ -180,110 +187,129 @@ ${hotelContext}
 ANGLE: ${angle} — ${angleGuide[angle]}
 
 KEYWORD TARGET: "${opts.keyword_target}"
-TARGET WORD COUNT: ${targetWords} từ (range ±15%)
+TARGET WORD COUNT: ${targetWords} từ (HARD LIMIT ${Math.round(targetWords * 1.15)} từ — KHÔNG vượt quá)
 LANGUAGE: ${language}
 
-OUTPUT STRICT JSON, không markdown wrapper, không text trước sau:
+OUTPUT STRICT JSON (KHÔNG markdown wrapper, KHÔNG text trước sau):
 {
   "title": "<50-60 chars, primary keyword in first 30 chars, engaging>",
   "meta_description": "<140-160 chars, keyword + CTA>",
   "h1": "<engaging hook variant of title, 60-80 chars>",
   "slug": "<lowercase-dash-separated, no Vietnamese diacritics, ≤80 chars>",
-  "body_md": "<full article body in Markdown — 1500-2500 từ. Structure: intro 2 đoạn → 5-8 H2 sections, mỗi section 2-4 đoạn + có thể có H3 nhỏ → kết luận 1 đoạn (KHÔNG hard-sell). Dùng **bold**, *italic*, [link](url) khi cần. KHÔNG put H1 vào body_md.>",
+  "body_md": "<full article body in Markdown — STRICT ${targetWords} từ ±15%. Structure: intro 2 đoạn → 4-6 H2 sections (mỗi 2-3 đoạn) → kết luận 1 đoạn. KHÔNG H1 trong body. Dùng **bold**, *italic* khi cần.>"
+}
+
+QUAN TRỌNG:
+- body_md PHẢI ≤ ${Math.round(targetWords * 1.15)} từ Vietnamese (đếm chính xác)
+- KHÔNG dùng cliché "Bạn có biết...", "Hè này...", "Khám phá ngay..."
+- Mỗi H2 có 1 chi tiết cụ thể (tên quán, số đường, giờ mở, giá) — KHÔNG generic`;
+
+  // Pass 1 budget: targetWords × 3 tokens/word + 500 buffer for title/meta/h1/slug.
+  const pass1MaxTokens = Math.min(8000, Math.max(2500, Math.ceil(targetWords * 3) + 500));
+
+  let body: any = null;
+  let bodyErr = '';
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const raw = (await generate({
+        task: 'caption', system: bodyPrompt,
+        user: 'Generate ONLY the JSON. No markdown wrapper, no text before/after.',
+        maxTokensOverride: pass1MaxTokens,
+      })).trim();
+      const parsed = extractJson(raw);
+      if (!parsed || !parsed.title || !parsed.body_md) {
+        const head = raw.slice(0, 200).replace(/\s+/g, ' ');
+        const tail = raw.slice(-200).replace(/\s+/g, ' ');
+        bodyErr = `pass1 attempt${attempt}: invalid JSON or missing fields (raw ${raw.length} chars, head="${head}", tail="${tail}")`;
+        if (attempt === 1) { console.warn('[seo-article-writer]', bodyErr, '— retrying'); continue; }
+        throw new Error(bodyErr);
+      }
+      body = parsed;
+      break;
+    } catch (e: any) {
+      if (attempt === 1) continue;
+      console.warn('[seo-article-writer] body final fail:', e?.message || e);
+      return null;
+    }
+  }
+  if (!body) return null;
+
+  /* ───────── PASS 2: Metadata (FAQ + related + internal_links + image_suggestions) ───────── */
+
+  const metaPrompt = `Bạn vừa viết một bài SEO. Bây giờ tạo metadata cho bài đó.
+
+KEYWORD TARGET: "${opts.keyword_target}"
+TITLE BÀI: "${body.title}"
+BODY EXCERPT (200 chars đầu): "${String(body.body_md).slice(0, 200)}..."
+
+OUTPUT STRICT JSON (KHÔNG markdown wrapper):
+{
   "faq": [
-    {"question": "<câu hỏi khách thường hỏi liên quan keyword>", "answer": "<câu trả lời 50-150 từ, có sondervn.com mention nếu phù hợp>"},
-    ...3-5 FAQ items
+    {"question": "<câu hỏi THẬT người Việt search Google liên quan keyword>", "answer": "<60-120 từ, có sondervn.com nếu phù hợp>"},
+    ...3-4 FAQ items
   ],
-  "related_keywords": ["<10 LSI keywords liên quan>"],
+  "related_keywords": ["<8-10 LSI keywords liên quan, mỗi cái 2-5 từ>"],
   "internal_links": [
-    {"anchor": "<anchor text>", "url": "https://sondervn.com/<path>", "reason": "<why this link helps reader>"},
-    ...3-5 internal link suggestions
+    {"anchor": "<anchor text 2-5 từ>", "url": "https://sondervn.com/<path>", "reason": "<lý do ngắn>"},
+    ...2-3 internal links to sondervn.com
   ],
   "image_suggestions": [
-    {"alt_vi": "<alt VI 60-125 chars descriptive>", "alt_en": "<alt EN 60-125 chars>", "placement": "<hero | section-2 | section-4 | FAQ>"},
-    ...3-5 image suggestions
+    {"alt_vi": "<alt VI 60-125 chars>", "alt_en": "<alt EN 60-125 chars>", "placement": "<hero | section-2 | section-4>"},
+    ...2-3 image suggestions
   ]
 }
 
 QUAN TRỌNG:
-- body_md PHẢI có 1500-2500 từ Vietnamese
-- KHÔNG dùng "Bạn có biết...", "Hè này...", "Khám phá ngay..."
-- Mỗi H2 có 1 chi tiết cụ thể (tên quán, số đường, giờ mở, giá) — KHÔNG generic
-- FAQ phải là câu hỏi THẬT người Việt search Google (vd "khách sạn Q1 giá dưới 500k có không?")
-- internal_links PHẢI tới sondervn.com (sondervn.com/khach-san/* hoặc sondervn.com/khu-vuc/*)`;
+- FAQ là câu hỏi THẬT người Việt search (vd "khách sạn Q1 giá dưới 500k có không?")
+- internal_links PHẢI tới sondervn.com (sondervn.com/khach-san/* hoặc /khu-vuc/*)`;
 
-  // Estimate maxTokens: Vietnamese uses ~3 tokens / word in JSON wrapper (incl. escape, indent, FAQ, schema fields).
-  // Cap at 8192 (Claude Sonnet 4.6 default max output without extended-output beta).
-  const estimatedMaxTokens = Math.min(8192, Math.max(3000, Math.ceil(targetWords * 4)));
-
-  // Try LLM up to 2 times
-  let lastErr = '';
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const raw = (await generate({
-        task: 'caption',          // routes to Claude Sonnet 4.6
-        system: systemPrompt,
-        user: 'Generate ONLY the JSON. No markdown wrapper, no text before/after.',
-        maxTokensOverride: estimatedMaxTokens,
-      })).trim();
-
-      // Robust JSON extract (mirror post-writer)
-      let parsed: any = null;
-      try { parsed = JSON.parse(raw); } catch {}
-      if (!parsed) {
-        const cleaned = raw.replace(/^```(?:json|JSON)?\s*\n?/m, '').replace(/\n?\s*```\s*$/m, '').trim();
-        try { parsed = JSON.parse(cleaned); } catch {}
-      }
-      if (!parsed) {
-        const m = raw.match(/\{[\s\S]*\}/);
-        if (m) try { parsed = JSON.parse(m[0]); } catch {}
-      }
-      if (!parsed || !parsed.title || !parsed.body_md) {
-        const len = raw.length;
-        const head = raw.slice(0, 200).replace(/\s+/g, ' ');
-        const tail = raw.slice(-200).replace(/\s+/g, ' ');
-        lastErr = `pass${attempt}: invalid JSON or missing fields (raw ${len} chars, head="${head}", tail="${tail}")`;
-        if (attempt === 1) { console.warn('[seo-article-writer]', lastErr, '— retrying'); continue; }
-        throw new Error(lastErr);
-      }
-
-      // Validate + normalize
-      const slug = parsed.slug ? slugify(String(parsed.slug)) : slugify(parsed.title);
-      const wordCount = String(parsed.body_md).split(/\s+/).filter(Boolean).length;
-      const bodyHtml = mdToHtml(String(parsed.body_md));
-      const faq = Array.isArray(parsed.faq)
-        ? parsed.faq.filter((f: any) => f.question && f.answer).slice(0, 8)
-        : [];
-
-      const articleSchema = buildArticleSchema({
-        title: parsed.title, slug, meta_description: parsed.meta_description,
-        word_count: wordCount,
-      });
-      const faqSchema = buildFaqSchema(faq);
-
-      return {
-        title: String(parsed.title).trim(),
-        slug,
-        meta_description: String(parsed.meta_description || '').trim().slice(0, 165),
-        h1: String(parsed.h1 || parsed.title).trim(),
-        body_md: String(parsed.body_md).trim(),
-        body_html: bodyHtml,
-        faq,
-        keyword_target: opts.keyword_target,
-        related_keywords: Array.isArray(parsed.related_keywords) ? parsed.related_keywords.slice(0, 15) : [],
-        internal_links: Array.isArray(parsed.internal_links) ? parsed.internal_links.slice(0, 8) : [],
-        image_suggestions: Array.isArray(parsed.image_suggestions) ? parsed.image_suggestions.slice(0, 8) : [],
-        article_schema: articleSchema,
-        faq_schema: faqSchema,
-        word_count: wordCount,
-      };
-    } catch (e: any) {
-      lastErr = e.message;
-      if (attempt === 1) continue;
-      console.warn('[seo-article-writer] final fail:', lastErr);
-      return null;
-    }
+  let meta: any = { faq: [], related_keywords: [], internal_links: [], image_suggestions: [] };
+  try {
+    const raw = (await generate({
+      task: 'caption', system: metaPrompt,
+      user: 'Generate ONLY the JSON. No markdown wrapper.',
+      maxTokensOverride: 2500,
+    })).trim();
+    const parsed = extractJson(raw);
+    if (parsed) meta = { ...meta, ...parsed };
+    else console.warn('[seo-article-writer] pass2 metadata fallback to empty (raw:', raw.slice(0, 150), ')');
+  } catch (e: any) {
+    console.warn('[seo-article-writer] pass2 fail (non-fatal):', e?.message);
   }
+
+  /* ───────── Assemble final draft ───────── */
+  const slug = body.slug ? slugify(String(body.slug)) : slugify(body.title);
+  const wordCount = String(body.body_md).split(/\s+/).filter(Boolean).length;
+  const bodyHtml = mdToHtml(String(body.body_md));
+  const faq = Array.isArray(meta.faq) ? meta.faq.filter((f: any) => f.question && f.answer).slice(0, 8) : [];
+
+  return {
+    title: String(body.title).trim(),
+    slug,
+    meta_description: String(body.meta_description || '').trim().slice(0, 165),
+    h1: String(body.h1 || body.title).trim(),
+    body_md: String(body.body_md).trim(),
+    body_html: bodyHtml,
+    faq,
+    keyword_target: opts.keyword_target,
+    related_keywords: Array.isArray(meta.related_keywords) ? meta.related_keywords.slice(0, 15) : [],
+    internal_links: Array.isArray(meta.internal_links) ? meta.internal_links.slice(0, 8) : [],
+    image_suggestions: Array.isArray(meta.image_suggestions) ? meta.image_suggestions.slice(0, 8) : [],
+    article_schema: buildArticleSchema({
+      title: body.title, slug, meta_description: body.meta_description, word_count: wordCount,
+    }),
+    faq_schema: buildFaqSchema(faq),
+    word_count: wordCount,
+  };
+}
+
+/** Robust JSON extraction: try direct parse, strip ```json fences, then find {…}. */
+function extractJson(raw: string): any | null {
+  try { return JSON.parse(raw); } catch {}
+  const cleaned = raw.replace(/^```(?:json|JSON)?\s*\n?/m, '').replace(/\n?\s*```\s*$/m, '').trim();
+  try { return JSON.parse(cleaned); } catch {}
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (m) { try { return JSON.parse(m[0]); } catch {} }
   return null;
 }
 
