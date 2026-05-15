@@ -457,5 +457,21 @@ export function startScheduler() {
   }, { timezone: 'Asia/Ho_Chi_Minh' });
 
   console.log('[scheduler] SEO daily cron ENABLED (3:30 AM VN — crawl + audit + keyword ranks)');
-  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, fb-metrics 2h, ab decide 1h, ai-cache 3h, backup 4h, weekly-report CN 8h, retention 2h, knowledge-sync 3h, V5T text/image (T2/T4/T6/CN 10h gen + 11h publish + gdrive-sync 15p), SEO daily 3:30h, Customer Care (reviews 2h + inbox 30p + SLA 2h)');
+
+  // SEO Article Weekly Cron — Sundays 9 AM VN — sinh 3 bài long-tail từ top keywords
+  cron.schedule('0 9 * * 0', async () => {
+    if (require('../db').getSetting('seo_article_cron_enabled') === 'false') {
+      return;
+    }
+    try {
+      const { runWeeklyArticleGeneration } = require('./seo/article-cron');
+      const r = await runWeeklyArticleGeneration();
+      console.log(`[scheduler] seo-article-weekly: generated=${r.generated}/${r.attempted} fail=${r.failed} cost=$${r.cost_estimate_usd.toFixed(3)} duration=${(r.duration_ms / 1000).toFixed(0)}s`);
+    } catch (e: any) {
+      console.error('[scheduler] seo-article-weekly error:', e?.message);
+    }
+  }, { timezone: 'Asia/Ho_Chi_Minh' });
+
+  console.log('[scheduler] SEO article weekly cron ENABLED (CN 9h VN — sinh 3 bài long-tail từ top keywords)');
+  console.log('[scheduler] Đã khởi động: posts+campaigns 1p, fb-metrics 2h, ab decide 1h, ai-cache 3h, backup 4h, weekly-report CN 8h, retention 2h, knowledge-sync 3h, V5T text/image (T2/T4/T6/CN 10h gen + 11h publish + gdrive-sync 15p), SEO daily 3:30h, SEO article CN 9h, Customer Care (reviews 2h + inbox 30p + SLA 2h)');
 }

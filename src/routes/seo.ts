@@ -352,6 +352,42 @@ router.get('/articles-suggest-topics', (_req, res) => {
   res.json({ items: suggestTopics({ limit: 15 }) });
 });
 
+/** Manual trigger weekly cron (testing) — runs immediately without waiting for Sunday 9 AM. */
+router.post('/articles/cron/trigger', async (_req, res) => {
+  try {
+    const { triggerWeeklyArticleGenerationNow } = require('../services/seo/article-cron');
+    const r = await triggerWeeklyArticleGenerationNow();
+    res.json({ ok: true, ...r });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+/** Get cron config + enabled state. */
+router.get('/articles/cron/config', (_req, res) => {
+  const { getSetting } = require('../db');
+  res.json({
+    enabled: getSetting('seo_article_cron_enabled') !== 'false',
+    count_per_week: parseInt(getSetting('seo_article_cron_count') || '3', 10),
+    angle_override: getSetting('seo_article_cron_angle') || null,
+    schedule: 'CN 9:00 sáng giờ VN (Asia/Ho_Chi_Minh)',
+  });
+});
+
+/** Update cron config — enable/disable, count per week, angle override. */
+router.post('/articles/cron/config', (req, res) => {
+  const { setSetting } = require('../db');
+  const { enabled, count_per_week, angle_override } = req.body || {};
+  if (typeof enabled === 'boolean') setSetting('seo_article_cron_enabled', enabled ? 'true' : 'false');
+  if (count_per_week !== undefined) {
+    const n = parseInt(String(count_per_week), 10);
+    if (n < 1 || n > 10) return res.status(400).json({ error: 'count_per_week phải từ 1-10' });
+    setSetting('seo_article_cron_count', String(n));
+  }
+  if (angle_override !== undefined) {
+    setSetting('seo_article_cron_angle', angle_override || '');
+  }
+  res.json({ ok: true });
+});
+
 router.get('/articles/:id/copy', (req, res) => {
   const { getArticle } = require('../services/seo/article-writer');
   const a = getArticle(parseInt(req.params.id, 10));
