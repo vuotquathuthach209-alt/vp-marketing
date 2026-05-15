@@ -243,6 +243,26 @@ router.get('/keywords/:id/history', (req, res) => {
   res.json({ items: getKeywordHistory(parseInt(req.params.id, 10), limit) });
 });
 
+/** Seed 42 curated Sondervn keywords (branded + long-tail + medium-tail + head terms). Idempotent. */
+router.post('/keywords/seed-sondervn', (_req, res) => {
+  try {
+    const { seedSondervnKeywords } = require('../services/seo/seed-keywords');
+    const r = seedSondervnKeywords();
+    res.json({ ok: true, ...r });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+/** Bulk insert keywords from JSON array (admin paste / CSV import). */
+router.post('/keywords/bulk', (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items : null;
+  if (!items) return res.status(400).json({ error: 'items array required' });
+  try {
+    const { bulkInsertKeywords } = require('../services/seo/seed-keywords');
+    const r = bulkInsertKeywords(items);
+    res.json({ ok: true, ...r });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
 /** Tell dashboard which auto-check provider is configured. */
 router.get('/keyword-config', (_req, res) => {
   const { getSetting } = require('../db');
@@ -637,11 +657,22 @@ async function loadTab(t) {
     h += '<input type="text" id="kw" placeholder="Keyword (e.g. khách sạn Q1 Sài Gòn)" />';
     h += '<input type="url" id="kwUrl" placeholder="Target URL" />';
     h += '<button class="btn-primary" onclick="addKeyword()">Add keyword</button>';
+    if (r.items.length === 0) h += '<button onclick="seedSondervn()" style="background:#a86b3c;color:white">🌱 Seed 42 Sondervn keywords (1 click)</button>';
     if (r.items.length > 0) h += '<button onclick="checkAllRanks()">🔄 Check all ranks now</button>';
     h += '</div>';
     h += '<div style="font-size:12px;color:#666;margin:8px 0">Configured: ' + (await checkKeywordConfig()) + '</div>';
     if (r.items.length === 0) {
-      h += '<div class="empty">Chưa có keyword nào. Thêm keyword phía trên để track ranking.<br><br>Ví dụ keyword tốt: "khách sạn tân bình giá rẻ", "homestay q1 sài gòn", "phòng nghỉ tân sơn nhất"</div>';
+      h += '<div class="empty">';
+      h += '<strong>Chưa có keyword tracking.</strong><br><br>';
+      h += '👉 <strong>Click "🌱 Seed 42 Sondervn keywords"</strong> ở trên để bulk-insert curated list:<br><br>';
+      h += '<div style="display:inline-block;text-align:left;background:#fff;padding:12px;border-radius:6px;border:1px solid #e0d8c0;font-size:13px">';
+      h += '• 8 BRANDED (sondervn, sonder vn, sonder apartment...)<br>';
+      h += '• 16 LONG-TAIL cụ thể (khách sạn Q1 dưới 500k, homestay Cô Giang...) — target top 10 trong 2-5 tháng<br>';
+      h += '• 12 MEDIUM-TAIL (khách sạn Q1 giá rẻ, homestay Đà Lạt...) — 6-12 tháng<br>';
+      h += '• 6 HEAD TERMS (khách sạn Sài Gòn...) — chỉ track baseline';
+      h += '</div><br><br>';
+      h += '<em style="color:#888;font-size:12px">Hoặc thêm từng keyword thủ công ở form phía trên.</em>';
+      h += '</div>';
     } else {
       h += '<table><thead><tr><th>Keyword</th><th>Target URL</th><th>Rank</th><th>Δ</th><th>Trend (last 10)</th><th>Last checked</th><th>Actions</th></tr></thead><tbody>';
       for (const k of r.items) {
@@ -712,6 +743,14 @@ async function addKeyword() {
   const target_url = document.getElementById('kwUrl').value.trim();
   if (!keyword) return alert('Enter keyword');
   await fetch('/api/seo/keywords', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keyword, target_url }) });
+  loadTab('keywords');
+}
+
+async function seedSondervn() {
+  if (!confirm('Seed 42 curated Sondervn keywords?\\n\\n• 8 branded (sondervn, sonder apartment...)\\n• 16 long-tail (khách sạn Q1 dưới 500k...)\\n• 12 medium-tail (khách sạn Q1 giá rẻ...)\\n• 6 head terms (khách sạn Sài Gòn...)\\n\\nIdempotent — chạy lại không tạo trùng.')) return;
+  const r = await fetch('/api/seo/keywords/seed-sondervn', { method: 'POST' }).then((x) => x.json());
+  if (r.error) return alert('Error: ' + r.error);
+  alert('✅ Seeded!\\n\\nInserted: ' + r.inserted + '\\nSkipped (đã tồn tại): ' + r.skipped + '\\nTotal: ' + r.total + '\\n\\nTip: configure Google CSE / SerpAPI trong Settings để auto-check rank hằng ngày (3:30 AM VN).');
   loadTab('keywords');
 }
 async function delKeyword(id) {
