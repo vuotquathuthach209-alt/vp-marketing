@@ -243,6 +243,24 @@ router.get('/keywords/:id/history', (req, res) => {
   res.json({ items: getKeywordHistory(parseInt(req.params.id, 10), limit) });
 });
 
+/** Save google_cse_id (and optionally api key + serpapi_key) without leaving Keywords tab. */
+router.post('/keyword-config', (req, res) => {
+  const { setSetting } = require('../db');
+  const { google_cse_id, google_cse_api_key, serpapi_key } = req.body || {};
+  if (google_cse_id !== undefined) setSetting('google_cse_id', String(google_cse_id).trim());
+  if (google_cse_api_key) setSetting('google_cse_api_key', String(google_cse_api_key).trim());
+  if (serpapi_key) setSetting('serpapi_key', String(serpapi_key).trim());
+  res.json({ ok: true });
+});
+
+/** Test connection to whichever provider is configured by fetching rank for keyword "sondervn". */
+router.post('/keyword-config/test', async (_req, res) => {
+  try {
+    const r = await checkKeywordRank('sondervn', 'https://sondervn.com');
+    res.json(r);
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
 /** Seed 42 curated Sondervn keywords (branded + long-tail + medium-tail + head terms). Idempotent. */
 router.post('/keywords/seed-sondervn', (_req, res) => {
   try {
@@ -653,14 +671,33 @@ async function loadTab(t) {
   }
   if (t === 'keywords') {
     const r = await fetch('/api/seo/keywords').then((x) => x.json());
-    let h = '<div class="actions">';
+    const cfg = await fetch('/api/seo/keyword-config').then((x) => x.json());
+
+    let h = '';
+
+    // Inline CSE/SerpAPI config (collapsed if configured)
+    if (!cfg.has_cse && !cfg.has_serpapi) {
+      h += '<div style="background:#fff3e0;border:2px solid #ffb74d;border-radius:8px;padding:14px;margin-bottom:14px">';
+      h += '<div style="font-weight:bold;margin-bottom:6px">⚠️ Auto rank-check chưa sẵn sàng</div>';
+      h += '<div style="font-size:13px;color:#444;margin-bottom:10px">Cần 1 trong 2 provider để daily cron tự check rank trên Google. Khuyến nghị <strong>Google CSE</strong> (100 free query/day, đủ cho 30-50 keyword check 1 lần/ngày).</div>';
+      h += '<div style="font-size:13px;margin-bottom:8px"><strong>Bước 1:</strong> Tạo CSE engine tại <a href="https://programmablesearchengine.google.com" target="_blank">programmablesearchengine.google.com</a> → "Search the entire web" → copy "Search engine ID"</div>';
+      h += '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px">';
+      h += '<input type="text" id="cseId" placeholder="Paste Google CSE ID (e.g., 017xxx:yyy)" style="flex:1;min-width:300px" />';
+      h += '<button class="btn-primary" onclick="saveCseId()">💾 Save CSE ID</button>';
+      h += '<button onclick="testConnection()">🧪 Test connection</button>';
+      h += '</div>';
+      h += '<div style="font-size:11px;color:#888;margin-top:6px">API key (google_api_key) đã có sẵn từ Settings. Chỉ cần CSE ID.</div>';
+      h += '</div>';
+    }
+
+    h += '<div class="actions">';
     h += '<input type="text" id="kw" placeholder="Keyword (e.g. khách sạn Q1 Sài Gòn)" />';
     h += '<input type="url" id="kwUrl" placeholder="Target URL" />';
     h += '<button class="btn-primary" onclick="addKeyword()">Add keyword</button>';
     if (r.items.length === 0) h += '<button onclick="seedSondervn()" style="background:#a86b3c;color:white">🌱 Seed 42 Sondervn keywords (1 click)</button>';
     if (r.items.length > 0) h += '<button onclick="checkAllRanks()">🔄 Check all ranks now</button>';
     h += '</div>';
-    h += '<div style="font-size:12px;color:#666;margin:8px 0">Configured: ' + (await checkKeywordConfig()) + '</div>';
+    h += '<div style="font-size:12px;color:#666;margin:8px 0">Configured: ' + cfg.configured + '</div>';
     if (r.items.length === 0) {
       h += '<div class="empty">';
       h += '<strong>Chưa có keyword tracking.</strong><br><br>';
@@ -752,6 +789,30 @@ async function seedSondervn() {
   if (r.error) return alert('Error: ' + r.error);
   alert('✅ Seeded!\\n\\nInserted: ' + r.inserted + '\\nSkipped (đã tồn tại): ' + r.skipped + '\\nTotal: ' + r.total + '\\n\\nTip: configure Google CSE / SerpAPI trong Settings để auto-check rank hằng ngày (3:30 AM VN).');
   loadTab('keywords');
+}
+
+async function saveCseId() {
+  const id = document.getElementById('cseId').value.trim();
+  if (!id) return alert('Nhập CSE ID');
+  if (!/^[\\w:-]+$/.test(id)) { if (!confirm('CSE ID có vẻ lạ. Vẫn save?')) return; }
+  const r = await fetch('/api/seo/keyword-config', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ google_cse_id: id }),
+  }).then((x) => x.json());
+  if (r.error) return alert('Error: ' + r.error);
+  alert('✅ CSE ID saved. Click 🧪 Test connection để verify.');
+  loadTab('keywords');
+}
+
+async function testConnection() {
+  const btn = event.target; const orig = btn.textContent;
+  btn.textContent = '⏳ Testing...'; btn.disabled = true;
+  try {
+    const r = await fetch('/api/seo/keyword-config/test', { method: 'POST' }).then((x) => x.json());
+    if (r.error) alert('❌ FAILED:\\n\\n' + r.error + '\\n\\nKiểm tra:\\n- CSE ID đã save đúng?\\n- API key có quyền Custom Search API? (Google Cloud Console → APIs & Services → enable "Custom Search API")');
+    else if (r.rank) alert('✅ OK!\\n\\nKeyword "sondervn" → rank #' + r.rank + '\\nSource: ' + r.source + '\\nTotal results: ' + (r.total_results || 'n/a') + '\\nCost: $' + (r.cost_usd || 0).toFixed(4));
+    else alert('⚠️ Connection OK nhưng "sondervn" không rank trong top 50.\\n\\nTotal results: ' + (r.total_results || 0) + '\\n\\n(Bình thường cho domain mới — site chưa được Google index nhiều)');
+  } finally { btn.textContent = orig; btn.disabled = false; }
 }
 async function delKeyword(id) {
   if (!confirm('Delete?')) return;
