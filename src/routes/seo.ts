@@ -313,11 +313,16 @@ router.post('/articles/generate', async (req, res) => {
 });
 
 router.get('/articles', (req, res) => {
-  const { listArticles } = require('../services/seo/article-writer');
-  res.json({ items: listArticles({
-    status: req.query.status as any,
-    limit: req.query.limit ? parseInt(String(req.query.limit), 10) : undefined,
-  }) });
+  // Direct query để include cms_* columns (article-writer.listArticles không có)
+  let sql = `SELECT id, title, slug, meta_description, keyword_target, word_count, status,
+                    angle, hotel_id, published_url, created_at, updated_at,
+                    cms_id, cms_status, cms_edit_url, cms_pushed_at, cms_last_error
+             FROM seo_articles WHERE 1=1`;
+  const params: any[] = [];
+  if (req.query.status) { sql += ` AND status = ?`; params.push(String(req.query.status)); }
+  sql += ` ORDER BY created_at DESC LIMIT ?`;
+  params.push(req.query.limit ? parseInt(String(req.query.limit), 10) : 50);
+  res.json({ items: db.prepare(sql).all(...params) });
 });
 
 router.get('/articles/:id', (req, res) => {
@@ -386,6 +391,67 @@ router.post('/articles/cron/config', (req, res) => {
     setSetting('seo_article_cron_angle', angle_override || '');
   }
   res.json({ ok: true });
+});
+
+/* ───────── CMS Push (sondervn.com auto-publish) ───────── */
+
+/** Get CMS config + connection status. */
+router.get('/articles/cms/config', (_req, res) => {
+  const { getCmsConfig } = require('../services/seo/article-publisher');
+  res.json(getCmsConfig());
+});
+
+/** Update CMS config (URL, token, dry-run, etc). Sensitive — admin only. */
+router.post('/articles/cms/config', (req, res) => {
+  const { updateCmsConfig } = require('../services/seo/article-publisher');
+  try {
+    updateCmsConfig(req.body || {});
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+/** Health check sondervn.com CMS endpoint. */
+router.post('/articles/cms/health-check', async (_req, res) => {
+  try {
+    const { healthCheckCMS } = require('../services/seo/article-publisher');
+    const r = await healthCheckCMS();
+    res.json(r);
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+/** Push single article to CMS. */
+router.post('/articles/:id/push-cms', async (req, res) => {
+  const articleId = parseInt(req.params.id, 10);
+  const force = !!req.body?.force;
+  try {
+    const { pushArticleToCMS } = require('../services/seo/article-publisher');
+    const r = await pushArticleToCMS(articleId, { force });
+    res.json(r);
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+/** Bulk push N articles. */
+router.post('/articles/cms/bulk-push', async (req, res) => {
+  const ids: number[] = Array.isArray(req.body?.ids) ? req.body.ids.map((x: any) => parseInt(x, 10)).filter((n: number) => !isNaN(n)) : [];
+  if (ids.length === 0) return res.status(400).json({ error: 'ids array required' });
+  if (ids.length > 20) return res.status(400).json({ error: 'max 20 articles per bulk push' });
+  try {
+    const { bulkPushArticles } = require('../services/seo/article-publisher');
+    const r = await bulkPushArticles(ids);
+    res.json(r);
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+/** Get unpushed draft articles (for bulk push UI). */
+router.get('/articles/cms/unpushed', (_req, res) => {
+  const items = db.prepare(
+    `SELECT id, title, slug, word_count, status, keyword_target, created_at, cms_status, cms_last_error
+     FROM seo_articles
+     WHERE (cms_status IS NULL OR cms_status IN ('push_failed', 'unpublished'))
+       AND status IN ('draft', 'reviewed')
+     ORDER BY id DESC LIMIT 50`,
+  ).all();
+  res.json({ items });
 });
 
 router.get('/articles/:id/copy', (req, res) => {
@@ -581,8 +647,29 @@ async function loadTab(t) {
   if (t === 'articles') {
     const r = await fetch('/api/seo/articles?limit=50').then((x) => x.json());
     const topics = await fetch('/api/seo/articles-suggest-topics').then((x) => x.json());
+    const cmsCfg = await fetch('/api/seo/articles/cms/config').then((x) => x.json());
 
-    let h = '<h3>✍️ Write a new SEO article</h3>';
+    let h = '';
+
+    // CMS config card — show top of tab
+    const cfgReady = cmsCfg.url && cmsCfg.has_token;
+    const cardBg = cfgReady ? (cmsCfg.dry_run ? '#fff3e0' : '#e8f5e9') : '#fff3e0';
+    const cardBorder = cfgReady ? (cmsCfg.dry_run ? '#ffb74d' : '#5a8a5a') : '#ffb74d';
+    h += '<div style="background:' + cardBg + ';border:2px solid ' + cardBorder + ';border-radius:8px;padding:12px;margin-bottom:14px">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+    h += '<div><strong>📤 sondervn.com CMS Push</strong>';
+    if (cfgReady && cmsCfg.dry_run) h += ' <span class="badge b-warning">DRY-RUN MODE</span>';
+    else if (cfgReady) h += ' <span class="badge b-safe">LIVE</span>';
+    else h += ' <span class="badge b-critical">NOT CONFIGURED</span>';
+    h += '<div style="font-size:12px;color:#666;margin-top:4px">';
+    if (cmsCfg.url) h += 'Endpoint: <code>' + escapeHtml(cmsCfg.url + cmsCfg.api_path) + '</code> · ';
+    h += 'Rate: ' + cmsCfg.max_per_minute + '/min</div></div>';
+    h += '<div><button onclick="cmsConfigEdit()">⚙️ Config</button> ';
+    if (cfgReady) h += '<button onclick="cmsHealthCheck()">🧪 Health check</button> ';
+    if (cfgReady) h += '<button onclick="bulkPushAll()" class="btn-primary">📤 Bulk push all unpushed drafts</button>';
+    h += '</div></div></div>';
+
+    h += '<h3>✍️ Write a new SEO article</h3>';
     h += '<div style="background:#fff;border:1px solid #e0d8c0;border-radius:6px;padding:14px;margin:8px 0">';
     h += '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:8px">';
     h += '<input type="text" id="artKw" placeholder="Keyword target (e.g., khách sạn Q1 Sài Gòn)" style="flex:1;min-width:300px" />';
@@ -604,21 +691,30 @@ async function loadTab(t) {
     if (r.items.length === 0) {
       h += '<div class="empty">Chưa có bài. Generate 1 bài ở form trên.</div>';
     } else {
-      h += '<table><thead><tr><th>Title</th><th>Keyword</th><th>Words</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>';
+      h += '<table><thead><tr><th>Title</th><th>Keyword</th><th>Words</th><th>Status</th><th>CMS</th><th>Created</th><th>Actions</th></tr></thead><tbody>';
       for (const a of r.items) {
         const statusBadge = a.status === 'published' ? '<span class="badge b-safe">published</span>'
           : a.status === 'reviewed' ? '<span class="badge b-info">reviewed</span>'
           : a.status === 'rejected' ? '<span class="badge b-critical">rejected</span>'
           : '<span class="badge b-warning">draft</span>';
+        let cmsBadge = '<span style="color:#888;font-size:11px">—</span>';
+        if (a.cms_status === 'pushed_draft') cmsBadge = '<span class="badge b-info" title="Đã push CMS, anh review trong CMS">📤 in CMS</span>';
+        else if (a.cms_status === 'published_in_cms') cmsBadge = '<span class="badge b-safe">✅ live</span>';
+        else if (a.cms_status === 'push_failed') cmsBadge = '<span class="badge b-critical" title="' + escapeAttr(a.cms_last_error || '') + '">❌ failed</span>';
         h += '<tr><td><strong>' + escapeHtml((a.title || '').slice(0, 60)) + '</strong>';
         if (a.published_url) h += '<br><a href="' + escapeAttr(a.published_url) + '" target="_blank" style="font-size:11px">' + escapeHtml(a.published_url.slice(0, 50)) + '</a>';
+        if (a.cms_edit_url) h += '<br><a href="' + escapeAttr(a.cms_edit_url) + '" target="_blank" style="font-size:11px;color:#a86b3c">✏️ Edit in CMS</a>';
         h += '</td>';
         h += '<td style="font-size:11px">' + escapeHtml(a.keyword_target || '—') + '</td>';
         h += '<td>' + a.word_count + '</td>';
         h += '<td>' + statusBadge + '</td>';
+        h += '<td>' + cmsBadge + '</td>';
         h += '<td style="font-size:11px">' + new Date(a.created_at).toLocaleDateString('vi-VN') + '</td>';
         h += '<td>';
         h += '<button onclick="viewArticle(' + a.id + ')">👀 View</button> ';
+        if (cfgReady && (a.cms_status === null || a.cms_status === 'unpublished' || a.cms_status === 'push_failed')) {
+          h += '<button onclick="pushCms(' + a.id + ')" style="background:#a86b3c;color:white">📤 Push CMS</button> ';
+        }
         if (a.status === 'draft') h += '<button onclick="approveArt(' + a.id + ')">✓ Approve</button> ';
         if (a.status !== 'published') h += '<button onclick="markPub(' + a.id + ')">🚀 Mark published</button> ';
         h += '<button onclick="copyArt(' + a.id + ')">📋 Copy</button> ';
@@ -994,6 +1090,68 @@ async function copyArt(id) {
 async function delArt(id) {
   if (!confirm('Xoá bài này? Không thể undo.')) return;
   await fetch('/api/seo/articles/' + id, { method: 'DELETE' });
+  loadTab('articles');
+}
+
+/* ───── CMS Push handlers ───── */
+
+async function cmsConfigEdit() {
+  const cur = await fetch('/api/seo/articles/cms/config').then((x) => x.json());
+  const url = prompt('sondervn.com base URL (no trailing /):', cur.url || 'https://sondervn.com');
+  if (url === null) return;
+  const apiPath = prompt('API path:', cur.api_path || '/api/admin/articles');
+  if (apiPath === null) return;
+  const tokenInput = prompt(cur.has_token ? '(Token đã có, paste mới để thay hoặc Enter để giữ)' : 'Bearer token:', '');
+  const dryRun = confirm('DRY-RUN mode? OK = bật (không call API thật, chỉ log).\\nCancel = LIVE mode (call API thật).');
+  const max = prompt('Max push/min (rate limit):', String(cur.max_per_minute || 5));
+
+  const body = { url, api_path: apiPath, dry_run: dryRun, max_per_minute: parseInt(max || '5', 10) };
+  if (tokenInput && tokenInput.trim()) body.token = tokenInput.trim();
+
+  const r = await fetch('/api/seo/articles/cms/config', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then((x) => x.json());
+  if (r.error) alert('Error: ' + r.error);
+  else { alert('✅ CMS config saved.' + (dryRun ? ' (DRY-RUN — bài KHÔNG thật sự push)' : ' (LIVE — push thật)')); loadTab('articles'); }
+}
+
+async function cmsHealthCheck() {
+  const btn = event.target; const orig = btn.textContent; btn.textContent = '⏳'; btn.disabled = true;
+  try {
+    const r = await fetch('/api/seo/articles/cms/health-check', { method: 'POST' }).then((x) => x.json());
+    if (r.ok) alert('✅ CMS reachable!\\n\\nHTTP ' + r.status + '\\nResponse time: ' + r.duration_ms + 'ms');
+    else alert('❌ CMS unreachable:\\n\\n' + (r.error || 'unknown error') + '\\n\\nKiểm tra: URL đúng chưa? CMS server có chạy không?');
+  } finally { btn.textContent = orig; btn.disabled = false; }
+}
+
+async function pushCms(id) {
+  if (!confirm('Push bài #' + id + ' lên sondervn.com CMS (status=draft)?\\n\\nBài sẽ vào CMS dưới dạng DRAFT — anh phải vào CMS review + click Publish.')) return;
+  const btn = event.target; const orig = btn.textContent; btn.textContent = '⏳'; btn.disabled = true;
+  try {
+    const r = await fetch('/api/seo/articles/' + id + '/push-cms', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    }).then((x) => x.json());
+    if (r.error) alert('❌ ' + r.error);
+    else if (r.status === 'dry_run') alert('🟡 DRY-RUN OK — bài KHÔNG thật sự push (đang ở dry-run mode).\\n\\nĐể push thật: Config → bỏ tích DRY-RUN.');
+    else if (r.status === 'pushed_draft') alert('✅ Pushed!\\n\\nCMS ID: ' + r.cms_id + '\\nEdit URL: ' + (r.edit_url || '(none)') + '\\n\\n👉 Vào CMS sondervn.com để review + Publish.');
+    else if (r.status === 'skipped_duplicate') alert('ℹ️ Đã push trước rồi (cms_id=' + r.cms_id + '). Click bài → "Force re-push" nếu cần.');
+    else alert('❌ ' + r.status + ': ' + (r.error || 'unknown'));
+    loadTab('articles');
+  } finally { btn.textContent = orig; btn.disabled = false; }
+}
+
+async function bulkPushAll() {
+  const r = await fetch('/api/seo/articles/cms/unpushed').then((x) => x.json());
+  const items = r.items || [];
+  if (items.length === 0) { alert('Không có bài draft nào chưa push. Sinh bài mới hoặc check status.'); return; }
+  if (!confirm('Bulk push ' + items.length + ' bài draft lên CMS?\\n\\nMỗi bài sẽ vào CMS với status=draft.\\nRate limit: 5 bài/phút → mất ~' + Math.ceil(items.length / 5) + ' phút.')) return;
+
+  const ids = items.map(function (it) { return it.id; }).slice(0, 20);
+  const result = await fetch('/api/seo/articles/cms/bulk-push', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
+  }).then((x) => x.json());
+  alert('Result:\\n\\nOK: ' + result.ok_count + '\\nFail: ' + result.fail_count + '\\nDuration: ' + Math.round(result.total_duration_ms / 1000) + 's\\n\\n👉 Vào CMS sondervn.com review + Publish các bài draft.');
   loadTab('articles');
 }
 

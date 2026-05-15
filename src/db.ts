@@ -3103,7 +3103,16 @@ CREATE TABLE IF NOT EXISTS seo_articles (
 CREATE INDEX IF NOT EXISTS idx_seo_articles_status ON seo_articles(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_seo_articles_kw ON seo_articles(keyword_target);
 `);
-console.log('[db] SEO Articles table ready (seo_articles)');
+
+// CMS push tracking — added when build sondervn.com auto-publish
+safeAddColumn('seo_articles', 'cms_id', 'TEXT');               // CMS-assigned ID after successful push
+safeAddColumn('seo_articles', 'cms_status', 'TEXT');            // 'unpublished' | 'pushed_draft' | 'reviewed_in_cms' | 'published_in_cms' | 'push_failed'
+safeAddColumn('seo_articles', 'cms_edit_url', 'TEXT');          // URL admin can click to edit in CMS
+safeAddColumn('seo_articles', 'cms_pushed_at', 'INTEGER');
+safeAddColumn('seo_articles', 'cms_last_error', 'TEXT');        // Last push error message (for retry visibility)
+safeAddColumn('seo_articles', 'cms_attempt_count', 'INTEGER');  // Number of push attempts
+
+console.log('[db] SEO Articles table ready (seo_articles) + CMS push tracking');
 
 // Indexes trên hotel_id
 try {
