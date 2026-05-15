@@ -144,14 +144,15 @@ function inferCategory(article: any): string {
   return 'tin-tuc'; // default safe
 }
 
-/** Audit log mọi push action. */
+/** Audit log mọi push action — dùng reasons_json để lưu detail. */
 function logAudit(articleId: number, decision: string, blocked: number, durationMs: number, details: any): void {
   try {
     db.prepare(
       `INSERT INTO prepublish_audit
-       (source, source_id, decision, blocked, duration_ms, details_json, checked_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run('cms_push', articleId, decision, blocked, durationMs, JSON.stringify(details), Date.now());
+       (source, source_id, image_count, caption_length, decision, blocked,
+        reasons_json, image_results_json, caption_issues_json, duration_ms, checked_at)
+       VALUES (?, ?, 0, 0, ?, ?, ?, '[]', '[]', ?, ?)`,
+    ).run('cms_push', String(articleId), decision, blocked, JSON.stringify([details]), durationMs, Date.now());
   } catch (e: any) {
     console.warn('[article-publisher] audit log fail:', e?.message);
   }
