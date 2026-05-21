@@ -32,7 +32,7 @@ async function fetchFbReviews(page: PageRow, sinceMs: number): Promise<Array<{
     // fields: rating (legacy), recommendation_type, review_text, reviewer.name, created_time, comments{from,message}
     const r = await axios.get(`${GRAPH}/${page.fb_page_id}/ratings`, {
       params: {
-        fields: 'rating,recommendation_type,review_text,reviewer{id,name},created_time,open_graph_story{actions,comments.limit(5){from,message,created_time}}',
+        fields: 'rating,recommendation_type,review_text,reviewer{id,name},created_time,open_graph_story{comments.limit(5){from,message,created_time}}',
         access_token: page.access_token,
         limit: 50,
       },

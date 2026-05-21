@@ -59,9 +59,12 @@ function updateLastSeen(chatId: number): void {
 
 let lastUpdateId = 0;
 let polling = false;
+let pollFailStreak = 0;
+let pollBackoffUntil = 0;
 
 async function pollUpdates(): Promise<void> {
   if (polling) return;
+  if (Date.now() < pollBackoffUntil) return; // backoff sau lỗi -> hết spam
   const token = getToken();
   if (!token) return;
   polling = true;
@@ -70,6 +73,7 @@ async function pollUpdates(): Promise<void> {
       params: { offset: lastUpdateId + 1, timeout: 25, limit: 50 },
       timeout: 30_000,
     });
+    pollFailStreak = 0; // reset khi poll OK
     const updates: any[] = r.data?.result || [];
     for (const u of updates) {
       lastUpdateId = u.update_id;
@@ -80,8 +84,11 @@ async function pollUpdates(): Promise<void> {
       }
     }
   } catch (e: any) {
-    if (!String(e?.message || '').includes('timeout')) {
-      console.warn('[telegram] poll fail:', e?.response?.data?.description || e?.message);
+    pollFailStreak++;
+    pollBackoffUntil = Date.now() + Math.min(60000, 5000 * pollFailStreak); // tăng dần, tối đa 60s
+    if (!String(e?.message || '').includes('timeout') && (pollFailStreak === 1 || pollFailStreak % 30 === 0)) {
+      const why = e?.response?.data?.description || (e?.response?.status ? 'HTTP ' + e.response.status : '') || e?.message || 'unknown';
+      console.warn('[telegram] poll fail #' + pollFailStreak + ':', why);
     }
   } finally {
     polling = false;
