@@ -10,7 +10,7 @@ const PRICING: Record<string, { in: number; out: number }> = {
   'claude-sonnet-4-6': { in: 3.0, out: 15.0 },
   'claude-haiku-4-5-20251001': { in: 0.8, out: 4.0 },
   // Gemini
-  'gemini-2.5-flash': { in: 0.075, out: 0.30 },   // current production
+  'gemini-3.5-flash': { in: 0.075, out: 0.30 },   // current production
   'gemini-2.5-pro':   { in: 1.25, out: 5.0 },
   'gemini-2.0-flash': { in: 0.1, out: 0.4 },
   'gemini-1.5-flash': { in: 0.075, out: 0.30 },

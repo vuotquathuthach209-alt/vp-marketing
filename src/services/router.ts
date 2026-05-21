@@ -49,18 +49,18 @@ interface RouteConfig {
 // Mặc định — sẽ đọc override từ bảng settings (key: 'router_config' JSON)
 const DEFAULT_ROUTES: Record<TaskType, RouteConfig> = {
   caption:       { provider: 'anthropic', model: 'claude-sonnet-4-6',      maxTokens: 1024 },
-  image_prompt:  { provider: 'google',    model: 'gemini-2.5-flash',       maxTokens: 400  },
+  image_prompt:  { provider: 'google',    model: 'gemini-3.5-flash',       maxTokens: 400  },
   classify:      { provider: 'groq',      model: 'gemma2-9b-it',           maxTokens: 100  },
   reply_simple:  { provider: 'groq',      model: 'gemma2-9b-it',           maxTokens: 400  },
-  reply_complex: { provider: 'google',    model: 'gemini-2.5-flash',       maxTokens: 600  },
+  reply_complex: { provider: 'google',    model: 'gemini-3.5-flash',       maxTokens: 600  },
   // v5 cascade:
   intent_gateway:{ provider: 'google',    model: 'gemini-2.5-flash-lite',  maxTokens: 200  },
   reply_qwen:    { provider: 'ollama',    model: OLLAMA_MODEL,              maxTokens: 500  },
   // v7 Hotel Knowledge ETL: Gemini 2.5 Flash primary, Qwen local fallback
-  etl_synthesize:{ provider: 'google',    model: 'gemini-2.5-flash',        maxTokens: 6000 },
+  etl_synthesize:{ provider: 'google',    model: 'gemini-3.5-flash',        maxTokens: 6000 },
   // v8 Smart chatbot reply: Gemini Flash → Pro → ChatGPT → Qwen cascade
   // (CLAUDE KHÔNG DÙNG cho task này — reserved cho marketing caption)
-  reply_smart:   { provider: 'google',    model: 'gemini-2.5-flash',        maxTokens: 800  },
+  reply_smart:   { provider: 'google',    model: 'gemini-3.5-flash',        maxTokens: 800  },
 };
 
 /**
@@ -148,7 +148,7 @@ function defaultModelFor(p: Provider, task: TaskType): string {
       ? 'claude-sonnet-4-6'
       : 'claude-haiku-4-5-20251001';
   }
-  if (p === 'google') return 'gemini-2.5-flash';
+  if (p === 'google') return 'gemini-3.5-flash';
   if (p === 'groq') return 'gemma2-9b-it';
   if (p === 'deepseek') return task === 'caption' || task === 'reply_complex' ? 'deepseek-chat' : 'deepseek-chat';
   if (p === 'openai') return task === 'caption' || task === 'reply_complex' ? 'gpt-4o' : 'gpt-4o-mini';

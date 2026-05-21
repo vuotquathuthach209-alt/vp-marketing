@@ -134,7 +134,7 @@ async function callGemini(opts: {
 }): Promise<string | null> {
   try {
     const r = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${opts.apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${opts.apiKey}`,
       {
         contents: [{
           parts: [

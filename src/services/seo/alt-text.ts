@@ -45,7 +45,7 @@ async function callVision(imagePath: string, apiKey: string): Promise<VisionResu
                : imagePath.toLowerCase().endsWith('.webp') ? 'image/webp' : 'image/jpeg';
 
     const r = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
       {
         contents: [{ parts: [{ text: PROMPT }, { inline_data: { mime_type: mime, data: base64 } }] }],
         generationConfig: { temperature: 0.2, maxOutputTokens: 500, responseMimeType: 'application/json' },

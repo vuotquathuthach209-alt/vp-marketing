@@ -15,7 +15,7 @@ import axios from 'axios';
 import { getSetting } from '../../db';
 import type { Sentiment } from './types';
 
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent';
 
 const PROMPT_TEMPLATE = (text: string, context: 'review' | 'comment') => `Phân loại sentiment đoạn ${context === 'review' ? 'đánh giá khách sạn' : 'comment trên Facebook/Instagram'} sau từ KHÁCH HÀNG.
 
