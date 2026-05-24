@@ -23,6 +23,7 @@
 
 import { db, getSetting } from '../../db';
 import { generate } from '../router';
+import { trendsPromptBlock } from './trends';
 
 export type ArticleAngle =
   | 'destination_guide'     // "10 things to do in Q1 Saigon"
@@ -173,6 +174,7 @@ export async function generateArticle(opts: {
    * in one JSON makes the response ≥ 10000 tokens — well past the Sonnet
    * 4.6 default 8192 output cap → truncation. Hence 2-pass.
    */
+  const trendsBlock = await trendsPromptBlock();
   const bodyPrompt = `Em là content strategist Sondervn (nền tảng đặt phòng khách sạn Việt Nam). Viết bài blog SEO.
 
 PHILOSOPHY (BẮT BUỘC):
@@ -189,6 +191,7 @@ ANGLE: ${angle} — ${angleGuide[angle]}
 KEYWORD TARGET: "${opts.keyword_target}"
 TARGET WORD COUNT: ${targetWords} từ (HARD LIMIT ${Math.round(targetWords * 1.15)} từ — KHÔNG vượt quá)
 LANGUAGE: ${language}
+${trendsBlock}
 
 OUTPUT STRICT JSON (KHÔNG markdown wrapper, KHÔNG text trước sau):
 {
@@ -313,20 +316,264 @@ function extractJson(raw: string): any | null {
   return null;
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+ *  sonder-seo-content skill — Property (B2C) + Partner (B2B) generators
+ *  Anti-AI + cảm xúc + giống người thật. Reference: SKILL.md
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/** Anti-AI writing rules — inject vào MỌI prompt. Giảm ~85% dấu vết AI. */
+const ANTI_AI_RULES = `
+QUY TẮC VIẾT NHƯ NGƯỜI THẬT (BẮT BUỘC — vi phạm = bài hỏng):
+- CẤM TUYỆT ĐỐI các cụm sáo rỗng AI: "hãy cùng khám phá", "không thể bỏ qua",
+  "tuyệt vời", "đắm chìm", "thiên đường", "viên ngọc", "điểm đến lý tưởng",
+  "trải nghiệm khó quên", "không gì tuyệt hơn", "chắc chắn sẽ", "đừng quên",
+  "nói không ngoa", "có thể nói rằng", "đáng để", "tọa lạc", "sở hữu",
+  "mang đến", "đem lại", "không chỉ... mà còn", "vô vàn", "đa dạng và phong phú".
+- BẮT BUỘC chi tiết giác quan THẬT: mùi (cà phê sáng, mưa đất), âm thanh
+  (xe máy đêm Bùi Viện, gió thông Đà Lạt), nhiệt độ, ánh sáng giờ cụ thể.
+- BẮT BUỘC ý kiến cá nhân + NHƯỢC ĐIỂM thật: "khu này ồn về đêm, ai khó ngủ
+  nên tránh", "đường vào hơi khó tìm" — không chỉ toàn khen.
+- Câu DÀI ngắn xen kẽ. Có câu cụt 3-4 từ. Có câu kể lể dài.
+- Xưng "tôi"/"mình" như người từng tới thật. Kể 1 khoảnh khắc cụ thể.
+- Số liệu cụ thể (giá, giờ, khoảng cách, tên đường) — KHÔNG nói chung chung.
+- KHÔNG markdown bullet quá nhiều — viết văn xuôi như người kể chuyện.`;
+
+/** Build internal links + FAQ schema sau khi có body (tách pass 2 chung). */
+async function genMetadata(opts: {
+  keyword: string; title: string; bodyExcerpt: string; audienceNote: string;
+}): Promise<{ faq: any[]; related_keywords: string[]; internal_links: any[] }> {
+  const prompt = `Bạn vừa viết bài SEO. Tạo metadata.
+
+KEYWORD: "${opts.keyword}"
+TITLE: "${opts.title}"
+EXCERPT: "${opts.bodyExcerpt.slice(0, 200)}..."
+${opts.audienceNote}
+
+OUTPUT STRICT JSON (không markdown wrapper):
+{
+  "faq": [{"question":"<câu hỏi THẬT người Việt search Google>","answer":"<60-110 từ tự nhiên>"}, ...3-4 items],
+  "related_keywords": ["<8-10 LSI keyword 2-5 từ>"],
+  "internal_links": [{"anchor":"<2-5 từ>","url":"https://sondervn.com/<path>","reason":"<ngắn>"}, ...2-3 items]
+}`;
+  try {
+    const raw = (await generate({ task: 'caption', system: prompt, user: 'Generate ONLY JSON.', maxTokensOverride: 2500 })).trim();
+    const p = extractJson(raw) || {};
+    return {
+      faq: Array.isArray(p.faq) ? p.faq.filter((f: any) => f.question && f.answer).slice(0, 6) : [],
+      related_keywords: Array.isArray(p.related_keywords) ? p.related_keywords.slice(0, 15) : [],
+      internal_links: Array.isArray(p.internal_links) ? p.internal_links.slice(0, 8) : [],
+    };
+  } catch { return { faq: [], related_keywords: [], internal_links: [] }; }
+}
+
+/**
+ * B2C PROPERTY article — dựa data thật hotel_profile (KHÔNG bịa số liệu).
+ * Claude expand thành bài có cảm xúc + local insight.
+ */
+export async function generatePropertyArticle(hotelId: number): Promise<ArticleDraft | null> {
+  const h = db.prepare(`SELECT * FROM hotel_profile WHERE hotel_id = ?`).get(hotelId) as any;
+  if (!h) { console.warn(`[article-writer] hotel ${hotelId} not found`); return null; }
+
+  // Gom facts thật từ DB (KHÔNG bịa)
+  const rooms = db.prepare(`SELECT display_name_vi, price_weekday, price_weekend, max_guests, bed_config, size_m2, description_vi FROM hotel_room_catalog WHERE hotel_id = ? LIMIT 6`).all(hotelId) as any[];
+  const amenities = db.prepare(`SELECT name_vi, category, free FROM hotel_amenities WHERE hotel_id = ? LIMIT 20`).all(hotelId) as any[];
+  const policy = db.prepare(`SELECT * FROM hotel_policies WHERE hotel_id = ?`).get(hotelId) as any;
+
+  const propType = h.property_type || 'hotel';
+  const typeLabel = propType === 'homestay' ? 'homestay' : propType === 'apartment' ? 'căn hộ dịch vụ' : 'khách sạn';
+
+  const facts = `
+DATA THẬT (chỉ dùng số liệu này, KHÔNG bịa thêm):
+- Tên: ${h.name_canonical || h.name}
+- Loại: ${typeLabel}
+- Thành phố: ${h.city || '?'} — Quận/khu: ${h.district || '?'}
+- Địa chỉ: ${h.address || '?'}
+- Hạng sao: ${h.star_rating || 'n/a'}
+- Tóm tắt: ${(h.ai_summary_vi || '').slice(0, 400)}
+- USP: ${h.usp_top3 || ''}
+- Landmark gần: ${h.nearby_landmarks || ''}
+- Phòng: ${rooms.map(r => `${r.display_name_vi} (${r.price_weekday ? r.price_weekday + 'đ' : '?'}/đêm, ${r.max_guests || '?'} khách${r.size_m2 ? ', ' + r.size_m2 + 'm²' : ''}${r.description_vi ? ' — ' + String(r.description_vi).slice(0, 80) : ''})`).join('; ') || 'chưa có data phòng cụ thể'}
+- Tiện ích: ${amenities.map(a => a.name_vi).filter(Boolean).slice(0, 15).join(', ') || 'cơ bản'}
+- Check-in/out: ${policy ? `${policy.checkin_time || '14h'} / ${policy.checkout_time || '12h'}` : '14h / 12h'}
+${h.monthly_price_from ? `- Thuê tháng từ: ${h.monthly_price_from}đ` : ''}`;
+
+  const keyword = `${typeLabel} ${h.district || h.city || ''}`.trim().toLowerCase();
+
+  const sys = `Em là người ${h.city || 'địa phương'} sống ở đây nhiều năm, từng tới ${h.name_canonical || h.name} thật. Viết review/giới thiệu ${typeLabel} này cho người sắp đặt phòng.
+
+${facts}
+
+${ANTI_AI_RULES}
+
+PHILOSOPHY:
+- Google Helpful Content: giá trị thật cho người đọc.
+- Mention sondervn.com 1 lần tự nhiên (chỗ đặt phòng property này, không hard-sell).
+- KHÔNG bịa: tên đường/giá/tiện ích PHẢI khớp DATA THẬT trên. Nếu data thiếu thì
+  viết về khu vực/trải nghiệm chung quanh thay vì bịa.
+- 1200-1600 từ.
+
+OUTPUT STRICT JSON (không markdown wrapper):
+{
+  "title": "<55-65 chars, có tên ${typeLabel} + địa danh, hấp dẫn, KHÔNG sáo>",
+  "meta_description": "<140-160 chars có CTA>",
+  "h1": "<biến thể title 60-80 chars>",
+  "slug": "<lowercase-dash, không dấu, ≤80 chars>",
+  "body_md": "<1200-1600 từ Markdown. Mở bài bằng 1 khoảnh khắc/cảm nhận THẬT. 4-6 H2: vị trí & đường đi, phòng ốc thực tế, tiện ích đáng tiền/không, khu vực xung quanh ăn chơi, ai HỢP / ai KHÔNG hợp ở đây, mẹo đặt phòng. Kết 1 đoạn thật lòng (có nhược điểm). KHÔNG H1 trong body.>"
+}`;
+
+  let body: any = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const raw = (await generate({ task: 'caption', system: sys, user: 'Generate ONLY JSON. No markdown wrapper.', maxTokensOverride: 7000 })).trim();
+      const p = extractJson(raw);
+      if (p && p.title && p.body_md) { body = p; break; }
+      if (attempt === 2) { console.warn('[article-writer] property gen fail (JSON)'); return null; }
+    } catch (e: any) { if (attempt === 2) { console.warn('[article-writer] property gen err:', e?.message); return null; } }
+  }
+  if (!body) return null;
+
+  const slug = body.slug ? slugify(String(body.slug)) : slugify(body.title);
+  const wordCount = String(body.body_md).split(/\s+/).filter(Boolean).length;
+  const meta = await genMetadata({ keyword, title: body.title, bodyExcerpt: body.body_md, audienceNote: 'Audience: khách du lịch sắp đặt phòng.' });
+  const faq = meta.faq;
+
+  return {
+    title: String(body.title).trim(),
+    slug,
+    meta_description: String(body.meta_description || '').trim().slice(0, 165),
+    h1: String(body.h1 || body.title).trim(),
+    body_md: String(body.body_md).trim(),
+    body_html: mdToHtml(String(body.body_md)),
+    faq,
+    keyword_target: keyword,
+    related_keywords: meta.related_keywords,
+    internal_links: meta.internal_links,
+    image_suggestions: [],
+    article_schema: buildArticleSchema({ title: body.title, slug, meta_description: body.meta_description, word_count: wordCount }),
+    faq_schema: buildFaqSchema(faq),
+    word_count: wordCount,
+  };
+}
+
+/** 8 B2B partner themes — xoay vòng. Reference: chiến lược KD Sonder. */
+export const PARTNER_THEMES: Array<{ slug: string; title_hint: string; angle: string }> = [
+  { slug: 'pms-mien-phi', title_hint: 'Phần mềm PMS quản lý khách sạn miễn phí khi là đối tác Sonder', angle: 'Lợi ích PMS free — chủ KS không tốn phí phần mềm quản lý phòng/booking/khách' },
+  { slug: 'chi-tra-phi-khi-co-booking', title_hint: 'Chỉ trả phí khi có booking thật — mô hình 0 rủi ro cho chủ nhà', angle: 'Không phí cố định, không phí setup, chỉ commission khi có giao dịch qua nền tảng' },
+  { slug: 'thue-dai-ngan-ngay', title_hint: 'Cho thuê dài ngày hay ngắn ngày — tối ưu doanh thu phòng thế nào', angle: 'Phân tích bài toán doanh thu: lấp phòng ngắn ngày vs ổn định dài ngày' },
+  { slug: 'cau-chuyen-doi-tac', title_hint: 'Chủ homestay tăng lấp phòng mùa thấp điểm nhờ nền tảng Sonder', angle: 'Case study (kể chuyện thật, không bịa số cụ thể nếu không có data)' },
+  { slug: 'dang-property-3-buoc', title_hint: 'Đăng khách sạn/homestay lên Sonder — quy trình 3 bước, 10 phút', angle: 'Hướng dẫn onboarding đối tác từng bước, đơn giản hóa' },
+  { slug: 'tu-quan-ly-vs-nen-tang', title_hint: 'Tự quản lý booking hay qua nền tảng OTA — bài toán chi phí & công sức', angle: 'So sánh khách quan: thời gian, chi phí, độ phủ khách' },
+  { slug: 'lap-phong-mua-thap-diem', title_hint: 'Lấp phòng trống mùa thấp điểm bằng khách thuê dài ngày', angle: 'Chiến lược doanh thu mùa vắng — long-stay, digital nomad' },
+  { slug: 'vi-sao-len-ota-noi-dia', title_hint: 'Vì sao chủ khách sạn Việt nên có mặt trên OTA nội địa', angle: 'OTA nội địa hiểu thị trường VN, commission hợp lý hơn OTA quốc tế' },
+];
+
+/**
+ * B2B PARTNER article — thu hút chủ nhà/chủ KS ký đối tác.
+ * Tone business, ROI, CTA "Đăng ký đối tác miễn phí".
+ */
+export async function generatePartnerArticle(themeSlug?: string): Promise<ArticleDraft | null> {
+  // Pick theme: chỉ định hoặc xoay vòng (ít dùng gần nhất)
+  let theme = PARTNER_THEMES.find(t => t.slug === themeSlug);
+  if (!theme) {
+    const recent = db.prepare(
+      `SELECT partner_theme FROM seo_articles WHERE partner_theme IS NOT NULL ORDER BY created_at DESC LIMIT 8`,
+    ).all() as any[];
+    const recentSlugs = new Set(recent.map(r => r.partner_theme));
+    theme = PARTNER_THEMES.find(t => !recentSlugs.has(t.slug)) || PARTNER_THEMES[Math.floor(Math.random() * PARTNER_THEMES.length)];
+  }
+
+  const sys = `Em là chuyên gia phát triển đối tác của Sonder Vietnam (nền tảng OTA bán phòng cho khách sạn/homestay đối tác). Viết bài thu hút CHỦ NHÀ / CHỦ KHÁCH SẠN đăng ký làm đối tác.
+
+CHỦ ĐỀ: ${theme.title_hint}
+GÓC: ${theme.angle}
+
+GIÁ TRỊ CỐT LÕI SONDER cho đối tác (dùng làm luận điểm, KHÔNG bịa thêm con số):
+- PMS quản lý khách sạn MIỄN PHÍ (phòng, booking, khách, lịch)
+- Chỉ phát sinh phí khi có giao dịch THẬT qua nền tảng (không phí cố định/setup)
+- Hỗ trợ cho thuê DÀI ngày lẫn NGẮN ngày → tối đa hóa doanh thu, lấp phòng trống
+- OTA nội địa hiểu thị trường VN
+
+${ANTI_AI_RULES}
+
+PHILOSOPHY:
+- Đối tượng đọc: chủ khách sạn nhỏ, chủ homestay, host Airbnb đang cân nhắc kênh bán.
+- Tone: tin cậy, thực tế, nói chuyện như người trong nghề — KHÔNG quảng cáo lố.
+- Thừa nhận thẳng: nền tảng nào cũng có commission, nhưng giải thích vì sao xứng đáng.
+- KHÔNG bịa số liệu (% tăng doanh thu, số đối tác) trừ khi nói chung chung định tính.
+- CTA cuối: mời đăng ký đối tác (form/hotline) — tự nhiên, không ép.
+- 1100-1500 từ.
+
+OUTPUT STRICT JSON (không markdown wrapper):
+{
+  "title": "<55-65 chars, hướng tới chủ nhà/chủ KS, cụ thể, KHÔNG sáo>",
+  "meta_description": "<140-160 chars, có CTA dành cho đối tác>",
+  "h1": "<biến thể title>",
+  "slug": "<lowercase-dash không dấu ≤80>",
+  "body_md": "<1100-1500 từ. Mở bài bằng 1 nỗi đau THẬT của chủ KS (phòng trống, phí OTA quốc tế cao, quản lý thủ công). 4-5 H2 giải quyết từng vấn đề. Kết = CTA đăng ký đối tác. KHÔNG H1 trong body.>"
+}`;
+
+  let body: any = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const raw = (await generate({ task: 'caption', system: sys, user: 'Generate ONLY JSON. No markdown wrapper.', maxTokensOverride: 6500 })).trim();
+      const p = extractJson(raw);
+      if (p && p.title && p.body_md) { body = p; break; }
+      if (attempt === 2) { console.warn('[article-writer] partner gen fail (JSON)'); return null; }
+    } catch (e: any) { if (attempt === 2) { console.warn('[article-writer] partner gen err:', e?.message); return null; } }
+  }
+  if (!body) return null;
+
+  const slug = body.slug ? slugify(String(body.slug)) : slugify(body.title);
+  const wordCount = String(body.body_md).split(/\s+/).filter(Boolean).length;
+  const keyword = theme.title_hint.toLowerCase().slice(0, 60);
+  const meta = await genMetadata({ keyword, title: body.title, bodyExcerpt: body.body_md, audienceNote: 'Audience: chủ khách sạn/homestay cân nhắc làm đối tác OTA.' });
+  const faq = meta.faq;
+
+  // CTA block cứng cuối bài (đảm bảo luôn có call-to-action B2B)
+  const ctaMd = `\n\n---\n\n## Đăng ký đối tác Sonder — miễn phí\n\nBạn là chủ khách sạn, homestay hay căn hộ cho thuê? Đăng property lên Sonder hoàn toàn miễn phí, dùng PMS quản lý không tốn phí, chỉ trả phí khi có booking thật. [Đăng ký đối tác ngay](https://sondervn.com/danh-cho-doi-tac) hoặc gọi hotline để được tư vấn.`;
+  const fullMd = String(body.body_md).trim() + ctaMd;
+
+  return {
+    title: String(body.title).trim(),
+    slug,
+    meta_description: String(body.meta_description || '').trim().slice(0, 165),
+    h1: String(body.h1 || body.title).trim(),
+    body_md: fullMd,
+    body_html: mdToHtml(fullMd),
+    faq,
+    keyword_target: keyword,
+    related_keywords: meta.related_keywords,
+    internal_links: meta.internal_links,
+    image_suggestions: [],
+    article_schema: buildArticleSchema({ title: body.title, slug, meta_description: body.meta_description, word_count: wordCount }),
+    faq_schema: buildFaqSchema(faq),
+    word_count: wordCount,
+    // @ts-ignore — extra field consumed by saveArticle/cron
+    _partner_theme: theme.slug,
+  } as any;
+}
+
 /** Persist generated article to DB. */
 export function saveArticle(draft: ArticleDraft, opts?: {
   hotel_id?: number | null;
   category?: string;
   angle?: ArticleAngle;
+  audience?: 'b2c' | 'b2b';
+  content_pillar?: string;
+  source_hotel_id?: number | null;
+  partner_theme?: string | null;
 }): number {
   const now = Date.now();
+  const partnerTheme = opts?.partner_theme ?? (draft as any)._partner_theme ?? null;
   const r = db.prepare(
     `INSERT INTO seo_articles
      (title, slug, meta_description, h1, body_md, body_html, faq_json,
       keyword_target, related_keywords_json, internal_links_json, image_suggestions_json,
       article_schema_json, faq_schema_json, word_count,
-      hotel_id, category, angle, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`,
+      hotel_id, category, angle, status,
+      audience, content_pillar, source_hotel_id, partner_theme,
+      created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)`,
   ).run(
     draft.title, draft.slug, draft.meta_description, draft.h1, draft.body_md, draft.body_html,
     JSON.stringify(draft.faq),
@@ -337,12 +584,24 @@ export function saveArticle(draft: ArticleDraft, opts?: {
     JSON.stringify(draft.article_schema),
     draft.faq_schema ? JSON.stringify(draft.faq_schema) : null,
     draft.word_count,
-    opts?.hotel_id || null,
+    opts?.source_hotel_id || opts?.hotel_id || null,
     opts?.category || null,
     opts?.angle || null,
+    opts?.audience || 'b2c',
+    opts?.content_pillar || null,
+    opts?.source_hotel_id || null,
+    partnerTheme,
     now, now,
   );
-  return r.lastInsertRowid as number;
+  const articleId = r.lastInsertRowid as number;
+
+  // Round-robin: cập nhật last_article_at cho property (nếu là bài property)
+  if (opts?.source_hotel_id) {
+    db.prepare(
+      `UPDATE hotel_profile SET last_article_at = ?, article_count = COALESCE(article_count,0)+1 WHERE hotel_id = ?`,
+    ).run(now, opts.source_hotel_id);
+  }
+  return articleId;
 }
 
 export function listArticles(opts?: { status?: string; limit?: number }): any[] {

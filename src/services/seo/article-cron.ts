@@ -1,173 +1,206 @@
 /**
- * SEO Article Weekly Cron — tự sinh N bài long-tail mỗi Chủ nhật 9h sáng VN.
+ * SEO Article Daily Content Calendar — sonder-seo-content skill.
  *
- * Strategy:
- *  1. Pick N keywords priority=high (long_tail tier), không trùng với bài đã sinh trong 30 ngày
- *  2. Sinh bài qua generateArticle() (Claude Sonnet 4.6)
- *  3. Save status='draft' vào seo_articles
- *  4. Telegram alert admin với link dashboard để review
+ * Cron chạy MỖI NGÀY 9h sáng VN. Theo thứ trong tuần → sinh đúng hạng mục:
+ *
+ *   T2 → Homestay (B2C, round-robin 3 homestay)        pillar=homestay
+ *   T3 → Khách sạn (B2C, round-robin 5 hotel)           pillar=hotel
+ *   T4 → Apartment (B2C, round-robin 3 apartment)       pillar=apartment
+ *   T5 → Destination guide / Travel tips (B2C)          pillar=destination/tips
+ *   T6 → Local insider / Listicle (B2C)                 pillar=insider
+ *   T7 → Đối tác OTA #1 (B2B, partner theme rotation)   pillar=partner
+ *   CN → Đối tác OTA #2 (B2B, partner theme rotation)   pillar=partner
+ *
+ * Mọi bài: status='draft' → admin review dashboard → "🌐 Publish to blog".
+ * Ảnh: pickImagesForArticle (dedup 60d + Gemini tag + copyright firewall).
+ * Telegram alert sau mỗi lần sinh.
  *
  * Settings (DB):
- *  - seo_article_cron_enabled — default 'true' (set 'false' để tắt)
- *  - seo_article_cron_count   — default '3' (số bài/tuần)
- *  - seo_article_cron_angle   — default null (random nếu null)
- *
- * Idempotent: nếu pool keyword cạn (hết bài chưa viết), cron skip.
+ *  - seo_article_cron_enabled — 'true' (default) | 'false' tắt
+ *  - seo_article_calendar_override — JSON map ghi đè lịch (optional)
  */
 
 import { db, getSetting } from '../../db';
-import { generateArticle, saveArticle, ArticleAngle } from './article-writer';
+import {
+  generateArticle, generatePropertyArticle, generatePartnerArticle, saveArticle, ArticleAngle,
+} from './article-writer';
+import { pickImagesForArticle, recordArticleImages, injectImagesIntoHtml, ContentPillar } from './article-images';
 
-const RECENT_WINDOW_DAYS = 30;
-
-interface CronResult {
-  attempted: number;
-  generated: number;
-  failed: number;
+interface DayResult {
+  weekday: number;
+  pillar: string;
+  audience: 'b2c' | 'b2b';
+  generated: boolean;
+  article_id?: number;
+  title?: string;
+  images_attached?: number;
   skipped_reason?: string;
-  article_ids: number[];
-  cost_estimate_usd: number;
+  error?: string;
   duration_ms: number;
 }
 
-/** Pick keywords chưa được sinh bài (hoặc đã hơn 30 ngày), ưu tiên high priority + chưa rank top 10. */
-function pickCandidateKeywords(limit: number): Array<{ keyword: string; category: string | null }> {
-  const cutoff = Date.now() - RECENT_WINDOW_DAYS * 86400_000;
-
-  // Strategy: long_tail keywords NULL rank or rank > 10, chưa được dùng làm keyword_target trong 30 ngày
-  const rows = db.prepare(
-    `SELECT k.keyword, k.category
-     FROM seo_keywords k
-     WHERE k.category IN ('long_tail', 'medium_tail')
-       AND (k.current_rank IS NULL OR k.current_rank > 10)
-       AND NOT EXISTS (
-         SELECT 1 FROM seo_articles a
-         WHERE LOWER(a.keyword_target) = k.keyword
-           AND a.created_at > ?
-       )
-     ORDER BY
-       CASE k.category WHEN 'long_tail' THEN 0 ELSE 1 END,
-       (k.current_rank IS NULL) DESC,  -- prioritize not-ranked
-       k.current_rank DESC                -- then worst rank first
-     LIMIT ?`,
-  ).all(cutoff, limit) as Array<{ keyword: string; category: string | null }>;
-
-  return rows;
-}
-
-/** Pick random angle based on category. */
-function pickAngle(category: string | null): ArticleAngle {
-  if (category === 'long_tail') {
-    // Random mix of local_insider + destination_guide + how_to
-    const pool: ArticleAngle[] = ['local_insider', 'destination_guide', 'how_to', 'list_post'];
-    return pool[Math.floor(Math.random() * pool.length)];
+/** Map JS getDay() (0=CN..6=T7) → kế hoạch nội dung. */
+function planForWeekday(d: number): {
+  pillar: ContentPillar; audience: 'b2c' | 'b2b'; category: string; mode: 'property' | 'keyword' | 'partner';
+  propertyType?: 'homestay' | 'hotel' | 'apartment'; angle?: ArticleAngle;
+} {
+  switch (d) {
+    case 1: return { pillar: 'homestay', audience: 'b2c', category: 'diem-den', mode: 'property', propertyType: 'homestay' };
+    case 2: return { pillar: 'hotel', audience: 'b2c', category: 'diem-den', mode: 'property', propertyType: 'hotel' };
+    case 3: return { pillar: 'apartment', audience: 'b2c', category: 'diem-den', mode: 'property', propertyType: 'apartment' };
+    case 4: return { pillar: 'destination', audience: 'b2c', category: 'huong-dan', mode: 'keyword', angle: 'destination_guide' };
+    case 5: return { pillar: 'insider', audience: 'b2c', category: 'tin-tuc', mode: 'keyword', angle: 'local_insider' };
+    case 6: return { pillar: 'partner', audience: 'b2b', category: 'doi-tac', mode: 'partner' };
+    case 0: return { pillar: 'partner', audience: 'b2b', category: 'doi-tac', mode: 'partner' };
+    default: return { pillar: 'destination', audience: 'b2c', category: 'huong-dan', mode: 'keyword', angle: 'destination_guide' };
   }
-  // medium_tail: prefer destination_guide
-  return 'destination_guide';
 }
 
-/** Pick stronger override if admin set seo_article_cron_angle setting. */
-function resolveAngle(category: string | null): ArticleAngle {
-  const override = getSetting('seo_article_cron_angle');
-  if (override) return override as ArticleAngle;
-  return pickAngle(category);
+/** Round-robin: chọn property cũ nhất chưa viết (theo last_article_at). */
+function pickNextProperty(propertyType: 'homestay' | 'hotel' | 'apartment'): any | null {
+  return db.prepare(
+    `SELECT hotel_id, name_canonical, city, district, last_article_at
+     FROM hotel_profile
+     WHERE property_type = ?
+     ORDER BY (last_article_at IS NULL) DESC, last_article_at ASC
+     LIMIT 1`,
+  ).get(propertyType) as any;
 }
 
-/** Send Telegram alert (optional, swallow errors). */
-async function notifyAdmin(result: CronResult, sample?: { title: string; keyword: string; id: number }): Promise<void> {
+/** Pick keyword chưa viết 45 ngày cho B2C non-property (destination/tips/insider). */
+function pickKeyword(): { keyword: string; category: string | null } | null {
+  const cutoff = Date.now() - 45 * 86400_000;
+  return db.prepare(
+    `SELECT k.keyword, k.category FROM seo_keywords k
+     WHERE k.category IN ('long_tail','medium_tail')
+       AND NOT EXISTS (
+         SELECT 1 FROM seo_articles a WHERE LOWER(a.keyword_target)=k.keyword AND a.created_at > ?
+       )
+     ORDER BY (k.current_rank IS NULL) DESC, RANDOM() LIMIT 1`,
+  ).get(cutoff) as any;
+}
+
+async function notifyAdmin(r: DayResult): Promise<void> {
   try {
-    const enabled = getSetting('telegram_admin_alerts_enabled') !== 'false';
-    if (!enabled) return;
+    if (getSetting('telegram_admin_alerts_enabled') === 'false') return;
     const token = getSetting('telegram_bot_token') || process.env.TELEGRAM_BOT_TOKEN;
     const chatId = getSetting('telegram_admin_chat_id') || process.env.TELEGRAM_ADMIN_CHAT_ID;
     if (!token || !chatId) return;
-
-    let msg = '📝 *SEO Article Cron — Weekly*\n\n';
-    if (result.generated === 0) {
-      msg += '⚠️ Không sinh được bài nào tuần này.\n';
-      if (result.skipped_reason) msg += `Lý do: ${result.skipped_reason}\n`;
+    const wd = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][r.weekday];
+    let msg = `📝 *SEO Content Calendar — ${wd}*\n\n`;
+    if (r.generated) {
+      msg += `✅ Sinh bài *${r.pillar}* (${r.audience.toUpperCase()})\n`;
+      msg += `"${(r.title || '').slice(0, 90)}"\n`;
+      msg += `🖼 ${r.images_attached || 0} ảnh · 🆔 #${r.article_id}\n\n`;
+      msg += `👉 Review: /admin/seo/dashboard → 📝 Articles → "🌐 Publish to blog"`;
     } else {
-      msg += `✅ Sinh ${result.generated}/${result.attempted} bài draft\n`;
-      msg += `💰 Cost: ~$${result.cost_estimate_usd.toFixed(3)}\n`;
-      msg += `⏱ Time: ${(result.duration_ms / 1000).toFixed(0)}s\n\n`;
-      if (sample) {
-        msg += `Bài mới: *${sample.title.slice(0, 80)}*\nKeyword: \`${sample.keyword}\`\n\n`;
-      }
-      msg += `👉 Review tại /admin/seo/dashboard → tab 📝 Articles\n`;
-      msg += `Article IDs: ${result.article_ids.join(', ')}`;
+      msg += `⚠️ Không sinh bài ${r.pillar}: ${r.skipped_reason || r.error || 'unknown'}`;
     }
-
     const axios = require('axios');
-    await axios.post(
-      `https://api.telegram.org/bot${token}/sendMessage`,
+    await axios.post(`https://api.telegram.org/bot${token}/sendMessage`,
       { chat_id: chatId, text: msg, parse_mode: 'Markdown', disable_web_page_preview: true },
-      { timeout: 8000 },
-    );
+      { timeout: 8000 });
+  } catch (e: any) { console.warn('[article-cron] telegram fail:', e?.message); }
+}
+
+/** Attach ảnh (dedup + copyright) vào bài đã save. */
+async function attachImages(articleId: number, pillar: ContentPillar, title: string): Promise<number> {
+  try {
+    const imgs = await pickImagesForArticle({ pillar, count: 4 });
+    if (imgs.length === 0) return 0;
+    recordArticleImages(articleId, imgs.map(i => ({ footage_id: i.footage_id, scene: i.scene })));
+    const a = db.prepare(`SELECT body_html FROM seo_articles WHERE id=?`).get(articleId) as any;
+    if (a) {
+      const newHtml = injectImagesIntoHtml(a.body_html || '', imgs.map(i => ({ public_url: i.public_url, scene: i.scene })), title);
+      db.prepare(`UPDATE seo_articles SET body_html=?, updated_at=? WHERE id=?`).run(newHtml, Date.now(), articleId);
+    }
+    return imgs.length;
   } catch (e: any) {
-    console.warn('[seo-article-cron] telegram notify fail:', e?.message);
+    console.warn('[article-cron] attach images fail:', e?.message);
+    return 0;
   }
 }
 
-/** Main entry — gọi từ scheduler.ts mỗi Chủ nhật 9h sáng VN. */
-export async function runWeeklyArticleGeneration(): Promise<CronResult> {
+/** MAIN — gọi từ scheduler mỗi ngày 9h sáng VN. */
+export async function runDailyContentCalendar(forceWeekday?: number): Promise<DayResult> {
   const t0 = Date.now();
-  const count = parseInt(getSetting('seo_article_cron_count') || '3', 10);
-  const result: CronResult = {
-    attempted: 0,
-    generated: 0,
-    failed: 0,
-    article_ids: [],
-    cost_estimate_usd: 0,
-    duration_ms: 0,
-  };
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
+  const weekday = forceWeekday !== undefined ? forceWeekday : now.getDay();
+  const plan = planForWeekday(weekday);
+  const result: DayResult = { weekday, pillar: plan.pillar, audience: plan.audience, generated: false, duration_ms: 0 };
 
-  const candidates = pickCandidateKeywords(count);
-  if (candidates.length === 0) {
-    result.skipped_reason = 'No eligible keywords (all already have recent articles or pool empty)';
+  console.log(`[article-cron] Daily calendar — weekday=${weekday} pillar=${plan.pillar} mode=${plan.mode}`);
+
+  try {
+    let draft: any = null;
+    let saveOpts: any = { audience: plan.audience, content_pillar: plan.pillar, category: plan.category };
+
+    if (plan.mode === 'property') {
+      const prop = pickNextProperty(plan.propertyType!);
+      if (!prop) { result.skipped_reason = `no ${plan.propertyType} in hotel_profile`; result.duration_ms = Date.now() - t0; await notifyAdmin(result); return result; }
+      console.log(`[article-cron] property: #${prop.hotel_id} ${prop.name_canonical}`);
+      draft = await generatePropertyArticle(prop.hotel_id);
+      saveOpts.source_hotel_id = prop.hotel_id;
+      saveOpts.angle = 'destination_guide';
+    } else if (plan.mode === 'partner') {
+      draft = await generatePartnerArticle();
+      saveOpts.angle = 'how_to';
+    } else {
+      // keyword mode (destination/insider)
+      const kw = pickKeyword();
+      if (!kw) { result.skipped_reason = 'no eligible keyword'; result.duration_ms = Date.now() - t0; await notifyAdmin(result); return result; }
+      draft = await generateArticle({ keyword_target: kw.keyword, angle: plan.angle, language: 'vi', target_word_count: 1500 });
+      saveOpts.angle = plan.angle;
+    }
+
+    if (!draft) { result.error = 'generation returned null'; result.duration_ms = Date.now() - t0; await notifyAdmin(result); return result; }
+
+    const articleId = saveArticle(draft, saveOpts);
+    result.article_id = articleId;
+    result.title = draft.title;
+    result.generated = true;
+
+    // Attach ảnh (mọi bài có cover + inline, dedup + copyright safe)
+    result.images_attached = await attachImages(articleId, plan.pillar, draft.title);
+
+    // Auto-publish lên blog ngay (toggle: setting seo_auto_publish, mặc định BẬT).
+    // Bài draft → published → hiện trên sondervn.com/tin-tuc. Tắt: set seo_auto_publish='false'.
+    if (getSetting('seo_auto_publish') !== 'false') {
+      try {
+        const row = db.prepare(`SELECT slug FROM seo_articles WHERE id = ?`).get(articleId) as any;
+        const nowMs = Date.now();
+        db.prepare(
+          `UPDATE seo_articles SET status='published', published_url=?, published_at=?, reviewed_at=COALESCE(reviewed_at,?), updated_at=? WHERE id=? AND status='draft'`
+        ).run(`https://sondervn.com/tin-tuc/${row.slug}`, nowMs, nowMs, nowMs, articleId);
+        (result as any).published = true;
+        console.log(`[article-cron] 🌐 auto-published #${articleId} → /tin-tuc/${row.slug}`);
+      } catch (e: any) {
+        console.warn('[article-cron] auto-publish fail:', e?.message || e);
+      }
+    }
+
     result.duration_ms = Date.now() - t0;
-    console.log(`[seo-article-cron] skip: ${result.skipped_reason}`);
+    console.log(`[article-cron] ✅ #${articleId} "${draft.title.slice(0, 60)}" (${draft.word_count}w, ${result.images_attached} imgs, ${(result.duration_ms / 1000).toFixed(0)}s)`);
+    await notifyAdmin(result);
+    return result;
+  } catch (e: any) {
+    result.error = e?.message || String(e);
+    result.duration_ms = Date.now() - t0;
+    console.error('[article-cron] daily error:', result.error);
     await notifyAdmin(result);
     return result;
   }
-
-  console.log(`[seo-article-cron] Generating ${candidates.length} articles for: ${candidates.map(c => c.keyword).join(', ')}`);
-
-  let firstArticle: { title: string; keyword: string; id: number } | undefined;
-  for (const c of candidates) {
-    result.attempted++;
-    const angle = resolveAngle(c.category);
-    try {
-      const draft = await generateArticle({
-        keyword_target: c.keyword,
-        angle,
-        language: 'vi',
-        target_word_count: 1500,
-      });
-      if (!draft) {
-        result.failed++;
-        console.warn(`[seo-article-cron] generation returned null for "${c.keyword}"`);
-        continue;
-      }
-      const id = saveArticle(draft, { angle, category: c.category || undefined });
-      result.generated++;
-      result.article_ids.push(id);
-      result.cost_estimate_usd += 0.02; // rough estimate
-      if (!firstArticle) firstArticle = { title: draft.title, keyword: c.keyword, id };
-      console.log(`[seo-article-cron] ✅ #${id} "${draft.title.slice(0, 60)}" (${draft.word_count}w)`);
-    } catch (e: any) {
-      result.failed++;
-      console.warn(`[seo-article-cron] generation error for "${c.keyword}":`, e?.message);
-    }
-  }
-
-  result.duration_ms = Date.now() - t0;
-  console.log(`[seo-article-cron] Done: ${result.generated}/${result.attempted} ok, ${result.failed} fail, ${(result.duration_ms / 1000).toFixed(0)}s, ~$${result.cost_estimate_usd.toFixed(3)}`);
-
-  await notifyAdmin(result, firstArticle);
-  return result;
 }
 
-/** Manual trigger via admin button (testing). */
-export async function triggerWeeklyArticleGenerationNow(): Promise<CronResult> {
-  return runWeeklyArticleGeneration();
+/** Manual trigger 1 ngày bất kỳ (test). forceWeekday: 0=CN..6=T7. */
+export async function triggerDailyNow(forceWeekday?: number): Promise<DayResult> {
+  return runDailyContentCalendar(forceWeekday);
 }
+
+/** Legacy weekly (giữ cho backward-compat manual trigger cũ). */
+export async function runWeeklyArticleGeneration(): Promise<any> {
+  // Redirect sang daily calendar theo hôm nay
+  const r = await runDailyContentCalendar();
+  return { attempted: 1, generated: r.generated ? 1 : 0, failed: r.generated ? 0 : 1, article_ids: r.article_id ? [r.article_id] : [], cost_estimate_usd: 0.02, duration_ms: r.duration_ms, skipped_reason: r.skipped_reason };
+}
+export async function triggerWeeklyArticleGenerationNow(): Promise<any> { return runWeeklyArticleGeneration(); }
