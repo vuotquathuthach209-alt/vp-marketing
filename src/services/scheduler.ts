@@ -366,14 +366,32 @@ export function startScheduler() {
       } catch (e: any) { console.error('[scheduler] v5t-CN err:', e?.message); }
     }, { timezone: 'Asia/Ho_Chi_Minh' });
 
-    // Daily 11:00 — publish next approved (after gen at 10h)
-    cron.schedule('0 11 * * *', async () => {
+    // Publish next approved — chạy 3 mốc 11h/14h/17h (catch-up resilient).
+    // runV5TPublishPhase IDEMPOTENT-PER-DAY → chỉ post 1 bài/ngày dù chạy 3 lần.
+    // Nếu app restart/down đúng 11h → 14h hoặc 17h vẫn catch up được.
+    const v5tPublishSlots = ['0 11 * * *', '0 14 * * *', '0 17 * * *'];
+    for (const slot of v5tPublishSlots) {
+      cron.schedule(slot, async () => {
+        try {
+          const { runV5TPublishPhase } = require('./v5t/orchestrator');
+          const r = await runV5TPublishPhase();
+          if (r.ok) console.log(`[scheduler] v5t-publish (${slot}): ✅ post=${r.post_id} fb=${r.fb_post_id}`);
+        } catch (e: any) { console.error('[scheduler] v5t-publish err:', e?.message); }
+      }, { timezone: 'Asia/Ho_Chi_Minh' });
+    }
+
+    // Startup catch-up — 90s sau khi app khởi động, check bài tồn đọng (nếu hôm nay
+    // chưa post + có approved). Đảm bảo restart KHÔNG làm miss bài cả ngày.
+    setTimeout(async () => {
       try {
-        const { runV5TPublishPhase } = require('./v5t/orchestrator');
-        const r = await runV5TPublishPhase();
-        if (r.ok) console.log(`[scheduler] v5t-publish: ✅ post=${r.post_id} fb=${r.fb_post_id}`);
-      } catch (e: any) { console.error('[scheduler] v5t-publish err:', e?.message); }
-    }, { timezone: 'Asia/Ho_Chi_Minh' });
+        const nowVNh = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' })).getHours();
+        if (nowVNh >= 11 && nowVNh < 22) {  // chỉ catch-up trong khung 11h-22h, tránh post đêm
+          const { runV5TPublishPhase } = require('./v5t/orchestrator');
+          const r = await runV5TPublishPhase();
+          if (r.ok) console.log(`[scheduler] v5t-publish (startup catch-up): ✅ post=${r.post_id} fb=${r.fb_post_id}`);
+        }
+      } catch (e: any) { console.error('[scheduler] v5t startup catch-up err:', e?.message); }
+    }, 90_000);
 
     // Google Drive sync — every 15 min, pull new photos from anh's "divider" folder
     cron.schedule('*/15 * * * *', async () => {
@@ -386,7 +404,23 @@ export function startScheduler() {
       } catch (e: any) { console.error('[scheduler] gdrive-sync err:', e?.message); }
     });
 
-    console.log('[scheduler] V5T Text/Image cron ENABLED (T2/T4/T6/CN 10h gen — TIPS+STORY, publish 11h daily, REAL PHOTO ONLY, gdrive sync 15min)');
+    // SEO → FB cross-post — 19h tối (giờ vàng FB, tách khỏi V5T publish trưa).
+    // Đăng bài SEO property/partner đã publish lên FB. IDEMPOTENT-PER-DAY (tối đa
+    // 1 bài/ngày). Chỉ chạy khi có bài SEO published chưa cross-post → tự throttle.
+    // Setting: seo_fb_crosspost_enabled (default on). Reference: chuyên gia MKT.
+    cron.schedule('0 19 * * *', async () => {
+      if (require('../db').getSetting('seo_fb_crosspost_enabled') === 'false') return;
+      try {
+        const { crossPostNextSeoArticle } = require('./seo/fb-crosspost');
+        const r = await crossPostNextSeoArticle();
+        if (r.ok) console.log(`[scheduler] seo-fb-crosspost: ✅ article #${r.article_id} → fb=${r.fb_post_id}`);
+        else if (r.skipped_reason && r.skipped_reason !== 'no eligible article' && r.skipped_reason !== 'already cross-posted today') {
+          console.log(`[scheduler] seo-fb-crosspost skip: ${r.skipped_reason}`);
+        }
+      } catch (e: any) { console.error('[scheduler] seo-fb-crosspost err:', e?.message); }
+    }, { timezone: 'Asia/Ho_Chi_Minh' });
+
+    console.log('[scheduler] V5T Text/Image cron ENABLED (T2/T4/T6/CN 10h gen — TIPS+STORY, publish 11h/14h/17h catch-up, gdrive sync 15min, SEO→FB crosspost 19h)');
   } else {
     console.log('[scheduler] V5T Text/Image cron DISABLED (v5t_cron_enabled=false)');
   }
@@ -458,20 +492,21 @@ export function startScheduler() {
 
   console.log('[scheduler] SEO daily cron ENABLED (3:30 AM VN — crawl + audit + keyword ranks)');
 
-  // SEO Article Weekly Cron — Sundays 9 AM VN — sinh 3 bài long-tail từ top keywords
-  cron.schedule('0 9 * * 0', async () => {
+  // SEO Content Calendar — MỖI NGÀY 9 AM VN — sonder-seo-content skill
+  // T2 homestay, T3 hotel, T4 apartment, T5 destination, T6 insider, T7+CN partner B2B
+  cron.schedule('0 9 * * *', async () => {
     if (require('../db').getSetting('seo_article_cron_enabled') === 'false') {
       return;
     }
     try {
-      const { runWeeklyArticleGeneration } = require('./seo/article-cron');
-      const r = await runWeeklyArticleGeneration();
-      console.log(`[scheduler] seo-article-weekly: generated=${r.generated}/${r.attempted} fail=${r.failed} cost=$${r.cost_estimate_usd.toFixed(3)} duration=${(r.duration_ms / 1000).toFixed(0)}s`);
+      const { runDailyContentCalendar } = require('./seo/article-cron');
+      const r = await runDailyContentCalendar();
+      console.log(`[scheduler] seo-content-calendar: weekday=${r.weekday} pillar=${r.pillar} generated=${r.generated} #${r.article_id || '-'} imgs=${r.images_attached || 0} (${(r.duration_ms / 1000).toFixed(0)}s)`);
     } catch (e: any) {
-      console.error('[scheduler] seo-article-weekly error:', e?.message);
+      console.error('[scheduler] seo-content-calendar error:', e?.message);
     }
   }, { timezone: 'Asia/Ho_Chi_Minh' });
 
-  console.log('[scheduler] SEO article weekly cron ENABLED (CN 9h VN — sinh 3 bài long-tail từ top keywords)');
+  console.log('[scheduler] SEO content calendar ENABLED (mỗi ngày 9h VN — T2 homestay/T3 hotel/T4 apt/T5 destination/T6 insider/T7+CN đối tác)');
   console.log('[scheduler] Đã khởi động: posts+campaigns 1p, fb-metrics 2h, ab decide 1h, ai-cache 3h, backup 4h, weekly-report CN 8h, retention 2h, knowledge-sync 3h, V5T text/image (T2/T4/T6/CN 10h gen + 11h publish + gdrive-sync 15p), SEO daily 3:30h, SEO article CN 9h, Customer Care (reviews 2h + inbox 30p + SLA 2h)');
 }

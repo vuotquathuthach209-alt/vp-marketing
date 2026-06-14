@@ -144,7 +144,7 @@ export async function generateTodayPlan(): Promise<{
   }
 
   // QA
-  const qa = validateCaption(gen.caption, hotel);
+  const qa = validateCaption(gen.caption, hotel, angle);
   if (!qa.ok) {
     console.warn(`[auto-post] QA fail: ${qa.issues.join(', ')} — caption still used`);
     // Don't fail, just log. Admin có thể edit trong plan.

@@ -3112,7 +3112,81 @@ safeAddColumn('seo_articles', 'cms_pushed_at', 'INTEGER');
 safeAddColumn('seo_articles', 'cms_last_error', 'TEXT');        // Last push error message (for retry visibility)
 safeAddColumn('seo_articles', 'cms_attempt_count', 'INTEGER');  // Number of push attempts
 
-console.log('[db] SEO Articles table ready (seo_articles) + CMS push tracking');
+// sonder-seo-content skill — content calendar + B2B/B2C tracking
+safeAddColumn('seo_articles', 'audience', 'TEXT');             // 'b2c' | 'b2b'
+safeAddColumn('seo_articles', 'content_pillar', 'TEXT');       // 'homestay' | 'hotel' | 'apartment' | 'destination' | 'tips' | 'insider' | 'partner'
+safeAddColumn('seo_articles', 'source_hotel_id', 'INTEGER');   // FK hotel_profile (property articles)
+safeAddColumn('seo_articles', 'image_footage_ids', 'TEXT');    // JSON array of v5_footage.id đã gán
+safeAddColumn('seo_articles', 'cover_image_url', 'TEXT');       // Cover image (served via /v5t-footage/)
+safeAddColumn('seo_articles', 'partner_theme', 'TEXT');        // B2B theme slug (rotation)
+
+// Track property → last article (round-robin rotation)
+safeAddColumn('hotel_profile', 'last_article_at', 'INTEGER');
+safeAddColumn('hotel_profile', 'article_count', 'INTEGER');
+
+// SEO → FB cross-post tracking (đăng bài SEO property lên Facebook)
+safeAddColumn('seo_articles', 'fb_crossposted_at', 'INTEGER');
+safeAddColumn('seo_articles', 'fb_post_id', 'TEXT');
+
+// Image usage tracking — dedup ảnh giữa các bài (không trùng)
+db.exec(`
+CREATE TABLE IF NOT EXISTS seo_article_images (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  article_id INTEGER NOT NULL,
+  footage_id INTEGER NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,   -- 0=cover, 1+=inline
+  vision_tags TEXT,                       -- JSON: {scene, subjects, mood, location_hint}
+  used_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sai_article ON seo_article_images(article_id);
+CREATE INDEX IF NOT EXISTS idx_sai_footage ON seo_article_images(footage_id, used_at DESC);
+`);
+
+// Vision tag cache cho v5_footage (tránh re-call Gemini mỗi lần)
+db.exec(`
+CREATE TABLE IF NOT EXISTS footage_vision_tags (
+  footage_id INTEGER PRIMARY KEY,
+  scene TEXT,                  -- 'bedroom' | 'view' | 'exterior' | 'food' | 'area' | 'lobby' | 'bathroom' | 'other'
+  subjects_json TEXT,          -- JSON array detected subjects
+  mood TEXT,                   -- 'cozy' | 'luxury' | 'nature' | 'urban' | 'minimalist' | ...
+  location_hint TEXT,          -- best-effort city/area guess
+  tagged_at INTEGER NOT NULL,
+  tagged_by TEXT NOT NULL DEFAULT 'gemini-2.5-flash'
+);
+`);
+
+console.log('[db] SEO Articles table ready (seo_articles) + CMS push + sonder-seo-content (calendar, image dedup, vision tags)');
+
+// ═══════════════════════════════════════════════════════════
+//  PUBLISH LOG — bảng tổng hợp MỌI bài đăng across mọi kênh
+//  1 dòng = 1 lần đăng 1 bài lên 1 channel. Thay thế việc phải
+//  join 8+ bảng rời rạc (v5t_posts/posts/seo_articles/...).
+// ═══════════════════════════════════════════════════════════
+db.exec(`
+CREATE TABLE IF NOT EXISTS publish_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_type TEXT NOT NULL,        -- 'v5t' | 'seo_article' | 'product_auto_post' | 'news_draft' | 'manual' | 'cross_post' | 'other'
+  source_id TEXT,                    -- id bài trong bảng gốc
+  channel TEXT NOT NULL,             -- 'facebook' | 'instagram' | 'zalo' | 'web_blog' | 'telegram' | 'tiktok'
+  channel_target TEXT,               -- page_id / blog URL / zalo OA id / group id
+  title TEXT,                        -- tiêu đề/caption ngắn (nhận diện nhanh)
+  status TEXT NOT NULL,              -- 'success' | 'failed' | 'blocked' | 'pending'
+  external_id TEXT,                  -- fb_post_id / article URL / zalo msg id (khi success)
+  external_url TEXT,                 -- link công khai bài đã đăng (nếu có)
+  error_message TEXT,                -- lý do nếu failed/blocked
+  hotel_id INTEGER,
+  attempted_at INTEGER NOT NULL,     -- THỜI ĐIỂM thử đăng (giờ nào)
+  completed_at INTEGER,              -- thời điểm hoàn thành
+  duration_ms INTEGER,
+  meta_json TEXT,                    -- extra: {word_count,image_count,audience,variant,...}
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_publog_channel ON publish_log(channel, attempted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_publog_status ON publish_log(status, attempted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_publog_source ON publish_log(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_publog_time ON publish_log(attempted_at DESC);
+`);
+console.log('[db] publish_log table ready (unified cross-channel publish tracking)');
 
 // Indexes trên hotel_id
 try {

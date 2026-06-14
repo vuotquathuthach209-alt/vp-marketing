@@ -45,14 +45,15 @@ function planForWeekday(d: number): {
   propertyType?: 'homestay' | 'hotel' | 'apartment'; angle?: ArticleAngle;
 } {
   switch (d) {
-    case 1: return { pillar: 'homestay', audience: 'b2c', category: 'diem-den', mode: 'property', propertyType: 'homestay' };
-    case 2: return { pillar: 'hotel', audience: 'b2c', category: 'diem-den', mode: 'property', propertyType: 'hotel' };
-    case 3: return { pillar: 'apartment', audience: 'b2c', category: 'diem-den', mode: 'property', propertyType: 'apartment' };
-    case 4: return { pillar: 'destination', audience: 'b2c', category: 'huong-dan', mode: 'keyword', angle: 'destination_guide' };
-    case 5: return { pillar: 'insider', audience: 'b2c', category: 'tin-tuc', mode: 'keyword', angle: 'local_insider' };
-    case 6: return { pillar: 'partner', audience: 'b2b', category: 'doi-tac', mode: 'partner' };
-    case 0: return { pillar: 'partner', audience: 'b2b', category: 'doi-tac', mode: 'partner' };
-    default: return { pillar: 'destination', audience: 'b2c', category: 'huong-dan', mode: 'keyword', angle: 'destination_guide' };
+    // 14/06/2026 — Lịch ĐA DẠNG DU LỊCH: bỏ B2B đối tác khỏi blog công khai, mở 6 góc du lịch khác nhau.
+    case 1: return { pillar: 'destination', audience: 'b2c', category: 'diem-den', mode: 'keyword', angle: 'destination_guide' };  // T2 cẩm nang điểm đến
+    case 2: return { pillar: 'insider', audience: 'b2c', category: 'am-thuc', mode: 'keyword', angle: 'local_insider' };          // T3 ẩm thực / địa phương
+    case 3: return { pillar: 'destination', audience: 'b2c', category: 'huong-dan', mode: 'keyword', angle: 'how_to' };           // T4 lịch trình / kinh nghiệm
+    case 4: return { pillar: 'insider', audience: 'b2c', category: 'diem-den', mode: 'keyword', angle: 'list_post' };             // T5 listicle hidden-gems
+    case 5: return { pillar: 'destination', audience: 'b2c', category: 'huong-dan', mode: 'keyword', angle: 'travel_tips' };      // T6 mẹo du lịch
+    case 6: { const types: ('homestay' | 'hotel' | 'apartment')[] = ['homestay', 'hotel', 'apartment']; const pt = types[Math.floor(Date.now() / (7 * 86400_000)) % 3]; return { pillar: pt, audience: 'b2c', category: 'diem-den', mode: 'property', propertyType: pt }; } // T7 giới thiệu 1 nơi ở thật (xoay vòng)
+    case 0: return { pillar: 'destination', audience: 'b2c', category: 'tin-tuc', mode: 'keyword', angle: 'seasonal' };           // CN theo mùa
+    default: return { pillar: 'destination', audience: 'b2c', category: 'diem-den', mode: 'keyword', angle: 'destination_guide' };
   }
 }
 
@@ -121,6 +122,49 @@ async function attachImages(articleId: number, pillar: ContentPillar, title: str
   }
 }
 
+/** Đẩy bài đã publish sang blog du lịch công khai OTA (sondervn.com/tin-tuc) qua HMAC-SHA256.
+ *  Dùng CURL (Node networking server này không ổn định — bài học bug Telegram ETIMEDOUT).
+ *  CHỈ gọi cho bài B2C; nội dung B2B/đối tác KHÔNG lên blog du lịch công khai.
+ *  14/06/2026: viết phần đẩy này — trước đó cron chỉ log "auto-published" mà KHÔNG hề POST sang OTA. */
+function pushArticleToBlog(articleId: number): boolean {
+  try {
+    if (getSetting('SONDERVN_BLOG_BRIDGE_ENABLED') === 'false') return false;
+    const secret = process.env.MKT_API_SECRET || process.env.SONDERVN_MKT_API_SECRET;
+    const base = process.env.SONDERVN_BASE_URL || 'https://sondervn.com';
+    if (!secret) { console.warn('[bridge] thiếu MKT_API_SECRET'); return false; }
+    const a = db.prepare(
+      `SELECT slug, title, meta_description, body_html, body_md, category, related_keywords_json, cover_image_url, published_at FROM seo_articles WHERE id=?`
+    ).get(articleId) as any;
+    if (!a || !a.slug) { console.warn('[bridge] không thấy bài', articleId); return false; }
+    let tags: string[] = [];
+    try { tags = (JSON.parse(a.related_keywords_json || '[]') as string[]).filter(Boolean).slice(0, 8); } catch {}
+    const cover = (a.cover_image_url && /^https?:\/\//.test(a.cover_image_url)) ? a.cover_image_url : null;
+    const desc = a.meta_description ? String(a.meta_description).slice(0, 1000) : null;
+    const payload = {
+      slug: a.slug, title: String(a.title || '').slice(0, 500), excerpt: desc,
+      content: a.body_html || a.body_md || '', coverImage: cover,
+      category: a.category || 'tin-tuc', tags, author: 'Sonder', status: 'published',
+      seoTitle: String(a.title || '').slice(0, 500), seoDescription: desc,
+      publishedAt: a.published_at ? new Date(Number(a.published_at)).toISOString() : new Date().toISOString(),
+    };
+    const body = JSON.stringify({
+      envelope: { source: 'bot-mkt', type: 'blog.upsert', idempotency_key: `art-${articleId}-${a.slug}`.slice(0, 128), emitted_at: new Date().toISOString(), contract_version: '1' },
+      kind: 'blog.upsert', payload,
+    });
+    const sig = require('crypto').createHmac('sha256', secret).update(body).digest('hex');
+    const fs = require('fs'); const tmp = `/tmp/blogpush-${articleId}.json`; fs.writeFileSync(tmp, body);
+    const out = require('child_process').execFileSync('curl', [
+      '-s', '-X', 'POST', `${base}/api/inbound/marketing-content`,
+      '-H', 'Content-Type: application/json', '-H', `X-Mkt-Signature: ${sig}`,
+      '--data-binary', `@${tmp}`, '--max-time', '30',
+    ], { encoding: 'utf8' });
+    try { fs.unlinkSync(tmp); } catch {}
+    const ok = out.includes('"success":true');
+    console.log(`[bridge] push #${articleId} (${a.category}) → ${ok ? 'OK ✓' : 'FAIL'} ${out.slice(0, 140)}`);
+    return ok;
+  } catch (e: any) { console.warn('[bridge] push fail:', e?.message || e); return false; }
+}
+
 /** MAIN — gọi từ scheduler mỗi ngày 9h sáng VN. */
 export async function runDailyContentCalendar(forceWeekday?: number): Promise<DayResult> {
   const t0 = Date.now();
@@ -173,7 +217,13 @@ export async function runDailyContentCalendar(forceWeekday?: number): Promise<Da
           `UPDATE seo_articles SET status='published', published_url=?, published_at=?, reviewed_at=COALESCE(reviewed_at,?), updated_at=? WHERE id=? AND status='draft'`
         ).run(`https://sondervn.com/tin-tuc/${row.slug}`, nowMs, nowMs, nowMs, articleId);
         (result as any).published = true;
-        console.log(`[article-cron] 🌐 auto-published #${articleId} → /tin-tuc/${row.slug}`);
+        // CHỈ đẩy lên blog du lịch công khai cho bài B2C (đối tác B2B giữ nội bộ).
+        if (plan.audience === 'b2c') {
+          const pushed = pushArticleToBlog(articleId);
+          console.log(`[article-cron] ${pushed ? '🌐 ĐÃ ĐẨY LÊN OTA' : '⚠️ đẩy OTA thất bại'} #${articleId} → /tin-tuc/${row.slug}`);
+        } else {
+          console.log(`[article-cron] (B2B đối tác — KHÔNG đẩy lên blog công khai) #${articleId}`);
+        }
       } catch (e: any) {
         console.warn('[article-cron] auto-publish fail:', e?.message || e);
       }

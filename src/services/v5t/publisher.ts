@@ -253,5 +253,20 @@ export async function publishV5TPost(opts: {
     ).run(opts.post_id, variant, caption, Date.now(), result.fb_post_id, Date.now());
   }
 
+  // Unified publish_log — V5T → Facebook
+  try {
+    const pl = require('../publish-log');
+    const fbId = result.fb_post_id || null;
+    const fbUrl = fbId ? `https://facebook.com/${fbId}` : null;
+    const st = result.ok ? 'success' : (result.error?.startsWith('firewall_blocked:') ? 'blocked' : 'failed');
+    pl.recordPublish({
+      source_type: 'v5t', source_id: opts.post_id, channel: 'facebook',
+      channel_target: 'Sonder FB Page', title: (caption || '').slice(0, 120),
+      status: st, external_id: fbId, external_url: fbUrl,
+      error_message: result.ok ? null : (result.error || 'unknown'),
+      meta: { type: post.type, variant, images: images.length },
+    });
+  } catch (e: any) { console.warn('[v5t-publish] publish-log fail:', e?.message); }
+
   return result;
 }

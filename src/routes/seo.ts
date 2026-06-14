@@ -346,6 +346,50 @@ router.post('/articles/:id/mark-published', (req, res) => {
   res.json({ ok });
 });
 
+/** Publish to blog (A3) — set status='published' → bài hiện trên sondervn.com/tin-tuc.
+ *  Safety: chỉ publish bài đã reviewed HOẶC draft (admin chủ động click). */
+router.post('/articles/:id/publish-to-blog', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const a = db.prepare(`SELECT id, slug, status FROM seo_articles WHERE id = ?`).get(id) as any;
+  if (!a) return res.status(404).json({ error: 'not found' });
+  if (a.status === 'published') return res.json({ ok: true, already: true, url: `https://sondervn.com/tin-tuc/${a.slug}` });
+  const url = `https://sondervn.com/tin-tuc/${a.slug}`;
+  const now = Date.now();
+  db.prepare(
+    `UPDATE seo_articles SET status = 'published', published_url = ?, published_at = ?, reviewed_at = COALESCE(reviewed_at, ?), updated_at = ? WHERE id = ?`,
+  ).run(url, now, now, now, id);
+  try {
+    const meta = db.prepare(`SELECT title, word_count, audience, content_pillar FROM seo_articles WHERE id=?`).get(id) as any;
+    require('../services/publish-log').recordPublish({
+      source_type: 'seo_article', source_id: id, channel: 'web_blog',
+      channel_target: 'sondervn.com/tin-tuc', title: meta?.title || a.slug,
+      status: 'success', external_url: url, external_id: a.slug,
+      meta: { word_count: meta?.word_count, audience: meta?.audience, pillar: meta?.content_pillar },
+    });
+  } catch (e: any) { console.warn('[seo] publish-log fail:', e?.message); }
+  res.json({ ok: true, url });
+});
+
+/** Cross-post bài SEO published lên Facebook (caption ngắn + cover + link blog). */
+router.post('/articles/:id/crosspost-fb', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const force = !!req.body?.force;
+  try {
+    const { crossPostSeoArticleToFB } = require('../services/seo/fb-crosspost');
+    const r = await crossPostSeoArticleToFB(id, { force });
+    res.json(r);
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+/** Unpublish — gỡ bài khỏi blog (về draft). An toàn để sửa rồi publish lại. */
+router.post('/articles/:id/unpublish', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const r = db.prepare(
+    `UPDATE seo_articles SET status = 'reviewed', published_at = NULL, updated_at = ? WHERE id = ? AND status = 'published'`,
+  ).run(Date.now(), id);
+  res.json({ ok: r.changes > 0 });
+});
+
 router.delete('/articles/:id', (req, res) => {
   const { deleteArticle } = require('../services/seo/article-writer');
   const ok = deleteArticle(parseInt(req.params.id, 10));
@@ -647,27 +691,25 @@ async function loadTab(t) {
   if (t === 'articles') {
     const r = await fetch('/api/seo/articles?limit=50').then((x) => x.json());
     const topics = await fetch('/api/seo/articles-suggest-topics').then((x) => x.json());
-    const cmsCfg = await fetch('/api/seo/articles/cms/config').then((x) => x.json());
 
     let h = '';
 
-    // CMS config card — show top of tab
-    const cfgReady = cmsCfg.url && cmsCfg.has_token;
-    const cardBg = cfgReady ? (cmsCfg.dry_run ? '#fff3e0' : '#e8f5e9') : '#fff3e0';
-    const cardBorder = cfgReady ? (cmsCfg.dry_run ? '#ffb74d' : '#5a8a5a') : '#ffb74d';
-    h += '<div style="background:' + cardBg + ';border:2px solid ' + cardBorder + ';border-radius:8px;padding:12px;margin-bottom:14px">';
-    h += '<div style="display:flex;justify-content:space-between;align-items:center">';
-    h += '<div><strong>📤 sondervn.com CMS Push</strong>';
-    if (cfgReady && cmsCfg.dry_run) h += ' <span class="badge b-warning">DRY-RUN MODE</span>';
-    else if (cfgReady) h += ' <span class="badge b-safe">LIVE</span>';
-    else h += ' <span class="badge b-critical">NOT CONFIGURED</span>';
-    h += '<div style="font-size:12px;color:#666;margin-top:4px">';
-    if (cmsCfg.url) h += 'Endpoint: <code>' + escapeHtml(cmsCfg.url + cmsCfg.api_path) + '</code> · ';
-    h += 'Rate: ' + cmsCfg.max_per_minute + '/min</div></div>';
-    h += '<div><button onclick="cmsConfigEdit()">⚙️ Config</button> ';
-    if (cfgReady) h += '<button onclick="cmsHealthCheck()">🧪 Health check</button> ';
-    if (cfgReady) h += '<button onclick="bulkPushAll()" class="btn-primary">📤 Bulk push all unpushed drafts</button>';
-    h += '</div></div></div>';
+    // A3 Blog status card — vp-marketing host /blog, sondervn.com reverse-proxy
+    const pubCount = r.items.filter(function (x) { return x.status === 'published'; }).length;
+    const draftCount = r.items.filter(function (x) { return x.status !== 'published'; }).length;
+    h += '<div style="background:#e8f0fe;border:2px solid #1d4ed8;border-radius:8px;padding:12px;margin-bottom:14px">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">';
+    h += '<div><strong>🌐 Blog tự host (sondervn.com/tin-tuc)</strong> <span class="badge b-safe">A3 — không đụng OTA DB</span>';
+    h += '<div style="font-size:12px;color:#444;margin-top:4px">';
+    h += '<strong>' + pubCount + '</strong> bài đang LIVE · <strong>' + draftCount + '</strong> draft chờ publish · ';
+    h += 'Render tại <code>vp-marketing/blog/tin-tuc</code></div></div>';
+    h += '<div>';
+    h += '<button onclick="window.open(\\'/blog/tin-tuc\\',\\'_blank\\')" style="background:#1d4ed8;color:white">🔗 Xem trang blog</button> ';
+    h += '<button onclick="window.open(\\'/blog/sitemap.xml\\',\\'_blank\\')">🗺️ Sitemap</button> ';
+    if (draftCount > 0) h += '<button onclick="publishAllDrafts()" class="btn-primary">🌐 Publish tất cả ' + draftCount + ' draft</button>';
+    h += '</div></div>';
+    h += '<div style="font-size:11px;color:#888;margin-top:8px">⚠️ Cần nginx reverse proxy trên sondervn.com (xem docs/nginx-blog-proxy.conf). Bài chỉ LIVE khi anh click "🌐 Publish to blog".</div>';
+    h += '</div>';
 
     h += '<h3>✍️ Write a new SEO article</h3>';
     h += '<div style="background:#fff;border:1px solid #e0d8c0;border-radius:6px;padding:14px;margin:8px 0">';
@@ -712,11 +754,13 @@ async function loadTab(t) {
         h += '<td style="font-size:11px">' + new Date(a.created_at).toLocaleDateString('vi-VN') + '</td>';
         h += '<td>';
         h += '<button onclick="viewArticle(' + a.id + ')">👀 View</button> ';
-        if (cfgReady && (a.cms_status === null || a.cms_status === 'unpublished' || a.cms_status === 'push_failed')) {
-          h += '<button onclick="pushCms(' + a.id + ')" style="background:#a86b3c;color:white">📤 Push CMS</button> ';
+        if (a.status !== 'published') {
+          h += '<button onclick="publishBlog(' + a.id + ')" style="background:#1d4ed8;color:white" title="Đăng lên sondervn.com/tin-tuc">🌐 Publish to blog</button> ';
+        } else {
+          h += '<button onclick="window.open(\\'/blog/tin-tuc/' + encodeURIComponent(a.slug) + '\\',\\'_blank\\')" style="background:#5a8a5a;color:white">🔗 Xem live</button> ';
+          h += '<button onclick="unpublishBlog(' + a.id + ')" title="Gỡ khỏi blog">⏸️ Unpublish</button> ';
         }
         if (a.status === 'draft') h += '<button onclick="approveArt(' + a.id + ')">✓ Approve</button> ';
-        if (a.status !== 'published') h += '<button onclick="markPub(' + a.id + ')">🚀 Mark published</button> ';
         h += '<button onclick="copyArt(' + a.id + ')">📋 Copy</button> ';
         h += '<button onclick="delArt(' + a.id + ')">🗑️</button>';
         h += '</td></tr>';
@@ -1090,6 +1134,44 @@ async function copyArt(id) {
 async function delArt(id) {
   if (!confirm('Xoá bài này? Không thể undo.')) return;
   await fetch('/api/seo/articles/' + id, { method: 'DELETE' });
+  loadTab('articles');
+}
+
+/* ───── A3 Blog publish handlers ───── */
+
+async function publishBlog(id) {
+  if (!confirm('Đăng bài #' + id + ' lên sondervn.com/tin-tuc?\\n\\nBài sẽ LIVE ngay trên blog (qua vp-marketing render). Anh có thể Unpublish bất cứ lúc nào.')) return;
+  const btn = event.target; const orig = btn.textContent; btn.textContent = '⏳'; btn.disabled = true;
+  try {
+    const r = await fetch('/api/seo/articles/' + id + '/publish-to-blog', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then((x) => x.json());
+    if (r.error) alert('❌ ' + r.error);
+    else {
+      alert('✅ Đã publish!\\n\\nURL: ' + r.url + '\\n\\n(LIVE ngay trên vp-marketing. Hiện trên sondervn.com khi nginx proxy đã setup.)');
+      window.open('/blog/tin-tuc/' + (r.url.split('/tin-tuc/')[1] || ''), '_blank');
+    }
+    loadTab('articles');
+  } finally { btn.textContent = orig; btn.disabled = false; }
+}
+
+async function unpublishBlog(id) {
+  if (!confirm('Gỡ bài #' + id + ' khỏi blog? Bài về trạng thái reviewed (không hiện trên web nữa, nhưng KHÔNG xoá).')) return;
+  await fetch('/api/seo/articles/' + id + '/unpublish', { method: 'POST' });
+  loadTab('articles');
+}
+
+async function publishAllDrafts() {
+  const r = await fetch('/api/seo/articles?limit=50').then((x) => x.json());
+  const drafts = (r.items || []).filter(function (a) { return a.status !== 'published'; });
+  if (drafts.length === 0) { alert('Không có draft nào.'); return; }
+  if (!confirm('Publish TẤT CẢ ' + drafts.length + ' bài draft lên blog?\\n\\nTất cả sẽ LIVE ngay trên sondervn.com/tin-tuc.\\n\\nDuyệt kỹ chưa? (Anh có thể Unpublish từng bài sau nếu cần.)')) return;
+  let ok = 0;
+  for (const a of drafts) {
+    try {
+      const res = await fetch('/api/seo/articles/' + a.id + '/publish-to-blog', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then((x) => x.json());
+      if (!res.error) ok++;
+    } catch (e) {}
+  }
+  alert('✅ Published ' + ok + '/' + drafts.length + ' bài.\\n\\nXem: /blog/tin-tuc');
   loadTab('articles');
 }
 

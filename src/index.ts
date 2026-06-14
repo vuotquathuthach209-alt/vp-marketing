@@ -108,8 +108,13 @@ app.use('/api/care', require('./middleware/auth').authMiddleware, careRouter);
 app.use('/admin/care', require('./middleware/auth').authMiddleware, careRouter);
 app.use('/api/copyright', require('./middleware/auth').authMiddleware, copyrightRouter);
 app.use('/admin/copyright', require('./middleware/auth').authMiddleware, copyrightRouter);
+app.use('/api/publish-log', require('./middleware/auth').authMiddleware, require('./routes/publish-log').default);
+app.use('/admin/publish-log', require('./middleware/auth').authMiddleware, require('./routes/publish-log').default);
 app.use('/api/data-deletion', dataDeletionRouter);
 app.use('/data-deletion', dataDeletionRouter); // also accept /data-deletion/status (URL returned to FB)
+// PUBLIC blog — sondervn.com/tin-tuc reverse-proxies here. NO auth (public-facing).
+// Reference: Phương án A3 — vp-marketing host blog API, KHÔNG đụng OTA DB.
+app.use('/blog', require('./routes/blog').default);
 // V5 Content Pipeline — Real footage upload + management
 // Reference: skill sonder-content-v5
 app.use('/admin/footage', require('./routes/v5-footage').default);

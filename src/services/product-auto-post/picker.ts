@@ -249,6 +249,7 @@ export function pickEligibleHotels(opts: { limit?: number; skipRejects?: boolean
       SELECT 1 FROM mkt_hotels mh
       WHERE mh.ota_hotel_id = hp.hotel_id AND mh.status = 'active'
     )
+      AND LOWER(COALESCE(hp.name_canonical, '')) NOT LIKE '%demo%'
   `).all() as any[];
 
   console.log(`[product-picker] active hotels in network: ${rows.length}`);
@@ -276,7 +277,23 @@ export function pickEligibleHotels(opts: { limit?: number; skipRejects?: boolean
   candidates.sort((a, b) => b.score - a.score);
   console.log(`[product-picker] eligible: ${candidates.length} / rejected: ${rejected.length}`);
 
-  return opts.skipRejects ? candidates.slice(0, limit) : candidates.slice(0, limit);
+  // FALLBACK chống "cạn KS" (mạng nhỏ — mọi KS đều đang trong cooldown):
+  // Nếu KHÔNG có KS nào đủ điều kiện, lấy các KS CHỈ bị loại vì cooldown,
+  // ưu tiên KS lâu chưa đăng nhất (bỏ qua cooldown). KHÔNG fallback các KS
+  // bị loại vì thiếu ảnh / quá ít review / rating thấp (giữ chất lượng bài đăng).
+  if (candidates.length === 0) {
+    const cooldownOnly = rejected
+      .filter((c) => (c.reject_reason || '').startsWith('cooldown:'))
+      .sort((a, b) => (b.last_posted_days_ago || 0) - (a.last_posted_days_ago || 0));
+    if (cooldownOnly.length > 0) {
+      console.log(
+        `[product-picker] FALLBACK cooldown-bypass: chọn ${cooldownOnly.length} KS lâu chưa đăng nhất (mạng nhỏ, mọi KS đang cooldown)`
+      );
+      return cooldownOnly.slice(0, limit);
+    }
+  }
+
+  return candidates.slice(0, limit);
 }
 
 /**
@@ -306,6 +323,7 @@ export function getAllHotelsScored(): { eligible: HotelCandidate[]; rejected: Ho
            (SELECT MIN(price_weekday) FROM hotel_room_catalog WHERE hotel_id = hp.hotel_id AND price_weekday > 0) as min_nightly_price
     FROM hotel_profile hp
     WHERE EXISTS (SELECT 1 FROM mkt_hotels mh WHERE mh.ota_hotel_id = hp.hotel_id AND mh.status = 'active')
+      AND LOWER(COALESCE(hp.name_canonical, '')) NOT LIKE '%demo%'
   `).all() as any[];
 
   const eligible: HotelCandidate[] = [];

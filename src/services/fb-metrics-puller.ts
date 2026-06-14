@@ -32,9 +32,12 @@ export interface PostInsight {
 
 async function fetchPostInsights(fbPostId: string, accessToken: string): Promise<Partial<PostInsight>> {
   // Fetch engagement counts + insights separately.
-  // Insights metrics that still work on FB Graph v21 (2024-2026):
-  //   post_impressions, post_impressions_unique (reach), post_engaged_users.
-  // DEPRECATED: post_clicks (returns "valid insights metric" error #100 on v18+).
+  // ⚠️ FIX 2026-05-20 (verified live on Graph v21): Meta KHAI TỬ các metric:
+  //   ❌ post_impressions      → #100 invalid
+  //   ❌ post_engaged_users    → #100 invalid
+  //   ✅ post_impressions_unique (reach) → CÒN hoạt động
+  // Trước đây request cả 3 trong 1 call → 2 cái invalid làm CẢ request fail #100
+  //   → reach luôn = 0. Giờ chỉ request metric valid.
 
   let reactions = 0, comments = 0, shares = 0;
   let impressions = 0, reach = 0, clicks = 0;
@@ -59,11 +62,11 @@ async function fetchPostInsights(fbPostId: string, accessToken: string): Promise
     return {};
   }
 
-  // Pass 2: insights (may 400 if metric deprecated — try valid ones, fail soft)
+  // Pass 2: insights — CHỈ request metric còn valid (post_impressions_unique = reach).
   try {
     const r = await axios.get(`${GRAPH}/${fbPostId}/insights`, {
       params: {
-        metric: 'post_impressions,post_impressions_unique,post_engaged_users',
+        metric: 'post_impressions_unique',
         access_token: accessToken,
       },
       timeout: 15_000,
@@ -73,10 +76,12 @@ async function fetchPostInsights(fbPostId: string, accessToken: string): Promise
       const m = metricsArr.find((x: any) => x.name === name);
       return m?.values?.[0]?.value || 0;
     };
-    impressions = findMetric('post_impressions');
     reach = findMetric('post_impressions_unique');
-    // post_engaged_users counts unique users who engaged — use as clicks proxy
-    clicks = findMetric('post_engaged_users');
+    // post_impressions (total) đã bị Meta bỏ → dùng unique reach làm impressions luôn.
+    impressions = reach;
+    // post_engaged_users deprecated → clicks không lấy qua insights nữa (engagement
+    // counts từ Pass 1 đã đủ: reactions/comments/shares). Để 0.
+    clicks = 0;
   } catch (e: any) {
     // Insights endpoint may return 100 (deprecated metric) or 17 (rate limit).
     // Don't fail the whole record — engagement counts are still useful.
@@ -133,7 +138,25 @@ export async function pullFbMetricsBatch(): Promise<{ processed: number; updated
      LIMIT 20`
   ).all(since) as any[];
 
-  const allPosts = [...posts, ...remixes.map(r => ({ ...r, is_remix: true }))];
+  // ⚠️ FIX 2026-05-20: include V5T posts (kênh FB chính đang chạy).
+  // Trước đây puller chỉ track `posts` + `remix_drafts` → bỏ sót toàn bộ v5t_posts
+  // → metrics V5T không bao giờ được pull → dashboard hiện 0.
+  const v5tPosts = db.prepare(
+    `SELECT vp.id as post_id, vp.fb_post_id, pg.access_token
+     FROM v5t_posts vp
+     JOIN pages pg ON pg.id = 1
+     WHERE vp.fb_post_id IS NOT NULL
+       AND vp.posted_at > ?
+       AND vp.status = 'posted'
+     ORDER BY vp.posted_at DESC
+     LIMIT 30`
+  ).all(since) as any[];
+
+  const allPosts = [
+    ...posts,
+    ...remixes.map(r => ({ ...r, is_remix: true })),
+    ...v5tPosts.map(r => ({ ...r, is_v5t: true })),
+  ];
 
   for (const post of allPosts) {
     if (!post.fb_post_id || !post.access_token) continue;

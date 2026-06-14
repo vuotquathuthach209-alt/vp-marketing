@@ -1,21 +1,20 @@
 /**
- * Caption Generator — 5 angles quay vòng cho product spotlight.
+ * Caption Generator — 8 trụ nội dung (content pillars) quay vòng theo chiến lược 70/20/10.
+ * (~70% nội dung kéo reach: story/giá trị/hậu trường · 20% giới thiệu sản phẩm · 10% chốt đơn)
  *
- * Angles:
- *   - signature     : 1 ảnh best + brand story ("giới thiệu" hotel)
- *   - testimonial   : review 5⭐ + khách nói
- *   - price         : bảng giá + policy + USP (thứ 6, trước weekend)
- *   - location      : gần landmark (sân bay/Q1/Bình Thạnh), đi đâu
- *   - comparison    : "Sonder Airport vs Sonder Q1 — tùy nhu cầu"
+ * Pillars:
+ *   - local_guide   : cẩm nang địa phương — đáng Lưu/Chia sẻ (reach mạnh nhất)
+ *   - behind_scenes : hậu trường & con người — người thật, mộc (reach cao)
+ *   - signature     : tour phòng / 1 khoảnh khắc đẹp (giới thiệu sản phẩm)
+ *   - testimonial   : review 5⭐ thật + khách nói (niềm tin)
+ *   - seasonal      : bắt trend & mùa/dịp (cửa sổ viral)
+ *   - location      : gần landmark, connectivity, cuối tuần
+ *   - price         : bảng giá minh bạch + ưu đãi (chốt đơn — tiết chế)
+ *   - comparison    : giúp khách chọn giữa các lựa chọn (dự phòng)
  *
- * Rotation logic:
- *   - Thứ 2: signature
- *   - Thứ 3: comparison
- *   - Thứ 4: location
- *   - Thứ 5: testimonial
- *   - Thứ 6: price
- *   - Thứ 7: signature (khác hotel)
- *   - CN:    location (mood relax)
+ * Rotation (lịch tuần video-first 2026):
+ *   - T2: local_guide · T3: behind_scenes · T4: signature · T5: testimonial
+ *   - T6: seasonal · T7: location · CN: price
  *
  * LLM generation: dùng smartCascade (Gemini → Ollama → Groq fallback).
  * Brand voice: em/anh/chị, có "ạ", emoji vừa phải, CTA inbox/web.
@@ -25,16 +24,19 @@ import crypto from 'crypto';
 import { db } from '../../db';
 import { HotelCandidate } from './picker';
 
-export type Angle = 'signature' | 'comparison' | 'location' | 'testimonial' | 'price';
+export type Angle = 'signature' | 'comparison' | 'location' | 'testimonial' | 'price' | 'behind_scenes' | 'local_guide' | 'seasonal' | 'travel_tips' | 'meme_trend' | 'healing' | 'interactive';
+
+/** Trụ "GIỌNG TRẺ" — dí dỏm / chữa lành / tương tác → dùng persona creator trẻ (KHÔNG ép giọng tư vấn viên). */
+const YOUTH_ANGLES = new Set<Angle>(['meme_trend', 'healing', 'interactive']);
 
 const DAY_TO_ANGLE: Record<number, Angle> = {
-  1: 'signature',     // T2
-  2: 'comparison',    // T3
-  3: 'location',      // T4
-  4: 'testimonial',   // T5
-  5: 'price',         // T6
-  6: 'signature',     // T7
-  0: 'location',      // CN
+  1: 'travel_tips',    // T2 — Mẹo du lịch (giá trị, đáng lưu) ⭐NEW
+  2: 'signature',      // T3 — KS kể chuyện / khoảnh khắc đẹp
+  3: 'meme_trend',     // T4 — Meme & bắt trend (dí dỏm, viral) ⭐NEW
+  4: 'local_guide',    // T5 — Cẩm nang điểm đến (Save/Share)
+  5: 'seasonal',       // T6 — Bắt trend mùa / rủ đi cuối tuần
+  6: 'interactive',    // T7 — Tương tác / tag bạn (kéo comment) ⭐NEW
+  0: 'healing',        // CN — Chữa lành & sống chậm (cảm xúc) ⭐NEW
 };
 
 /** Pick angle theo thứ trong tuần. */
@@ -66,7 +68,7 @@ export function isAngleRecentlyUsed(hotelId: number, angle: Angle, withinDays: n
  * Fallback: if preferred angle recently used, try next in rotation.
  */
 export function pickAngleSmart(hotelId: number, preferredDate: Date = new Date()): Angle {
-  const order: Angle[] = ['signature', 'location', 'testimonial', 'price', 'comparison'];
+  const order: Angle[] = ['travel_tips', 'signature', 'meme_trend', 'local_guide', 'seasonal', 'interactive', 'healing', 'testimonial', 'behind_scenes', 'location', 'price', 'comparison'];
   const preferred = pickAngleForDate(preferredDate);
   // Put preferred first, rotate others
   const tryOrder: Angle[] = [preferred, ...order.filter(a => a !== preferred)];
@@ -80,7 +82,25 @@ export function pickAngleSmart(hotelId: number, preferredDate: Date = new Date()
  * Build prompt cho LLM based on angle.
  */
 function buildPrompt(hotel: HotelCandidate, angle: Angle, imageContext?: string): string {
-  const basePersona = `Bạn là 1 AI content writer cho hệ thống tư vấn phòng lưu trú Sonder tại TP.HCM.
+  const isYouth = YOUTH_ANGLES.has(angle);
+
+  // GIỌNG TRẺ (meme / chữa lành / tương tác) — creator trẻ, dí dỏm, bắt trend; KHÁC hẳn giọng tư vấn viên.
+  const youthPersona = `Bạn là 1 content creator TRẺ, sáng tạo, bắt trend cho thương hiệu lưu trú Sonder (sondervn.com) — đối tượng là người trẻ Việt mê đi chơi.
+
+GIỌNG VIẾT:
+- Trẻ trung, dí dỏm, đời thường, bắt trend mạng xã hội Việt Nam.
+- ĐƯỢC dùng "bạn", "tụi mình", "mình" — KHÔNG bắt buộc "anh/chị", KHÔNG cần "ạ" cuối câu, KHÔNG kiểu tư vấn viên cứng nhắc.
+- Emoji hợp trend, vừa phải. KHÔNG sáo rỗng ("tuyệt vời", "đẳng cấp", "trải nghiệm khó quên").
+- KHÔNG MARKDOWN (không **bold**, không #heading). Plain text. (Hashtag cuối bài được dùng #.)
+
+BỐI CẢNH (chỉ gài KHÉO, KHÔNG bắt buộc nêu tên, TUYỆT ĐỐI không liệt kê kiểu quảng cáo):
+- Thương hiệu Sonder — đặt phòng TRỰC TIẾP tại sondervn.com (rẻ hơn app trung gian).
+- Khu vực có thể nhắc nhẹ nếu hợp: ${hotel.district || 'TP.HCM'}.
+
+ĐỘ DÀI: 60-130 từ (riêng trụ tương tác NGẮN hơn).
+KẾT BÀI: CTA SIÊU NHẸ về sondervn.com (mời, KHÔNG ép) + 4-6 hashtag bắt trend (#sondervn + du lịch/giới trẻ + khu vực).`;
+
+  const basePersona = isYouth ? youthPersona : `Bạn là 1 AI content writer cho hệ thống tư vấn phòng lưu trú Sonder tại TP.HCM.
 
 VIẾT POST Ở NGÔI THỨ 1 — nhân vật "em" (tư vấn viên Sonder).
 Persona trong post:
@@ -171,6 +191,81 @@ Kết: CTA "Cho em ngày + số khách, em báo giá chính xác + giữ phòng 
 
 TONE: transparent, trustworthy, no pressure.
 `,
+    behind_scenes: `
+ANGLE: Hậu trường & Con người — nội dung NGƯỜI THẬT, mộc, đời thường (reach tự nhiên cao nhất).
+
+Mục tiêu: chạm cảm xúc + tạo thiện cảm. KHÔNG quảng cáo bóng bẩy, KHÔNG liệt kê tiện ích khô khan.
+Mở bài (HOOK 3 giây — bắt buộc giật để người xem dừng lướt):
+  VD "9h sáng ở ${hotel.name} trông như thế nào", "Thứ khách không thấy khi nhận phòng", "Một ngày của lễ tân Sonder".
+Thân bài: 1 khoảnh khắc đời thường thật (set up phòng chuẩn chỉnh, pha nước chào khách, kiểm tra từng chi tiết trước giờ nhận phòng) + 1 hành động tử tế khiến khách an tâm.
+Kết: CTA nhẹ "anh/chị muốn xem phòng thật thì inbox em nhé ạ".
+
+TONE: gần gũi, chân thật, người thật việc thật.
+`,
+    local_guide: `
+ANGLE: Cẩm nang địa phương — nội dung ĐÁNG LƯU & ĐÁNG CHIA SẺ (tăng Save + Share — tín hiệu reach mạnh nhất).
+
+Mục tiêu: hữu ích tới mức khách lưu lại — không cần đặt phòng vẫn thấy giá trị, từ đó nhớ tới Sonder.
+Mở bài (HOOK dạng danh sách):
+  VD "5 quán ăn quanh ${hotel.district} dân địa phương mới biết", "Tới ${hotel.district} đừng bỏ lỡ 4 chỗ này".
+Thân bài: 3-5 gợi ý cụ thể quanh khu (quán ăn / cà phê / điểm check-in / tiện ích) + mỗi gợi ý 1 dòng vì sao đáng đi. Lồng khéo: "ở ${hotel.name} đi bộ/vài phút là tới".
+Kết: CTA nhẹ "lưu lại kẻo quên ạ — cần chỗ ở ngay khu này thì inbox em".
+
+TONE: như người bạn địa phương chỉ đường. Cho giá trị trước, bán sau.
+`,
+    seasonal: `
+ANGLE: Bắt trend & mùa — đón sóng dịp/lễ/mùa đang diễn ra để đúng lúc khách cần.
+
+Mục tiêu: bám thời điểm hiện tại (cuối tuần, lễ, hè, mùa mưa, Tết, sự kiện...) → đúng nhu cầu, dễ lan.
+Mở bài (HOOK theo dịp):
+  VD "Cuối tuần này trốn nóng ở đâu?", "Hè tới rồi, đặt phòng ${hotel.district} trước kẻo hết".
+Thân bài: nối dịp hiện tại với 1-2 lý do ${hotel.name} hợp dịp đó (mát, gần trung tâm/biển, hợp nhóm bạn/gia đình, tiện đi sự kiện).
+Kết: CTA có tính thời điểm — CHỈ nói "còn ít phòng / chốt sớm" nếu ĐÚNG SỰ THẬT, tuyệt đối không khan hiếm giả.
+
+TONE: đúng thời điểm, năng lượng, trung thực.
+`,
+    travel_tips: `
+ANGLE: Mẹo du lịch — chia sẻ MẸO HỮU ÍCH đáng lưu (KHÔNG bán phòng trực tiếp).
+
+Mục tiêu: cho giá trị thật → khách lưu lại + thấy Sonder "có tâm".
+Mở bài (HOOK dạng mẹo): VD "Mẹo đặt phòng rẻ mà đẹp ít ai biết:", "3 thứ nên check trước khi đặt phòng:".
+Thân bài: 3-4 mẹo NGẮN, thực tế, mỗi mẹo 1 dòng (VD: đặt tối Chủ nhật giá thường mềm hơn; luôn xem ảnh thật + review trước; hỏi rõ phụ phí kẻo bất ngờ; đặt trực tiếp web thường rẻ hơn app trung gian).
+Kết: CTA nhẹ "lưu lại dùng dần nhé ạ — cần chỗ đặt phòng minh bạch giá thì có sondervn.com".
+
+TONE: hữu ích, thân thiện, như người trong nghề mách nước. Cho giá trị trước, bán sau.
+`,
+    meme_trend: `
+ANGLE: Meme & Bắt trend — nội dung DÍ DỎM, RELATABLE, bắt trend giới trẻ (người xem dừng lướt vì "đúng quá").
+
+Mục tiêu: gây cười / gật gù "sao đúng vậy" → comment + share. KHÔNG bán phòng, chỉ giải trí + ngầm gợi nhớ Sonder.
+Format (chọn 1 cho hợp): "POV: ...", "Không ai cả / Tuyệt đối không ai... / Tôi lúc 2h sáng: ...", "3 kiểu người khi đi du lịch", "Khi [tình huống] vs Khi [tình huống]".
+Mở bài = HOOK meme CỰC relatable về du lịch / đặt phòng / đi chơi của giới trẻ (lương về là đi, hội bạn ngủ nướng, deadline dí vẫn muốn trốn, ảnh sống ảo vs thực tế...).
+Thân: triển khai cái meme/insight đó vui vẻ, đời thường, chạm đúng tâm lý.
+Kết: 1 câu chốt hài + CTA SIÊU NHẸ kiểu "thôi đi trốn cho lành 👉 sondervn.com" (không ép).
+
+GIỌNG: trẻ, hài, bắt trend, dùng "tụi mình/bạn", emoji vui. KHÔNG cần "ạ", KHÔNG kiểu tư vấn viên.
+`,
+    healing: `
+ANGLE: Chữa lành & Sống chậm — nội dung CẢM XÚC, aesthetic, bắt trend "chữa lành" của giới trẻ.
+
+Mục tiêu: chạm cảm xúc (mệt mỏi, cần nghỉ, cần trốn) → khách thấy đồng điệu + lưu/share. Bán CỰC mềm.
+Mở bài = HOOK cảm xúc nhẹ: VD "Đôi khi chữa lành chỉ là...", "Có những ngày chỉ muốn tắt hết thông báo và biến mất 1-2 hôm...".
+Thân: vẽ ra 1 khung cảnh nghỉ ngơi đẹp, chậm rãi (ban công đầy nắng, ly cà phê, không báo thức, view yên tĩnh) — gắn NHẸ với không gian / khu ${hotel.district || 'mình thích'}.
+Kết: lời mời nhẹ tự thưởng cho bản thân + CTA mềm "tìm 1 chỗ trốn cho cuối tuần: sondervn.com".
+
+GIỌNG: nhẹ nhàng, thơ, đồng cảm, aesthetic. Ít emoji tinh tế (☁️ 🌿 🤍). KHÔNG selly, KHÔNG liệt kê tiện ích.
+`,
+    interactive: `
+ANGLE: Tương tác — câu hỏi / poll / tag bạn để KÉO COMMENT (tín hiệu reach mạnh).
+
+Mục tiêu: khiến người xem PHẢI comment hoặc tag bạn. NGẮN, vui, dễ trả lời.
+Format (chọn 1): "Chọn 1: 🏖️ biển hay ⛰️ núi?", "Team nào đây: ... / ...", "Tag ngay đứa bạn 'nói đi là đi' của bạn 👀", "Điền vào chỗ trống: chuyến đi tiếp theo của tôi là ___".
+Mở bài = câu hỏi / thử thách bắt trend.
+Thân: 2-4 dòng, đưa 2 lựa chọn vui HOẶC 1 lời mời tag/cmt. Gài nhẹ ${hotel.district || ''} nếu hợp.
+Kết: kêu gọi comment/tag RÕ + CTA nhẹ sondervn.com.
+
+GIỌNG: vui, trẻ, tương tác cao, dùng "bạn/tụi mình", nhiều emoji. RẤT NGẮN (dưới 80 từ).
+`,
   };
 
   return basePersona + '\n\n' + angleInstructions[angle];
@@ -210,10 +305,12 @@ export async function generateCaption(
 
     // v25: Persona post-process — auto-fix LLM slip-ups of banned pronouns.
     //      LLM đôi khi dùng "mình" reflexive ("giữ phòng cho mình") — replace bằng context-appropriate.
-    caption = postProcessPersona(caption);
+    //      ⚠️ BỎ QUA với trụ "giọng trẻ" (meme/chữa lành/tương tác) — giữ "bạn/tụi mình" cho tự nhiên.
+    if (!YOUTH_ANGLES.has(angle)) caption = postProcessPersona(caption);
 
-    // QA: check length
-    if (caption.length < 80) {
+    // QA: check length (trụ tương tác được phép ngắn)
+    const minLen = angle === 'interactive' ? 40 : 80;
+    if (caption.length < minLen) {
       console.warn(`[caption-gen] too short (${caption.length} chars), rejected`);
       return null;
     }
@@ -229,6 +326,58 @@ export async function generateCaption(
     };
   } catch (e: any) {
     console.error('[caption-gen] fail:', e?.message);
+    return null;
+  }
+}
+
+/**
+ * Sinh KỊCH BẢN VIDEO NGẮN (Reels/TikTok 15-30s) từ caption đã có — chủ nhà/đội tự quay bằng điện thoại + đăng tay.
+ * Nâng cấp 07/06/2026 theo best-practice content 2026: hook 1-3s quyết định giữ chân; quay ĐỜI THỰC (chủ nhà/khách/
+ * hậu trường/khu phố) không chỉ tour phòng; có điểm giữ chân giữa video; CTA đặt TRỰC TIẾP; caption + hashtag sẵn để đăng.
+ * (32% khách đã từng đặt phòng từ TikTok; Reels reach gấp 5-10 lần bài thường.)
+ */
+export async function generateReelScript(caption: string): Promise<string | null> {
+  try {
+    const { generate } = require('../router');
+    const system = 'Bạn là content creator + đạo diễn video ngắn (Reels/TikTok) ngành lưu trú, bám chuẩn 2026. Nguyên tắc: (1) HOOK 1-3 giây quyết định người xem ở lại hay lướt — phải mạnh nhất; (2) quay ĐỜI THỰC, chân thật kiểu UGC (chủ nhà, khách, hậu trường, khu phố) chứ KHÔNG chỉ tour phòng trống; (3) cảm xúc + nét bản địa; (4) có 1 điểm bất ngờ giữa video để xem hết; (5) CTA dẫn về ĐẶT TRỰC TIẾP. Viết kịch bản quay bằng điện thoại — thực tế, dễ làm, không cần thiết bị chuyên nghiệp.';
+    const user = `Dưới đây là 1 bài đăng về 1 chỗ lưu trú của Sonder (sondervn.com):
+"""
+${caption}
+"""
+
+Hãy biến nội dung trên thành 1 KỊCH BẢN VIDEO NGẮN (Reels/TikTok) 15-30 giây để tự quay bằng điện thoại rồi đăng tay. Trình bày ĐÚNG các mục sau, mỗi mục xuống dòng rõ ràng:
+
+ĐỊNH DẠNG: chọn 1 kiểu hợp nội dung (Mở phòng bất ngờ / Mẹo của chủ nhà / Tour khu phố quanh đây / Khoảnh khắc của khách / Trước–sau / POV khách bước vào).
+HOOK 1-3 GIÂY: 1 câu mở đầu CỰC mạnh khiến dừng lướt + ghi rõ kiểu hook (tò mò / khẳng định bất ngờ / câu hỏi) + chữ overlay khung hình đầu. Đây là phần quan trọng nhất.
+SHOTLIST: 4-6 cảnh, mỗi cảnh ghi: số thứ tự + quay gì + góc máy + mấy giây. BẮT BUỘC có ít nhất 1 cảnh CÓ NGƯỜI (chủ nhà/khách/nhân viên) — không chỉ phòng trống.
+CHỮ TRÊN MÀN HÌNH: text ngắn cho từng cảnh.
+GIỮ CHÂN: 1 chi tiết bất ngờ/đắt giá đặt ở giữa video để người xem coi hết.
+NHẠC/ÂM THANH: gợi ý thể loại nhạc đang trend phù hợp (mô tả thể loại, không cần tên bài).
+CAPTION ĐĂNG KÈM: 2-3 câu cho phần mô tả video, kết bằng CTA mời ĐẶT TRỰC TIẾP tại sondervn.com (nhấn mạnh đặt trực tiếp, không qua app trung gian).
+HASHTAG: 6-8 hashtag, gồm #sondervn + khu vực + loại hình lưu trú + du lịch Việt Nam.
+
+Yêu cầu: tiếng Việt, gọi khách "anh/chị", giọng tự nhiên đời thường (không sáo rỗng). KHÔNG dùng markdown in đậm/nghiêng (không *, không **) — riêng mục HASHTAG được dùng dấu #. Tổng không quá 300 từ.`;
+    const text = await generate({
+      task: 'caption',
+      system,
+      user,
+      temperature: 0.85,
+      maxTokens: 950,
+    });
+    let script = (text || '').trim()
+      .replace(/\*\*/g, '')
+      .replace(/__/g, '')
+      .replace(/^#+\s+/gm, '')
+      .replace(/\`\`\`[\s\S]*?\`\`\`/g, '')
+      .trim();
+    if (script.length < 60) {
+      console.warn('[reel-script] too short, rejected');
+      return null;
+    }
+    if (script.length > 3000) script = script.slice(0, 2950) + '...';
+    return script;
+  } catch (e: any) {
+    console.error('[reel-script] fail:', e?.message);
     return null;
   }
 }
@@ -278,16 +427,17 @@ export function captionHash(caption: string): string {
 /**
  * QA: check if caption covers brand essentials.
  */
-export function validateCaption(caption: string, hotel: HotelCandidate): { ok: boolean; issues: string[] } {
+export function validateCaption(caption: string, hotel: HotelCandidate, angle?: Angle): { ok: boolean; issues: string[] } {
   const issues: string[] = [];
-  if (caption.length < 80) issues.push('too_short');
+  const strictPersona = !angle || !YOUTH_ANGLES.has(angle);   // trụ giọng trẻ: KHÔNG ép persona/tên KS
+  if (caption.length < (angle === 'interactive' ? 40 : 80)) issues.push('too_short');
   if (caption.length > 2200) issues.push('too_long');
-  // Persona check
-  if (/\b(bạn|tôi|mình|quý khách)\b/i.test(caption)) issues.push('persona_violation_banned_pronoun');
-  if (!/anh\/chị|anh\s|chị\s/i.test(caption)) issues.push('persona_missing_anh_chi');
+  // Persona check (bỏ với giọng trẻ)
+  if (strictPersona && /\b(bạn|tôi|mình|quý khách)\b/i.test(caption)) issues.push('persona_violation_banned_pronoun');
+  if (strictPersona && !/anh\/chị|anh\s|chị\s/i.test(caption)) issues.push('persona_missing_anh_chi');
   // CTA check
   if (!/inbox|sondervn|web|gọi|liên hệ|đặt phòng|xem thêm/i.test(caption)) issues.push('missing_cta');
-  // Hotel name mention
-  if (!caption.toLowerCase().includes(hotel.name.toLowerCase().split(' ')[0])) issues.push('hotel_name_not_mentioned');
+  // Hotel name mention (bỏ với giọng trẻ — nội dung lifestyle không cần nêu tên KS)
+  if (strictPersona && !caption.toLowerCase().includes(hotel.name.toLowerCase().split(' ')[0])) issues.push('hotel_name_not_mentioned');
   return { ok: issues.length === 0, issues };
 }

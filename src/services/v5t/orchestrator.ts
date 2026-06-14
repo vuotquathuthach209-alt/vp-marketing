@@ -80,6 +80,21 @@ export async function runV5TPublishPhase(): Promise<V5TPipelineResult> {
     return { ok: false, step_failed: 'cron_disabled' };
   }
 
+  // IDEMPOTENT-PER-DAY: nếu hôm nay (giờ VN) đã post 1 bài rồi → skip (tránh spam).
+  // Nhờ vậy cron chạy nhiều mốc (11h/14h/17h) + startup catch-up đều an toàn:
+  // mốc nào chạy được trước thì post, các mốc sau no-op. App restart bất kỳ lúc
+  // nào trong khung giờ vẫn đảm bảo đăng đúng 1 bài/ngày.
+  const nowVN = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
+  const startOfDayVN = new Date(nowVN.getFullYear(), nowVN.getMonth(), nowVN.getDate(), 0, 0, 0).getTime();
+  // startOfDayVN tính theo local-of-server; bù lệch về epoch thật bằng cách so posted_at trực tiếp.
+  const postedToday = db.prepare(
+    `SELECT COUNT(*) AS n FROM v5t_posts WHERE status = 'posted' AND posted_at >= ?`,
+  ).get(startOfDayVN) as { n: number };
+  if (postedToday.n > 0) {
+    console.log('[v5t-orch] Stage B skip — đã post 1 bài hôm nay (idempotent)');
+    return { ok: false, step_failed: 'already_posted_today' };
+  }
+
   const post = db.prepare(
     `SELECT id FROM v5t_posts WHERE status = 'approved' ORDER BY created_at ASC LIMIT 1`,
   ).get() as { id: number } | undefined;
