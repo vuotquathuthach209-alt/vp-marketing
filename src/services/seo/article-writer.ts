@@ -308,13 +308,36 @@ QUAN TRỌNG:
   };
 }
 
-/** Robust JSON extraction: try direct parse, strip ```json fences, then find {…}. */
+/** Escape ký tự điều khiển (xuống dòng/tab) NẰM TRONG chuỗi JSON → JSON.parse chịu được.
+ *  LLM hay trả body_md với newline THẬT trong string value → JSON invalid. Hàm này vá. */
+function escapeControlInJsonStrings(s: string): string {
+  let out = '', inStr = false, esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (esc) { out += ch; esc = false; continue; }
+    if (ch === '\\') { out += ch; esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; out += ch; continue; }
+    if (inStr && (ch === '\n' || ch === '\r' || ch === '\t')) {
+      out += ch === '\n' ? '\\n' : ch === '\r' ? '\\r' : '\\t';
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+/** Robust JSON extraction: direct → strip ```fences → find {…} → escape control chars trong string. */
 function extractJson(raw: string): any | null {
-  try { return JSON.parse(raw); } catch {}
+  const tryP = (x: string): any | null => { try { return JSON.parse(x); } catch { return null; } };
+  let r = tryP(raw); if (r) return r;
   const cleaned = raw.replace(/^```(?:json|JSON)?\s*\n?/m, '').replace(/\n?\s*```\s*$/m, '').trim();
-  try { return JSON.parse(cleaned); } catch {}
-  const m = raw.match(/\{[\s\S]*\}/);
-  if (m) { try { return JSON.parse(m[0]); } catch {} }
+  r = tryP(cleaned); if (r) return r;
+  const m = cleaned.match(/\{[\s\S]*\}/) || raw.match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  const body = m[0];
+  r = tryP(body); if (r) return r;
+  // FIX chính: escape newline/tab literal nằm trong string value rồi parse lại.
+  r = tryP(escapeControlInJsonStrings(body)); if (r) return r;
   return null;
 }
 
