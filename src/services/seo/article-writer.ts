@@ -177,13 +177,15 @@ export async function generateArticle(opts: {
   const trendsBlock = await trendsPromptBlock();
   const bodyPrompt = `Em là content strategist Sondervn (nền tảng đặt phòng khách sạn Việt Nam). Viết bài blog SEO.
 
-PHILOSOPHY (BẮT BUỘC):
-- Google Helpful Content guidelines: giá trị thật cho người đọc trước, keyword sau
+PHILOSOPHY (BẮT BUỘC — chuẩn thuật toán Google 2026):
+- Google Helpful Content: giá trị thật cho người đọc trước, keyword sau
+- E-E-A-T (TRỌNG TÂM 2026): viết như NGƯỜI THẬT ĐÃ TỪNG TỚI — chi tiết trải nghiệm thực (không khí, mùi vị, "người ở đây mới biết"), KHÔNG viết kiểu tổng hợp Wikipedia/chung chung
+- INFORMATION GAIN: thêm ÍT NHẤT 1 góc nhìn/insight RIÊNG mà các bài top Google chưa có (mẹo thật, so sánh thực tế, lưu ý ít ai nói) — KHÔNG xào lại nội dung có sẵn (Google 2026 phạt bài "scaled/thin")
 - Tone: warm, knowledgeable, locally insightful (không bốc đồng hay hard-sell)
 - KHÔNG keyword stuffing — keyword target xuất hiện tự nhiên 4-7 lần trong toàn bài
 - KHÔNG generic ("tuyệt vời", "đỉnh cao") — phải SPECIFIC (tên đường, giá, giờ)
 - Vietnamese tự nhiên, ngắn câu, paragraph 2-4 dòng
-- Mention sondervn.com 1-2 lần (subtle CTA, không spam)
+- CHUYỂN ĐỔI: Sonder vận hành KS THẬT ở TP.HCM + Đà Lạt → khi bài về 2 nơi này, lồng KHÉO 1 gợi ý chỗ ở Sonder phù hợp + link sondervn.com/khach-san (đúng ngữ cảnh, tự nhiên, KHÔNG hard-sell). Bài về nơi khác: chỉ mention sondervn.com 1 lần nhẹ
 ${hotelContext}
 
 ANGLE: ${angle} — ${angleGuide[angle]}
