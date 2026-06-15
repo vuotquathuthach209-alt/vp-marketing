@@ -88,19 +88,31 @@ async function notifyAdmin(r: DayResult): Promise<void> {
     const chatId = getSetting('telegram_admin_chat_id') || process.env.TELEGRAM_ADMIN_CHAT_ID;
     if (!token || !chatId) return;
     const wd = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][r.weekday];
-    let msg = `📝 *SEO Content Calendar — ${wd}*\n\n`;
-    if (r.generated) {
-      msg += `✅ Sinh bài *${r.pillar}* (${r.audience.toUpperCase()})\n`;
-      msg += `"${(r.title || '').slice(0, 90)}"\n`;
-      msg += `🖼 ${r.images_attached || 0} ảnh · 🆔 #${r.article_id}\n\n`;
-      msg += `👉 Review: /admin/seo/dashboard → 📝 Articles → "🌐 Publish to blog"`;
+    let msg = `📝 *Bài SEO mới — ${wd}*\n\n`;
+    let replyMarkup: any = undefined;
+    if (r.generated && r.article_id) {
+      const art = db.prepare(`SELECT title, meta_description, status, audience FROM seo_articles WHERE id=?`).get(r.article_id) as any;
+      const isDraft = art && art.status !== 'published';
+      msg += `✅ *${r.pillar}* (${String(r.audience || '').toUpperCase()}) — ${isDraft ? '⏳ CHỜ DUYỆT' : '🌐 đã đăng'}\n`;
+      msg += `*${String(art?.title || r.title || '').slice(0, 110)}*\n`;
+      if (art?.meta_description) msg += `_${String(art.meta_description).slice(0, 180)}_\n`;
+      msg += `🖼 ${r.images_attached || 0} ảnh · 🆔 #${r.article_id}`;
+      if (isDraft && art?.audience === 'b2c') {
+        msg += `\n\n👇 Bấm để duyệt:`;
+        replyMarkup = { inline_keyboard: [[
+          { text: '✅ Đăng lên web', callback_data: `pub:${r.article_id}` },
+          { text: '❌ Bỏ', callback_data: `skip:${r.article_id}` },
+        ]] };
+      } else if (isDraft) {
+        msg += `\n\n👉 Bài đối tác (B2B) — duyệt ở /admin/seo/dashboard`;
+      }
     } else {
       msg += `⚠️ Không sinh bài ${r.pillar}: ${r.skipped_reason || r.error || 'unknown'}`;
     }
     const axios = require('axios');
-    await axios.post(`https://api.telegram.org/bot${token}/sendMessage`,
-      { chat_id: chatId, text: msg, parse_mode: 'Markdown', disable_web_page_preview: true },
-      { timeout: 8000 });
+    const payload: any = { chat_id: chatId, text: msg, parse_mode: 'Markdown', disable_web_page_preview: true };
+    if (replyMarkup) payload.reply_markup = replyMarkup;
+    await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, payload, { timeout: 8000 });
   } catch (e: any) { console.warn('[article-cron] telegram fail:', e?.message); }
 }
 
@@ -240,6 +252,34 @@ export async function runDailyContentCalendar(forceWeekday?: number): Promise<Da
     await notifyAdmin(result);
     return result;
   }
+}
+
+/** Duyệt + ĐĂNG 1 bài draft → set published + đẩy bridge lên sondervn.com/tin-tuc.
+ *  Dùng cho nút duyệt Telegram (pub:<id>) + dashboard. Trả {ok, url, error}. */
+export function publishArticleNow(articleId: number): { ok: boolean; url?: string; error?: string } {
+  try {
+    const row = db.prepare(`SELECT slug, status, audience FROM seo_articles WHERE id = ?`).get(articleId) as any;
+    if (!row) return { ok: false, error: 'not_found' };
+    const url = `https://sondervn.com/tin-tuc/${row.slug}`;
+    if (row.status === 'published') return { ok: true, url };
+    const nowMs = Date.now();
+    db.prepare(
+      `UPDATE seo_articles SET status='published', published_url=?, published_at=?, reviewed_at=COALESCE(reviewed_at,?), updated_at=? WHERE id=?`
+    ).run(url, nowMs, nowMs, nowMs, articleId);
+    let pushed = true;
+    if (row.audience === 'b2c') pushed = pushArticleToBlog(articleId);   // chỉ B2C lên blog công khai
+    return { ok: true, url, error: pushed ? undefined : 'published_local_nhung_bridge_loi' };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
+/** Bỏ qua 1 bài draft (không đăng) → status='reviewed'. Dùng cho nút skip:<id>. */
+export function skipArticle(articleId: number): boolean {
+  try {
+    const r = db.prepare(`UPDATE seo_articles SET status='reviewed', updated_at=? WHERE id=? AND status='draft'`).run(Date.now(), articleId);
+    return r.changes > 0;
+  } catch { return false; }
 }
 
 /** Manual trigger 1 ngày bất kỳ (test). forceWeekday: 0=CN..6=T7. */

@@ -37,6 +37,27 @@ async function sendMessage(chatId: string | number, text: string, parseMode: 'Ma
   }
 }
 
+/** Trả lời nút bấm (toast nhỏ trên app Telegram). */
+async function answerCallback(cqId: string, text: string): Promise<void> {
+  const token = getToken();
+  if (!token) return;
+  try {
+    await axios.post(`${API}/bot${token}/answerCallbackQuery`,
+      { callback_query_id: cqId, text: text.slice(0, 200), show_alert: false }, { timeout: 10_000 });
+  } catch (e: any) { console.warn('[telegram] answerCallback fail:', e?.response?.data?.description || e?.message); }
+}
+
+/** Sửa nội dung 1 tin (sau khi bấm nút → đổi thành kết quả + bỏ nút). */
+async function editMessageText(chatId: string | number, messageId: number, text: string): Promise<void> {
+  const token = getToken();
+  if (!token) return;
+  try {
+    await axios.post(`${API}/bot${token}/editMessageText`,
+      { chat_id: chatId, message_id: messageId, text: text.slice(0, 4000), parse_mode: 'Markdown', disable_web_page_preview: true },
+      { timeout: 10_000 });
+  } catch (e: any) { console.warn('[telegram] editMessage fail:', e?.response?.data?.description || e?.message); }
+}
+
 function isAuthorized(chatId: number): boolean {
   const row = db.prepare(
     `SELECT authorized FROM telegram_chats WHERE chat_id = ?`
@@ -78,9 +99,10 @@ async function pollUpdates(): Promise<void> {
     for (const u of updates) {
       lastUpdateId = u.update_id;
       try {
-        await handleMessage(u.message || u.edited_message || {});
+        if (u.callback_query) await handleCallback(u.callback_query);
+        else await handleMessage(u.message || u.edited_message || {});
       } catch (e: any) {
-        console.warn('[telegram] handle msg fail:', e?.message);
+        console.warn('[telegram] handle update fail:', e?.message);
       }
     }
   } catch (e: any) {
@@ -166,6 +188,40 @@ async function handleMessage(msg: any): Promise<void> {
 
   // Unknown command
   await sendMessage(chatId, `❓ Lệnh không hiểu. Gõ /help để xem danh sách.`);
+}
+
+/* ───────── Callback nút bấm (duyệt bài SEO) ───────── */
+
+async function handleCallback(cq: any): Promise<void> {
+  const chatId = cq?.message?.chat?.id;
+  const messageId = cq?.message?.message_id;
+  const data = String(cq?.data || '');
+  if (!chatId || !cq?.id) return;
+  if (!isAuthorized(chatId)) { await answerCallback(cq.id, '🔒 Cần unlock trước'); return; }
+  const m = data.match(/^(pub|skip):(\d+)$/);
+  if (!m) { await answerCallback(cq.id, ''); return; }
+  const action = m[1];
+  const id = parseInt(m[2], 10);
+
+  if (action === 'pub') {
+    let res: any;
+    try { res = require('./seo/article-cron').publishArticleNow(id); }
+    catch (e: any) { res = { ok: false, error: e?.message || 'load_fail' }; }
+    if (res?.ok) {
+      await answerCallback(cq.id, '✅ Đã đăng lên web!');
+      await editMessageText(chatId, messageId, `✅ *ĐÃ ĐĂNG* bài #${id} lên web\n${res.url || ''}`);
+    } else {
+      await answerCallback(cq.id, '❌ Lỗi: ' + (res?.error || '?'));
+      await editMessageText(chatId, messageId, `❌ Đăng bài #${id} lỗi: ${res?.error || '?'}\n(thử lại ở /admin/seo/dashboard)`);
+    }
+    return;
+  }
+
+  // skip
+  let skipped = false;
+  try { skipped = require('./seo/article-cron').skipArticle(id); } catch {}
+  await answerCallback(cq.id, skipped ? 'Đã bỏ qua' : 'Bài không còn ở trạng thái nháp');
+  await editMessageText(chatId, messageId, `❌ Đã *bỏ qua* bài #${id} (không đăng).`);
 }
 
 /* ───────── Public API ───────── */
