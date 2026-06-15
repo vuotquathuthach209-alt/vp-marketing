@@ -33,6 +33,43 @@ export interface ImageCandidate {
 
 const HISTORY_LOOKBACK_DAYS = 90;
 
+/* ═══════════════════════════════════════════════════════════════════════
+   ⚖️ TƯỜNG LỬA BẢN QUYỀN ẢNH — chỉ auto-post ảnh CHÍNH CHỦ Sonder hoặc stock
+   có giấy phép thương mại. MẶC-ĐỊNH-CẤM (allowlist): domain lạ → bỏ, tránh
+   đăng ảnh scrape từ Booking/Agoda/... (vi phạm bản quyền → rủi ro pháp lý).
+   ═══════════════════════════════════════════════════════════════════════ */
+const SAFE_IMAGE_HOSTS = [
+  'sondervn.com',           // OTA chính chủ
+  '103.153.73.97',          // server OTA (ảnh owner upload)
+  'storage.googleapis.com', // GCS (ảnh owner upload)
+  'googleusercontent.com',  // biến thể GCS
+  'unsplash.com',           // stock — Unsplash License (thương mại OK, không cần ghi nguồn)
+  'pexels.com',             // stock — Pexels License (thương mại OK)
+  'pixabay.com',            // stock — Pixabay License (thương mại OK)
+];
+const COPYRIGHT_RISK_HOSTS = [
+  'bstatic', 'booking.com', 'agoda', 'expedia', 'trvl-media',
+  'traveloka', 'tvlk', 'tripadvisor', 'tacdn', 'mytour', 'vntrip',
+  'ivivu', 'hotels.com', 'trip.com', 'ctrip', 'airbnb', 'muscache',
+  'ostrovok', 'klook', 'getyourguide',
+];
+
+/** Ảnh có AN TOÀN bản quyền để auto-post không (chính chủ / stock có phép). */
+export function isCopyrightSafeUrl(url: string): { safe: boolean; reason: string } {
+  if (!url || typeof url !== 'string') return { safe: false, reason: 'empty' };
+  // Đường dẫn tương đối = ảnh own (OTA tự serve) → an toàn.
+  if (url.startsWith('/') && !url.startsWith('//')) return { safe: true, reason: 'relative_own' };
+  let host = '';
+  try { host = new URL(url).hostname.toLowerCase(); } catch { return { safe: false, reason: 'bad_url' }; }
+  for (const bad of COPYRIGHT_RISK_HOSTS) {
+    if (host.includes(bad)) return { safe: false, reason: `copyright_risk:${host}` };
+  }
+  for (const ok of SAFE_IMAGE_HOSTS) {
+    if (host.includes(ok)) return { safe: true, reason: 'safe' };
+  }
+  return { safe: false, reason: `unknown_host:${host}` };   // mặc-định-cấm
+}
+
 /**
  * URL-based fingerprint (MD5 hex 16 chars).
  * Normalize: strip query params (CDN size variants), case-insensitive host.
@@ -267,8 +304,19 @@ export async function pickImage(hotelId: number): Promise<ImageCandidate | null>
   const all = await fetchAllImagesAsync(hotelId);
   if (all.length === 0) return null;
 
+  // ⚖️ BẢN QUYỀN: chỉ giữ ảnh chính chủ / stock có giấy phép — bỏ ảnh domain bản quyền/lạ.
+  const safe = all.filter(img => {
+    const v = isCopyrightSafeUrl(img.url);
+    if (!v.safe) console.warn(`[image-picker] ⚖️ BỎ ảnh nghi bản quyền hotel=${hotelId}: ${v.reason}`);
+    return v.safe;
+  });
+  if (safe.length === 0) {
+    console.warn(`[image-picker] hotel=${hotelId} KHÔNG còn ảnh an toàn bản quyền → bỏ qua KS này`);
+    return null;
+  }
+
   // Filter available
-  const available = all.filter(img => !isRecentlyUsed(img.fingerprint));
+  const available = safe.filter(img => !isRecentlyUsed(img.fingerprint));
   if (available.length === 0) {
     console.warn(`[image-picker] hotel=${hotelId} all ${all.length} images used in last 90d`);
     return null;
