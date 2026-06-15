@@ -51,6 +51,59 @@ export function getPublicImageUrl(footagePath: string): string {
   return `https://sondervn.com/v5t-footage/${fn}`;
 }
 
+/** Bỏ dấu tiếng Việt → ASCII (để search ảnh stock khớp hơn). */
+function stripVi(s: string): string {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
+}
+
+/**
+ * Lấy ảnh STOCK MIỄN PHÍ bản quyền (Pexels → Pixabay fallback) theo từ khóa điểm đến.
+ * Dùng cho bài điểm đến (du lịch X) — own footage không có cảnh nơi đó.
+ * Pexels/Pixabay License: dùng thương mại OK, không cần ghi nguồn, cho hotlink.
+ */
+export async function fetchStockImages(query: string, count: number): Promise<string[]> {
+  // Làm sạch query: bỏ cụm không phải địa danh + bỏ dấu + thêm "vietnam"
+  let q = stripVi(query).toLowerCase()
+    .replace(/\b(du lich|an gi o|an gi|kinh nghiem|lich trinh|dia diem|review|cam nang|co gi choi|co gi|mua nao dep|tu tuc|gia re|o dau|ngay|dem|nhat dinh phai thu|song ao|check ?in|top|ngon)\b/g, ' ')
+    .replace(/[0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!q || q.length < 2) q = 'vietnam travel';
+  const term = encodeURIComponent(q + ' vietnam');
+  const out: string[] = [];
+
+  // 1) Pexels (nhiều ảnh, ưu tiên)
+  try {
+    const key = getSetting('pexels_api_key');
+    if (key) {
+      const r = await axios.get(
+        `https://api.pexels.com/v1/search?query=${term}&per_page=${Math.min(count + 4, 15)}&orientation=landscape`,
+        { headers: { Authorization: key }, timeout: 15_000 });
+      for (const p of (r.data?.photos || [])) {
+        const u = p?.src?.large || p?.src?.landscape || p?.src?.original;
+        if (u && !out.includes(u)) out.push(u);
+        if (out.length >= count) break;
+      }
+    }
+  } catch (e: any) { console.warn('[stock] pexels fail:', e?.response?.status || e?.message); }
+
+  // 2) Pixabay (fallback nếu chưa đủ)
+  if (out.length < count) {
+    try {
+      const key = getSetting('pixabay_api_key');
+      if (key) {
+        const r = await axios.get(
+          `https://pixabay.com/api/?key=${key}&q=${term}&image_type=photo&orientation=horizontal&per_page=${Math.min(count + 4, 15)}&safesearch=true`,
+          { timeout: 15_000 });
+        for (const h of (r.data?.hits || [])) {
+          const u = h?.largeImageURL || h?.webformatURL;
+          if (u && !out.includes(u)) out.push(u);
+          if (out.length >= count) break;
+        }
+      }
+    } catch (e: any) { console.warn('[stock] pixabay fail:', e?.response?.status || e?.message); }
+  }
+  return out.slice(0, count);
+}
+
 /** Gemini Vision tag 1 ảnh — cache vào footage_vision_tags. */
 export async function tagFootageImage(footageId: number): Promise<VisionTag | null> {
   // Cache hit?
@@ -143,9 +196,24 @@ export async function pickImagesForArticle(opts: {
   pillar: ContentPillar;
   count: number;          // số ảnh cần (vd 4: 1 cover + 3 inline)
   preferLocationHint?: string; // 'beach' | 'mountain' | 'city' ... (best-effort)
+  stockQuery?: string;    // từ khóa điểm đến → lấy ảnh stock free cho bài du lịch
 }): Promise<Array<{ footage_id: number; public_url: string; scene: string; is_cover: boolean }>> {
-  const cutoff = Date.now() - DEDUP_WINDOW_DAYS * 86400_000;
   const want = Math.max(1, Math.min(opts.count, 8));
+
+  // ── Bài ĐIỂM ĐẾN (destination/insider/tips): ưu tiên ảnh STOCK đúng cảnh nơi đó ──
+  //    (own footage là ảnh KS HCM/Đà Lạt — không có cảnh Hà Giang/Phú Quốc...).
+  if (['destination', 'insider', 'tips'].includes(opts.pillar) && opts.stockQuery) {
+    try {
+      const urls = await fetchStockImages(opts.stockQuery, want);
+      if (urls.length >= 1) {
+        console.log(`[article-images] dùng ${urls.length} ảnh STOCK free (Pexels/Pixabay) cho điểm đến: "${opts.stockQuery}"`);
+        return urls.map((u, i) => ({ footage_id: 0, public_url: u, scene: 'destination', is_cover: i === 0 }));
+      }
+      console.warn('[article-images] stock rỗng → fallback ảnh own');
+    } catch (e: any) { console.warn('[article-images] stock lỗi → fallback own:', e?.message); }
+  }
+
+  const cutoff = Date.now() - DEDUP_WINDOW_DAYS * 86400_000;
 
   // Candidate pool: ảnh image, KHÔNG dùng trong 60 ngày, KHÔNG blacklist
   const candidates = db.prepare(
@@ -223,7 +291,7 @@ export async function pickImagesForArticle(opts: {
 }
 
 /** Record ảnh đã gán cho bài (để bài sau dedup). */
-export function recordArticleImages(articleId: number, images: Array<{ footage_id: number; scene: string }>): void {
+export function recordArticleImages(articleId: number, images: Array<{ footage_id: number; scene: string; public_url?: string }>): void {
   const now = Date.now();
   const stmt = db.prepare(
     `INSERT INTO seo_article_images (article_id, footage_id, position, vision_tags, used_at)
@@ -231,16 +299,21 @@ export function recordArticleImages(articleId: number, images: Array<{ footage_i
   );
   const tx = db.transaction((imgs: any[]) => {
     imgs.forEach((img, i) => {
-      stmt.run(articleId, img.footage_id, i, JSON.stringify({ scene: img.scene }), now);
+      if (img.footage_id && img.footage_id > 0)   // chỉ dedup ảnh own; ảnh stock (footage_id=0) bỏ qua
+        stmt.run(articleId, img.footage_id, i, JSON.stringify({ scene: img.scene }), now);
     });
   });
   tx(images);
 
   // Update cover_image_url + image_footage_ids on article
-  const ids = images.map(i => i.footage_id);
-  const cover = images[0]
-    ? getPublicImageUrl((db.prepare(`SELECT path FROM v5_footage WHERE id=?`).get(images[0].footage_id) as any)?.path || '')
-    : null;
+  const ids = images.map(i => i.footage_id).filter((id: number) => id > 0);
+  const first = images[0];
+  let cover: string | null = null;
+  if (first) {
+    if (first.footage_id && first.footage_id > 0)
+      cover = getPublicImageUrl((db.prepare(`SELECT path FROM v5_footage WHERE id=?`).get(first.footage_id) as any)?.path || '');
+    else cover = first.public_url || null;   // ảnh stock → dùng URL trực tiếp
+  }
   db.prepare(
     `UPDATE seo_articles SET image_footage_ids = ?, cover_image_url = ?, updated_at = ? WHERE id = ?`,
   ).run(JSON.stringify(ids), cover, now, articleId);

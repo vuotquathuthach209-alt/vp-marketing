@@ -119,9 +119,12 @@ async function notifyAdmin(r: DayResult): Promise<void> {
 /** Attach ảnh (dedup + copyright) vào bài đã save. */
 async function attachImages(articleId: number, pillar: ContentPillar, title: string): Promise<number> {
   try {
-    const imgs = await pickImagesForArticle({ pillar, count: 4 });
+    // Bài điểm đến → lấy ảnh stock theo từ khóa điểm đến (keyword_target)
+    let stockQuery: string | undefined;
+    try { const a = db.prepare(`SELECT keyword_target FROM seo_articles WHERE id=?`).get(articleId) as any; stockQuery = a?.keyword_target || title; } catch { stockQuery = title; }
+    const imgs = await pickImagesForArticle({ pillar, count: 4, stockQuery });
     if (imgs.length === 0) return 0;
-    recordArticleImages(articleId, imgs.map(i => ({ footage_id: i.footage_id, scene: i.scene })));
+    recordArticleImages(articleId, imgs.map(i => ({ footage_id: i.footage_id, scene: i.scene, public_url: i.public_url })));
     const a = db.prepare(`SELECT body_html FROM seo_articles WHERE id=?`).get(articleId) as any;
     if (a) {
       const newHtml = injectImagesIntoHtml(a.body_html || '', imgs.map(i => ({ public_url: i.public_url, scene: i.scene })), title);
