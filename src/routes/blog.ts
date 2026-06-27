@@ -23,7 +23,7 @@
  */
 
 import { Router } from 'express';
-import { db } from '../db';
+import { db, getSetting } from '../db';
 
 const router = Router();
 
@@ -47,6 +47,51 @@ function fmtDate(ts: number): string {
 
 function readMinutes(wordCount: number): number {
   return Math.max(1, Math.round(wordCount / 200));
+}
+
+/* ── SEO internal-linking helpers (chống link bịa 404 + truyền link-juice về listing) ── */
+
+// Các trang khu vực THẬT (app/khu-vuc/[area] trên sondervn.com) — allowlist đã verify 200.
+const KNOWN_KHUVUC = new Set([
+  'quan-1-sai-gon', 'bui-vien', 'pham-ngu-lao', 'co-giang', 'ben-thanh',
+  'quan-3', 'tan-binh', 'sai-gon', 'da-lat', 'da-lat-trung-tam', 'da-nang',
+]);
+
+function deburr(s: any): string {
+  return String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd');
+}
+
+// Map 1 từ khoá/chủ đề → URL nội bộ THẬT. Ưu tiên /khu-vuc đúng địa bàn, /apartment cho thuê tháng,
+// mặc định /khach-san. Dùng cho cả "Chủ đề liên quan" lẫn fallback khi inject internal link.
+function keywordToInternalUrl(keyword: string): string {
+  const k = deburr(keyword);
+  if (/(can ho|chdv|thue thang|serviced apartment|luu tru dai han|dai ngay)/.test(k)) return SITE_URL + '/apartment';
+  if (/(quan 1|q1|q\.1|district 1)/.test(k)) return SITE_URL + '/khu-vuc/quan-1-sai-gon';
+  if (/bui vien/.test(k)) return SITE_URL + '/khu-vuc/bui-vien';
+  if (/pham ngu lao/.test(k)) return SITE_URL + '/khu-vuc/pham-ngu-lao';
+  if (/co giang/.test(k)) return SITE_URL + '/khu-vuc/co-giang';
+  if (/ben thanh/.test(k)) return SITE_URL + '/khu-vuc/ben-thanh';
+  if (/(quan 3|q3|q\.3)/.test(k)) return SITE_URL + '/khu-vuc/quan-3';
+  if (/(tan binh|san bay|tan son nhat)/.test(k)) return SITE_URL + '/khu-vuc/tan-binh';
+  if (/da lat/.test(k)) return SITE_URL + '/khu-vuc/da-lat';
+  if (/da nang/.test(k)) return SITE_URL + '/khu-vuc/da-nang';
+  if (/(sai gon|tphcm|tp hcm|ho chi minh|hcm)/.test(k)) return SITE_URL + '/khu-vuc/sai-gon';
+  return SITE_URL + '/khach-san';
+}
+
+// Validate URL nội bộ: chỉ chấp nhận host sondervn.com + path thuộc allowlist route THẬT.
+// Trả URL chuẩn hoá nếu hợp lệ, null nếu không (loại /deals, /ho-chi-minh-city, /huong-dan-check-in...).
+function validateInternalUrl(raw: any): string | null {
+  if (!raw) return null;
+  let u: URL;
+  try { u = new URL(String(raw), SITE_URL); } catch { return null; }
+  if (u.hostname !== 'sondervn.com' && u.hostname !== 'www.sondervn.com') return null;
+  const p = u.pathname.replace(/\/+$/, '') || '/';
+  const exact = new Set(['/khach-san', '/apartment', '/tin-tuc', '/dang-ky-khach-san', '/khu-vuc']);
+  if (exact.has(p)) return SITE_URL + p;
+  const m = p.match(/^\/khu-vuc\/([a-z0-9-]+)$/);
+  if (m && KNOWN_KHUVUC.has(m[1]!)) return SITE_URL + p;
+  return null;
 }
 
 /** Shared <head> + nav + footer wrapper. */
@@ -77,6 +122,7 @@ ${opts.ogImage ? `<meta property="og:image" content="${esc(opts.ogImage)}">` : '
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="${esc(opts.title)}">
 <meta name="twitter:description" content="${esc(opts.metaDesc)}">
+${opts.ogImage ? `<meta name="twitter:image" content="${esc(opts.ogImage)}">` : ''}
 <meta name="robots" content="index, follow, max-image-preview:large">
 ${ld}
 <style>
@@ -286,6 +332,18 @@ router.get('/tin-tuc/:slug', (req, res) => {
   const backLink = isPartner ? `${BLOG_BASE}?cat=doi-tac` : BLOG_BASE;
   const backLabel = isPartner ? 'Đối tác' : 'Tin tức';
 
+  // Vá Article JSON-LD ngay ở render-time (sửa CẢ 73 bài cũ + bài mới):
+  //  - image: bắt buộc cho Article rich result (trước đây bỏ trống)
+  //  - url/mainEntityOfPage: về canonical /tin-tuc/<slug> (trước hardcode /blog/<slug> = 404)
+  //  - dateModified: tín hiệu tươi cho Google
+  if (articleSchema && typeof articleSchema === 'object') {
+    if (a.cover_image_url && !articleSchema.image) articleSchema.image = [a.cover_image_url];
+    articleSchema.url = canonical;
+    articleSchema.mainEntityOfPage = canonical;
+    const modTs = a.updated_at || a.published_at || a.created_at;
+    if (modTs) { try { articleSchema.dateModified = new Date(modTs).toISOString().slice(0, 10); } catch {} }
+  }
+
   let body = `<div class="wrap">`;
   body += `<div class="crumb"><a href="${SITE_URL}">Trang chủ</a> › <a href="${backLink}">${backLabel}</a> › ${esc(a.title.slice(0, 50))}</div>`;
   body += `<article class="post">`;
@@ -302,6 +360,39 @@ router.get('/tin-tuc/:slug', (req, res) => {
     body += `<div class="cta-partner"><h3>Sẵn sàng tăng doanh thu phòng?</h3><p>Đăng ký đối tác Sonder miễn phí — PMS quản lý không tốn phí, chỉ trả phí khi có booking thật.</p><a href="${SITE_URL}/danh-cho-doi-tac">Đăng ký đối tác ngay →</a></div>`;
   }
 
+  // ── Internal link injection (CÓ GATE: setting seo_blog_internal_links='true') ──
+  // Thêm khối "Gợi ý chỗ ở tại Sonder" với 2-3 link nội bộ ĐÃ VALIDATE (chống 404)
+  // → truyền link-juice về /khu-vuc + /khach-san + /apartment (đòn bẩy index cho domain mới).
+  // Mặc định TẮT → chờ user duyệt bài mẫu rồi bật (đổi nội dung hiển thị của bài tự-đăng).
+  if (getSetting('seo_blog_internal_links') === 'true') {
+    const links: { url: string; anchor: string }[] = [];
+    try {
+      const rawLinks = JSON.parse(a.internal_links_json || '[]');
+      for (const it of (Array.isArray(rawLinks) ? rawLinks : [])) {
+        const v = validateInternalUrl(it?.url);
+        if (v && !links.some((l) => l.url === v)) {
+          const anchor = String(it?.anchor || '').trim().slice(0, 70) || 'Xem chỗ ở Sonder';
+          links.push({ url: v, anchor });
+        }
+        if (links.length >= 3) break;
+      }
+    } catch {}
+    // Fallback: <2 link hợp lệ → bù bằng link suy ra từ từ khoá + loại sản phẩm (luôn hợp lệ).
+    if (links.length < 2) {
+      const derived = keywordToInternalUrl(a.keyword_target || a.title || '');
+      if (!links.some((l) => l.url === derived)) links.push({ url: derived, anchor: 'Xem khách sạn & chỗ ở Sonder phù hợp' });
+      const generic = isPartner ? SITE_URL + '/dang-ky-khach-san' : SITE_URL + '/khach-san';
+      if (links.length < 2 && !links.some((l) => l.url === generic)) links.push({ url: generic, anchor: 'Khám phá tất cả chỗ ở trên Sonder' });
+    }
+    if (links.length > 0) {
+      body += `<div class="related" style="background:#f0fdf4;border:1px solid #bbf7d0"><h3>Gợi ý chỗ ở tại Sonder</h3>`;
+      for (const l of links.slice(0, 3)) {
+        body += `<a href="${esc(l.url)}" style="background:#fff;border-color:#86efac">${esc(l.anchor)} →</a>`;
+      }
+      body += `</div>`;
+    }
+  }
+
   // FAQ section
   if (faq.length > 0) {
     body += `<div class="faq"><h2>Câu hỏi thường gặp</h2>`;
@@ -315,7 +406,8 @@ router.get('/tin-tuc/:slug', (req, res) => {
   if (related.length > 0) {
     body += `<div class="related"><h3>Chủ đề liên quan</h3>`;
     for (const k of related.slice(0, 10)) {
-      body += `<a href="${BLOG_BASE}">${esc(k)}</a>`;
+      // Deep-link về trang listing/khu-vuc THẬT theo từ khoá (trước đây mọi chip đều trỏ /tin-tuc = link chết).
+      body += `<a href="${esc(keywordToInternalUrl(k))}">${esc(k)}</a>`;
     }
     body += `</div>`;
   }
@@ -343,6 +435,7 @@ router.get('/tin-tuc/:slug', (req, res) => {
     title: `${a.title} | ${SITE_NAME}`,
     metaDesc: a.meta_description || a.title,
     canonical,
+    ogImage: a.cover_image_url || undefined,
     jsonLd,
     bodyHtml: body,
     isArticle: true,
