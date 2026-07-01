@@ -31,6 +31,10 @@ function vnDate(d: Date = new Date()): string {
   return new Date(d.getTime() + 7 * 3600_000).toISOString().slice(0, 10);
 }
 
+// FIX C (01/07/2026): ảnh BRAND fallback khi KS chưa có ảnh thật → digest vẫn ra bài
+// (thà có gợi ý + ảnh brand còn hơn im lặng; admin tự thay ảnh thật khi đăng).
+const BRAND_FALLBACK_IMAGE = 'https://sondervn.com/og-image.jpg';
+
 /* ═══════════════════════════════════════════
    PHASE A — GENERATE
    ═══════════════════════════════════════════ */
@@ -82,11 +86,19 @@ export async function generateTodayPlan(): Promise<{
   }
 
   if (!hotel || !image) {
-    return {
-      ok: false,
-      reason: `no_image_in_any_candidate: ${triedReasons.join(', ')}`,
-      date,
-    };
+    // FIX C: không KS nào có ảnh thật → dùng KS điểm cao nhất + ảnh BRAND (vẫn ra bài)
+    const fb = ordered[0];
+    if (fb) {
+      hotel = fb;
+      image = { url: BRAND_FALLBACK_IMAGE, fingerprint: 'brand-fallback', score: 0, source: 'cover' } as ImageCandidate;
+      console.warn(`[auto-post] ⚠️ no real hotel image → BRAND fallback for hotel #${hotel.hotel_id} (${triedReasons.join(', ')})`);
+    } else {
+      return {
+        ok: false,
+        reason: `no_image_in_any_candidate: ${triedReasons.join(', ')}`,
+        date,
+      };
+    }
   }
   console.log(`[auto-post] picked hotel #${hotel.hotel_id} "${hotel.name}" with image ${image.source}`);
 

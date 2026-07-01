@@ -13,8 +13,8 @@ const { execFileSync } = require('child_process');
   let caption=plan&&plan.caption; let imageUrl=plan&&plan.image&&plan.image.url; let angle=plan&&plan.angle;
   const today=new Date().toISOString().slice(0,10);
   if(!caption){try{const row=db.prepare("SELECT caption_draft,image_url,angle FROM auto_post_plan WHERE scheduled_date=? ORDER BY id DESC LIMIT 1").get(today);if(row){caption=row.caption_draft;imageUrl=imageUrl||row.image_url;angle=angle||row.angle;}}catch(e){}}
-  if(!caption){console.log('NO_CAPTION reason='+(plan&&plan.reason));process.exit(1);}
-  if(imageUrl){ tg('sendPhoto',{chat_id:chatId,photo:imageUrl,caption:'🖼 Ảnh gợi ý cho bài hôm nay'}); }
+  if(!caption){const reason=(plan&&plan.reason)||'unknown';sendMsg('⚠️ DIGEST '+today+': sáng nay CHƯA tạo được bài tự động.\nLý do: '+reason+'\n\n→ Thường do khách sạn thiếu ảnh hoặc hết KS đủ điều kiện. Vào sondervn.com bổ sung ảnh cho KS, hoặc thêm KS vào mạng lưới marketing.');console.log('NO_CAPTION reason='+reason+' (alert sent)');process.exit(1);}
+  if(imageUrl){const isBrand=String(imageUrl).includes('og-image.jpg');tg('sendPhoto',{chat_id:chatId,photo:imageUrl,caption:isBrand?'🖼 (Ảnh BRAND tạm — KS chưa có ảnh thật, hãy chụp/đổi ảnh thật khi đăng)':'🖼 Ảnh gợi ý cho bài hôm nay'}); }
   const capText='📅 BÀI FACEBOOK HÔM NAY ('+today+(angle?' · '+angle:'')+')\n\n'+caption+'\n\n➡️ Copy nội dung + tải ảnh trên → đăng lên Facebook Page (đăng tay, bot KHÔNG tự đăng).';
   const okCap=sendMsg(capText);
   let reel=null; try{reel=await generateReelScript(caption);}catch(e){}
