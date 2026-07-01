@@ -109,10 +109,19 @@ async function notifyAdmin(r: DayResult): Promise<void> {
     } else {
       msg += `⚠️ Không sinh bài ${r.pillar}: ${r.skipped_reason || r.error || 'unknown'}`;
     }
-    const axios = require('axios');
-    const payload: any = { chat_id: chatId, text: msg, parse_mode: 'Markdown', disable_web_page_preview: true };
-    if (replyMarkup) payload.reply_markup = replyMarkup;
-    await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, payload, { timeout: 8000 });
+    // FIX 01/07/2026: server này axios KHÔNG ra được api.telegram.org (kẹt IPv6) →
+    // gửi bằng CURL (giống daily-digest). Thử Markdown trước, fail (parse/network) → plaintext.
+    const { execFileSync } = require('child_process');
+    const tgSend = (plain: boolean): boolean => {
+      const args = ['-s', '--max-time', '20', '-X', 'POST', `https://api.telegram.org/bot${token}/sendMessage`,
+        '--data-urlencode', `chat_id=${chatId}`,
+        '--data-urlencode', `text=${msg}`,
+        '--data-urlencode', 'disable_web_page_preview=true'];
+      if (!plain) args.push('--data-urlencode', 'parse_mode=Markdown');
+      if (replyMarkup) args.push('--data-urlencode', `reply_markup=${JSON.stringify(replyMarkup)}`);
+      try { return JSON.parse(execFileSync('curl', args, { maxBuffer: 1 << 20 }).toString()).ok === true; } catch { return false; }
+    };
+    if (!tgSend(false) && !tgSend(true)) console.warn('[article-cron] telegram fail (curl): cả Markdown+plain đều lỗi');
   } catch (e: any) { console.warn('[article-cron] telegram fail:', e?.message); }
 }
 

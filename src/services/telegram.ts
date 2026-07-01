@@ -9,13 +9,31 @@
  * Kept:    /start, /help, /unlock, /whoami, /pause, /resume + notifyAll() + notifyAdmin()
  */
 
-import axios from 'axios';
+import { execFile } from 'child_process';
 import { db, getSetting } from '../db';
 
 const API = 'https://api.telegram.org';
 
 function getToken(): string | null {
   return getSetting('telegram_bot_token') || process.env.TELEGRAM_BOT_TOKEN || null;
+}
+
+/** Gọi Telegram API bằng CURL — server 103.82.193.74 axios KHÔNG ra được api.telegram.org (kẹt IPv6). */
+function tgCurl(method: string, params: Record<string, any>, maxTimeSec = 35): Promise<any> {
+  return new Promise((resolve) => {
+    const token = getToken();
+    if (!token) return resolve(null);
+    const args = ['-s', '--max-time', String(maxTimeSec), '-X', 'POST', `${API}/bot${token}/${method}`];
+    for (const k in params) {
+      const v = params[k];
+      if (v === undefined || v === null) continue;
+      args.push('--data-urlencode', `${k}=${typeof v === 'object' ? JSON.stringify(v) : String(v)}`);
+    }
+    execFile('curl', args, { maxBuffer: 1 << 21 }, (err, stdout) => {
+      if (err) return resolve(null);
+      try { resolve(JSON.parse(stdout)); } catch { resolve(null); }
+    });
+  });
 }
 
 function getUnlockCode(): string {
@@ -25,15 +43,12 @@ function getUnlockCode(): string {
 async function sendMessage(chatId: string | number, text: string, parseMode: 'Markdown' | 'HTML' | undefined = 'Markdown'): Promise<void> {
   const token = getToken();
   if (!token) return;
-  try {
-    await axios.post(`${API}/bot${token}/sendMessage`, {
-      chat_id: chatId,
-      text: text.slice(0, 4000),
-      parse_mode: parseMode,
-      disable_web_page_preview: true,
-    }, { timeout: 10_000 });
-  } catch (e: any) {
-    console.warn(`[telegram] sendMessage ${chatId} fail:`, e?.response?.data?.description || e?.message);
+  const r = await tgCurl('sendMessage', { chat_id: chatId, text: text.slice(0, 4000), parse_mode: parseMode, disable_web_page_preview: true });
+  if (r && r.ok === false && parseMode) {
+    // Markdown parse fail (can't parse entities) → gửi lại plain text
+    await tgCurl('sendMessage', { chat_id: chatId, text: text.slice(0, 4000), disable_web_page_preview: true });
+  } else if (!r) {
+    console.warn(`[telegram] sendMessage ${chatId} fail (curl null)`);
   }
 }
 
@@ -41,21 +56,15 @@ async function sendMessage(chatId: string | number, text: string, parseMode: 'Ma
 async function answerCallback(cqId: string, text: string): Promise<void> {
   const token = getToken();
   if (!token) return;
-  try {
-    await axios.post(`${API}/bot${token}/answerCallbackQuery`,
-      { callback_query_id: cqId, text: text.slice(0, 200), show_alert: false }, { timeout: 10_000 });
-  } catch (e: any) { console.warn('[telegram] answerCallback fail:', e?.response?.data?.description || e?.message); }
+  await tgCurl('answerCallbackQuery', { callback_query_id: cqId, text: text.slice(0, 200), show_alert: false });
 }
 
 /** Sửa nội dung 1 tin (sau khi bấm nút → đổi thành kết quả + bỏ nút). */
 async function editMessageText(chatId: string | number, messageId: number, text: string): Promise<void> {
   const token = getToken();
   if (!token) return;
-  try {
-    await axios.post(`${API}/bot${token}/editMessageText`,
-      { chat_id: chatId, message_id: messageId, text: text.slice(0, 4000), parse_mode: 'Markdown', disable_web_page_preview: true },
-      { timeout: 10_000 });
-  } catch (e: any) { console.warn('[telegram] editMessage fail:', e?.response?.data?.description || e?.message); }
+  const r = await tgCurl('editMessageText', { chat_id: chatId, message_id: messageId, text: text.slice(0, 4000), parse_mode: 'Markdown', disable_web_page_preview: true });
+  if (r && r.ok === false) await tgCurl('editMessageText', { chat_id: chatId, message_id: messageId, text: text.slice(0, 4000), disable_web_page_preview: true });
 }
 
 function isAuthorized(chatId: number): boolean {
@@ -90,12 +99,10 @@ async function pollUpdates(): Promise<void> {
   if (!token) return;
   polling = true;
   try {
-    const r = await axios.get(`${API}/bot${token}/getUpdates`, {
-      params: { offset: lastUpdateId + 1, timeout: 25, limit: 50 },
-      timeout: 30_000,
-    });
+    const r = await tgCurl('getUpdates', { offset: lastUpdateId + 1, timeout: 25, limit: 50 }, 35);
+    if (!r || r.ok !== true) throw new Error(r ? ('getUpdates ' + (r.description || 'not ok')) : 'curl null/timeout');
     pollFailStreak = 0; // reset khi poll OK
-    const updates: any[] = r.data?.result || [];
+    const updates: any[] = r.result || [];
     for (const u of updates) {
       lastUpdateId = u.update_id;
       try {
